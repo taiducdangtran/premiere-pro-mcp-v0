@@ -206,5 +206,28 @@ export function getMarkerTools(bridgeOptions: BridgeOptions) {
         return sendCommand(script, bridgeOptions);
       },
     },
+
+    clear_all_markers: {
+      description: "Remove all markers from the active sequence",
+      parameters: {},
+      handler: async () => {
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+
+          var markers = seq.markers;
+          var marker = markers.getFirstMarker();
+          var count = 0;
+          while (marker) {
+            var next = markers.getNextMarker(marker);
+            markers.deleteMarker(marker);
+            count++;
+            marker = next;
+          }
+          return __result({ removed: count });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
   };
 }

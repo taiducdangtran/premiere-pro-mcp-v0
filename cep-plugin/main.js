@@ -12,6 +12,7 @@ var POLL_MS = 200;
 // ---- Logging ----
 function log(msg, cls) {
   var el = document.getElementById("log");
+  if (!el) return;
   var entry = document.createElement("div");
   entry.className = "log-entry " + (cls || "");
   var ts = new Date().toLocaleTimeString();
@@ -22,11 +23,25 @@ function log(msg, cls) {
   while (el.children.length > 100) el.removeChild(el.firstChild);
 }
 
-// ---- Status ----
+function clearLog() {
+  var el = document.getElementById("log");
+  if (el) el.innerHTML = "";
+  log("Log cleared");
+}
+
+// ---- Status (Bridge dot + Premiere dot) ----
 function setStatus(state, text) {
   var dot = document.getElementById("statusDot");
-  dot.className = "status-dot " + state;
-  document.getElementById("statusText").textContent = text;
+  if (dot) dot.className = "status-dot " + state;
+  var label = document.getElementById("statusText");
+  if (label) label.textContent = text;
+}
+
+function setServerStatus(state, text) {
+  var dot = document.getElementById("serverStatus");
+  if (dot) dot.className = "status-dot " + state;
+  var label = document.getElementById("serverText");
+  if (label) label.textContent = text;
 }
 
 // ---- File I/O via Node.js (CEP has access to Node) ----
@@ -58,36 +73,25 @@ function listCommandFiles() {
 }
 
 function readFile(filePath) {
-  try {
-    return fs.readFileSync(filePath, "utf-8");
-  } catch (e) {
-    return null;
-  }
+  try { return fs.readFileSync(filePath, "utf-8"); }
+  catch (e) { return null; }
 }
 
 function writeFile(filePath, content) {
-  try {
-    fs.writeFileSync(filePath, content, "utf-8");
-    return true;
-  } catch (e) {
-    log("Error writing " + filePath + ": " + e.message, "err");
-    return false;
-  }
+  try { fs.writeFileSync(filePath, content, "utf-8"); return true; }
+  catch (e) { log("Error writing " + filePath + ": " + e.message, "err"); return false; }
 }
 
 function deleteFile(filePath) {
-  try {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  } catch (e) {}
+  try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); }
+  catch (e) {}
 }
 
 // ---- Script Execution ----
 function executeScript(script, callback) {
   // Script is already wrapped in an IIFE by the MCP server's buildScript(),
   // so we pass it directly to avoid double-wrapping.
-  cs.evalScript(script, function (result) {
-    callback(result);
-  });
+  cs.evalScript(script, function (result) { callback(result); });
 }
 
 // ---- Command Processing ----
@@ -118,13 +122,12 @@ function processOneCommand(cmdFileName) {
 
   executeScript(script, function (result) {
     commandCount++;
-    document.getElementById("cmdCount").textContent = commandCount;
+    var counter = document.getElementById("cmdCount");
+    if (counter) counter.textContent = commandCount;
 
     var response;
     try {
-      // ExtendScript returns a string; try to parse it as JSON
       if (result && result !== "undefined" && result !== "null") {
-        // Check if it's already valid JSON
         var parsed = JSON.parse(result);
         response = JSON.stringify(parsed);
       } else {
@@ -132,7 +135,6 @@ function processOneCommand(cmdFileName) {
       }
       log("Result: OK", "ok");
     } catch (e) {
-      // If result isn't JSON, wrap it
       if (result && result.indexOf("Error") === 0) {
         response = JSON.stringify({ success: false, error: result });
         log("Result: " + result, "err");
@@ -146,8 +148,47 @@ function processOneCommand(cmdFileName) {
   });
 }
 
+// ---- Premiere host check (drives serverStatus) ----
+function checkPremiere(silent) {
+  cs.evalScript("app.version", function (version) {
+    if (version && version !== "undefined" && version !== "EvalScript error.") {
+      setServerStatus("connected", "Premiere " + version);
+      if (!silent) log("Premiere Pro: " + version, "ok");
+    } else {
+      setServerStatus("error", "Premiere not responding");
+      if (!silent) log("Warning: Could not detect Premiere Pro version", "err");
+    }
+  });
+}
+
+// ---- Diagnostics ----
+function runDiagnostics() {
+  log("Running diagnostics…", "cmd");
+  var diagScript = '(function(){ try { var d = { extendscript: true, version: app.version || "unknown", projectOpen: !!app.project, sequenceCount: 0, activeSequence: null, qeDom: false }; if (app.project) { d.sequenceCount = app.project.sequences.numSequences; if (app.project.activeSequence) d.activeSequence = app.project.activeSequence.name; } try { app.enableQE(); if (qe && qe.project) d.qeDom = true; } catch(e) { d.qeDom = false; } return JSON.stringify({ success: true, data: d }); } catch(e) { return JSON.stringify({ success: false, error: e.toString() }); } })()';
+  cs.evalScript(diagScript, function (result) {
+    try {
+      var parsed = JSON.parse(result);
+      if (parsed && parsed.success) {
+        var d = parsed.data;
+        log("Diagnostics OK — Premiere " + d.version + ", project " + (d.projectOpen ? "open" : "none") +
+            (d.activeSequence ? ", active=\"" + d.activeSequence + "\"" : "") +
+            ", QE=" + (d.qeDom ? "yes" : "no"), "ok");
+        setServerStatus("connected", "Premiere " + d.version);
+      } else {
+        log("Diagnostics failed: " + (parsed && parsed.error), "err");
+      }
+    } catch (e) {
+      log("Diagnostics raw result: " + result, "err");
+    }
+  });
+}
+
 // ---- Bridge Control ----
 function startBridge() {
+  if (bridgeRunning) {
+    log("Bridge already running");
+    return;
+  }
   tempDir = document.getElementById("tempDir").value.trim();
   if (!tempDir) {
     log("Please set a temp directory", "err");
@@ -162,14 +203,8 @@ function startBridge() {
   document.getElementById("btnStart").disabled = true;
   document.getElementById("btnStop").disabled = false;
 
-  // Verify Premiere Pro connection
-  cs.evalScript("app.version", function (version) {
-    if (version && version !== "undefined") {
-      log("Premiere Pro: " + version, "ok");
-    } else {
-      log("Warning: Could not detect Premiere Pro version", "err");
-    }
-  });
+  // Verify Premiere Pro connection on the secondary status dot
+  checkPremiere(false);
 
   pollInterval = setInterval(function () {
     if (bridgeRunning) processCommands();
@@ -182,6 +217,7 @@ function stopBridge() {
   pollInterval = null;
 
   setStatus("", "Stopped");
+  setServerStatus("", "Bridge stopped");
   log("Bridge stopped");
 
   document.getElementById("btnStart").disabled = false;
@@ -191,32 +227,53 @@ function stopBridge() {
 function saveTempDir() {
   tempDir = document.getElementById("tempDir").value.trim();
   log("Temp directory saved: " + tempDir);
-  // Persist via localStorage
-  try {
-    localStorage.setItem("mcp_bridge_temp_dir", tempDir);
-  } catch (e) {}
+  try { localStorage.setItem("mcp_bridge_temp_dir", tempDir); } catch (e) {}
+}
+
+// ---- Wire UI events (avoids inline-onclick CSP issues in CEP) ----
+function wireEvents() {
+  var startBtn = document.getElementById("btnStart");
+  var stopBtn = document.getElementById("btnStop");
+  var saveBtn = document.getElementById("btnSave");
+  var diagBtn = document.getElementById("btnDiag");
+  var clearBtn = document.getElementById("btnClear");
+
+  if (startBtn) startBtn.addEventListener("click", startBridge);
+  if (stopBtn) stopBtn.addEventListener("click", stopBridge);
+  if (saveBtn) saveBtn.addEventListener("click", saveTempDir);
+  if (diagBtn) diagBtn.addEventListener("click", runDiagnostics);
+  if (clearBtn) clearBtn.addEventListener("click", clearLog);
 }
 
 // ---- Init ----
-(function init() {
-  // Set the default temp dir in the input field
-  document.getElementById("tempDir").value = tempDir;
+function init() {
+  var input = document.getElementById("tempDir");
+  if (input) input.value = tempDir;
 
   // Restore saved temp dir
   try {
     var saved = localStorage.getItem("mcp_bridge_temp_dir");
     if (saved) {
       tempDir = saved;
-      document.getElementById("tempDir").value = tempDir;
+      if (input) input.value = tempDir;
     }
   } catch (e) {}
 
+  wireEvents();
+
   log("MCP Bridge CEP plugin loaded");
   setStatus("waiting", "Ready — click Start Bridge");
+  setServerStatus("waiting", "Awaiting bridge start");
 
-  // Auto-start if temp dir exists
+  // Auto-start if temp dir already exists
   if (fs.existsSync(tempDir)) {
-    log("Temp directory exists, auto-starting...");
+    log("Temp directory exists, auto-starting…");
     setTimeout(startBridge, 500);
   }
-})();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init);
+} else {
+  init();
+}

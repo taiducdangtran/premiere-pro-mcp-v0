@@ -476,5 +476,133 @@ export function getTimelineTools(bridgeOptions: BridgeOptions) {
         return sendCommand(script, bridgeOptions);
       },
     },
+
+    razor_timeline_at_time: {
+      description:
+        "Razor (cut) across multiple tracks at an absolute timeline time. If no track indices are provided, all video and audio tracks are cut. Uses QE DOM.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          time_seconds: {
+            type: "number",
+            description: "Absolute timeline time in seconds where to cut",
+          },
+          video_track_indices: {
+            type: "array",
+            description: "Optional list of video track indices. Defaults to all video tracks.",
+          },
+          audio_track_indices: {
+            type: "array",
+            description: "Optional list of audio track indices. Defaults to all audio tracks.",
+          },
+        },
+        required: ["time_seconds"],
+      },
+      handler: async (args: {
+        time_seconds: number;
+        video_track_indices?: number[];
+        audio_track_indices?: number[];
+      }) => {
+        const videoIndices = JSON.stringify(args.video_track_indices ?? []);
+        const audioIndices = JSON.stringify(args.audio_track_indices ?? []);
+        const script = buildToolScript(`
+          try {
+            app.enableQE();
+            var seq = app.project.activeSequence;
+            if (!seq) return __error("No active sequence");
+
+            var fps = seq.timebase ? (254016000000 / parseInt(seq.timebase, 10)) : 30;
+            var totalFrames = Math.round(${args.time_seconds} * fps);
+            var hours = Math.floor(totalFrames / (fps * 3600));
+            var mins = Math.floor((totalFrames % (fps * 3600)) / (fps * 60));
+            var secs = Math.floor((totalFrames % (fps * 60)) / fps);
+            var frames = Math.round(totalFrames % fps);
+            var tc = __pad(hours) + ":" + __pad(mins) + ":" + __pad(secs) + ":" + __pad(frames);
+
+            var qeSeq = qe.project.getActiveSequence();
+            if (!qeSeq) return __error("QE active sequence unavailable");
+
+            function buildIndices(count, requested) {
+              if (!requested || requested.length === 0) {
+                var all = [];
+                for (var idx = 0; idx < count; idx++) all.push(idx);
+                return all;
+              }
+              return requested;
+            }
+
+            var requestedV = ${videoIndices};
+            var requestedA = ${audioIndices};
+            var finalV = buildIndices(seq.videoTracks.numTracks, requestedV);
+            var finalA = buildIndices(seq.audioTracks.numTracks, requestedA);
+            var cutV = [], cutA = [];
+
+            for (var i = 0; i < finalV.length; i++) {
+              var vi = finalV[i];
+              if (vi < 0 || vi >= seq.videoTracks.numTracks) continue;
+              var qv = qeSeq.getVideoTrackAt(vi);
+              if (qv) { qv.razor(tc); cutV.push(vi); }
+            }
+            for (var j = 0; j < finalA.length; j++) {
+              var ai = finalA[j];
+              if (ai < 0 || ai >= seq.audioTracks.numTracks) continue;
+              var qa = qeSeq.getAudioTrackAt(ai);
+              if (qa) { qa.razor(tc); cutA.push(ai); }
+            }
+
+            return __result({
+              timeSeconds: ${args.time_seconds},
+              timecode: tc,
+              cutVideoTracks: cutV,
+              cutAudioTracks: cutA
+            });
+          } catch (e) {
+            return __error("Razor failed: " + e.toString());
+          }
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    link_audio_video: {
+      description:
+        "Link or unlink the audio and video components of a clip on the timeline so they move/edit together.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the clip (audio or video portion)" },
+          linked: { type: "boolean", description: "true to link (default), false to unlink" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; linked?: boolean }) => {
+        const linked = args.linked !== false;
+        const script = buildToolScript(`
+          var result = __findClip("${args.node_id.replace(/"/g, '\\"')}");
+          if (!result) return __error("Clip not found");
+          var clip = result.clip;
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+
+          try {
+            seq.setSelection([clip], true);
+            if (${linked}) {
+              if (app.project.executeCommand) {
+                app.project.executeCommand(7, "Link"); // best-effort
+              }
+              if (clip.linkedItems) {
+                return __result({ linked: true, hasLinkedItems: true });
+              }
+            } else {
+              if (clip.unlink) clip.unlink();
+            }
+            return __result({ linked: ${linked}, clipName: clip.name });
+          } catch (ex) {
+            return __error("Link/unlink failed: " + ex.toString());
+          }
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
   };
 }

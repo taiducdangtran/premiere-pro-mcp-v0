@@ -378,5 +378,75 @@ export function getClipboardTools(bridgeOptions: BridgeOptions) {
         return sendCommand(script, bridgeOptions);
       },
     },
+
+    batch_set_clip_property: {
+      description:
+        "Set the same property value across multiple timeline clips in one call. Searches all components for the named property (case-insensitive).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          property_name: {
+            type: "string",
+            description:
+              "Display name of the property to set (e.g., 'Opacity', 'Scale', 'Position')",
+          },
+          value: {
+            description:
+              "Value to apply (number for scalars, [x,y] for points, [r,g,b] for colors)",
+          },
+          targets: {
+            type: "array",
+            description:
+              "Array of {trackType: 'video'|'audio', trackIndex: number, clipIndex: number}",
+          },
+        },
+        required: ["property_name", "value", "targets"],
+      },
+      handler: async (args: {
+        property_name: string;
+        value: any;
+        targets: Array<{ trackType: string; trackIndex: number; clipIndex: number }>;
+      }) => {
+        const valueLiteral = JSON.stringify(args.value);
+        const targetsLiteral = JSON.stringify(args.targets);
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+
+          var prop = "${escapeForExtendScript(args.property_name)}".toLowerCase();
+          var val = ${valueLiteral};
+          var targets = ${targetsLiteral};
+          var updated = 0;
+          var notFound = [];
+
+          for (var t = 0; t < targets.length; t++) {
+            var tgt = targets[t];
+            var tracks = tgt.trackType === "video" ? seq.videoTracks : seq.audioTracks;
+            if (tgt.trackIndex >= tracks.numTracks) { notFound.push(tgt); continue; }
+            var track = tracks[tgt.trackIndex];
+            if (tgt.clipIndex >= track.clips.numItems) { notFound.push(tgt); continue; }
+            var clip = track.clips[tgt.clipIndex];
+
+            var didSet = false;
+            for (var i = 0; i < clip.components.numItems; i++) {
+              for (var j = 0; j < clip.components[i].properties.numItems; j++) {
+                if (clip.components[i].properties[j].displayName.toLowerCase() === prop) {
+                  try {
+                    clip.components[i].properties[j].setValue(val, true);
+                    updated++;
+                    didSet = true;
+                  } catch (ex) {}
+                  break;
+                }
+              }
+              if (didSet) break;
+            }
+            if (!didSet) notFound.push(tgt);
+          }
+          return __result({ property: "${escapeForExtendScript(args.property_name)}", updated: updated, notFound: notFound });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
   };
 }

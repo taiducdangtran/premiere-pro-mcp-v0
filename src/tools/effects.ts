@@ -432,5 +432,48 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
         return sendCommand(script, bridgeOptions);
       },
     },
+
+    set_effect_enabled: {
+      description:
+        "Enable or disable an effect on a clip without removing it (toggle the eyeball)",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the clip" },
+          effect_index: {
+            type: "number",
+            description: "Index of the effect/component on the clip (0-based)",
+          },
+          enabled: { type: "boolean", description: "true to enable, false to disable" },
+        },
+        required: ["node_id", "effect_index", "enabled"],
+      },
+      handler: async (args: {
+        node_id: string;
+        effect_index: number;
+        enabled: boolean;
+      }) => {
+        const script = buildToolScript(`
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          var clip = result.clip;
+
+          if (${args.effect_index} >= clip.components.numItems) return __error("Effect index out of range");
+          var effect = clip.components[${args.effect_index}];
+
+          var found = false;
+          for (var i = 0; i < effect.properties.numItems; i++) {
+            var pname = effect.properties[i].displayName;
+            if (pname === "enabled" || pname === "Enabled") {
+              effect.properties[i].setValue(${args.enabled ? "true" : "false"}, true);
+              found = true;
+              break;
+            }
+          }
+          return __result({ effectIndex: ${args.effect_index}, enabled: ${args.enabled}, toggled: found });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
   };
 }

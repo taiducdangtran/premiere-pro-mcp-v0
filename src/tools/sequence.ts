@@ -59,7 +59,7 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
     },
 
     delete_sequence: {
-      description: "Delete a sequence from the project",
+      description: "Delete a sequence from the project (works for sequences in bins too)",
       parameters: {
         type: "object" as const,
         properties: {
@@ -72,23 +72,13 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
       },
       handler: async (args: { sequence_id: string }) => {
         const script = buildToolScript(`
-          var project = app.project;
-          var found = false;
-          
-          for (var i = 0; i < project.rootItem.children.numItems; i++) {
-            var item = project.rootItem.children[i];
-            if (item.type === 3) { // sequence type
-              var seq = __findSequence("${escapeForExtendScript(args.sequence_id)}");
-              if (seq && (item.name === seq.name)) {
-                project.deleteSequence(seq);
-                found = true;
-                break;
-              }
-            }
-          }
-          
-          if (!found) return __error("Sequence not found: ${escapeForExtendScript(args.sequence_id)}");
-          return __result({ deleted: true });
+          var seq = __findSequence("${escapeForExtendScript(args.sequence_id)}");
+          if (!seq) return __error("Sequence not found: ${escapeForExtendScript(args.sequence_id)}");
+
+          var name = seq.name;
+          var id = seq.sequenceID;
+          app.project.deleteSequence(seq);
+          return __result({ deleted: true, name: name, sequenceId: id });
         `);
         return sendCommand(script, bridgeOptions);
       },

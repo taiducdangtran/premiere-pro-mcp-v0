@@ -4,7 +4,7 @@ import { sendCommand, BridgeOptions } from "../bridge/file-bridge.js";
 export function getUtilityTools(bridgeOptions: BridgeOptions) {
   return {
     delete_project_item: {
-      description: "Delete a project item (clip, bin, etc.) from the project panel. This removes it from the project but does not affect timeline instances.",
+      description: "Delete a project item (clip, bin, sequence, etc.) from the project panel. Routes by type: sequences via deleteSequence, bins via deleteBin, others via deleteAsset.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -17,19 +17,44 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
       },
       handler: async (args: { item_id: string }) => {
         const script = buildToolScript(`
-          var item = __findProjectItem("${escapeForExtendScript(args.item_id)}");
-          if (!item) return __error("Item not found: ${escapeForExtendScript(args.item_id)}");
+          var query = "${escapeForExtendScript(args.item_id)}";
+
+          var seq = __findSequence(query);
+          if (seq) {
+            var sname = seq.name;
+            var sid = seq.sequenceID;
+            app.project.deleteSequence(seq);
+            return __result({ deleted: true, name: sname, kind: "sequence", sequenceId: sid });
+          }
+
+          var item = __findProjectItem(query);
+          if (!item) return __error("Item not found: " + query);
 
           var name = item.name;
-          app.project.deleteProjectItem(item);
-          return __result({ deleted: true, name: name });
+          var type = item.type;
+
+          if (type === 2) {
+            try {
+              item.deleteBin();
+              return __result({ deleted: true, name: name, kind: "bin" });
+            } catch (ex) {
+              return __error("Failed to delete bin: " + ex.toString());
+            }
+          }
+
+          try {
+            app.project.deleteAsset(item);
+            return __result({ deleted: true, name: name, kind: "asset", type: type });
+          } catch (ex) {
+            return __error("Failed to delete project item (type " + type + "): " + ex.toString());
+          }
         `);
         return sendCommand(script, bridgeOptions);
       },
     },
 
     delete_multiple_project_items: {
-      description: "Delete multiple project items at once from the project panel.",
+      description: "Delete multiple project items at once. Each item is routed by type (sequence/bin/asset) for correct deletion.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -45,15 +70,33 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           var ids = ${idsJson};
           var deleted = 0;
+          var failed = [];
           var names = [];
+
           for (var i = 0; i < ids.length; i++) {
-            var item = __findProjectItem(ids[i]);
-            if (item) {
-              names.push(item.name);
-              try { app.project.deleteProjectItem(item); deleted++; } catch(e) {}
+            var query = ids[i];
+
+            var seq = __findSequence(query);
+            if (seq) {
+              try {
+                names.push(seq.name);
+                app.project.deleteSequence(seq);
+                deleted++;
+              } catch (ex) { failed.push({ id: query, error: ex.toString() }); }
+              continue;
+            }
+
+            var item = __findProjectItem(query);
+            if (!item) { failed.push({ id: query, error: "not found" }); continue; }
+
+            names.push(item.name);
+            if (item.type === 2) {
+              try { item.deleteBin(); deleted++; } catch (ex) { failed.push({ id: query, error: ex.toString() }); }
+            } else {
+              try { app.project.deleteAsset(item); deleted++; } catch (ex) { failed.push({ id: query, error: ex.toString() }); }
             }
           }
-          return __result({ deleted: deleted, total: ids.length, names: names });
+          return __result({ deleted: deleted, total: ids.length, names: names, failed: failed });
         `);
         return sendCommand(script, bridgeOptions);
       },

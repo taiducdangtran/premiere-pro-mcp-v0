@@ -62,5 +62,168 @@ export function getPlaybackTools(bridgeOptions: BridgeOptions) {
         return sendCommand(script, bridgeOptions);
       },
     },
+
+    step_forward: {
+      description: "Step the playhead forward by N frames. Uses QE DOM.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          frames: { type: "number", description: "Number of frames to step (default: 1)" },
+        },
+      },
+      handler: async (args: { frames?: number }) => {
+        const frames = args.frames ?? 1;
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          app.enableQE();
+          try {
+            for (var i = 0; i < ${frames}; i++) {
+              qe.project.getActiveSequence().player.step(1);
+            }
+            return __result({ stepped: ${frames} });
+          } catch (ex) {
+            return __error("Step failed: " + ex.toString());
+          }
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    step_backward: {
+      description: "Step the playhead backward by N frames. Uses QE DOM.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          frames: { type: "number", description: "Number of frames to step back (default: 1)" },
+        },
+      },
+      handler: async (args: { frames?: number }) => {
+        const frames = args.frames ?? 1;
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          app.enableQE();
+          try {
+            for (var i = 0; i < ${frames}; i++) {
+              qe.project.getActiveSequence().player.step(-1);
+            }
+            return __result({ stepped: -${frames} });
+          } catch (ex) {
+            return __error("Step failed: " + ex.toString());
+          }
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    go_to_start: {
+      description: "Move the playhead to the start of the active sequence",
+      parameters: {},
+      handler: async () => {
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          seq.setPlayerPosition(seq.zeroPoint);
+          return __result({ moved: true, position: 0 });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    go_to_end: {
+      description: "Move the playhead to the end of the active sequence",
+      parameters: {},
+      handler: async () => {
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          var endTicks = seq.end;
+          seq.setPlayerPosition(endTicks);
+          return __result({ moved: true, positionSeconds: __ticksToSeconds(endTicks) });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    go_to_in_point: {
+      description: "Move the playhead to the sequence in-point",
+      parameters: {},
+      handler: async () => {
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          try {
+            var inTime = seq.getInPointAsTime();
+            seq.setPlayerPosition(inTime.ticks);
+            return __result({ moved: true, positionSeconds: __ticksToSeconds(inTime.ticks) });
+          } catch (ex) {
+            var inTicks = seq.getInPoint();
+            seq.setPlayerPosition(inTicks);
+            return __result({ moved: true, positionSeconds: __ticksToSeconds(inTicks) });
+          }
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    go_to_out_point: {
+      description: "Move the playhead to the sequence out-point",
+      parameters: {},
+      handler: async () => {
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          try {
+            var outTime = seq.getOutPointAsTime();
+            seq.setPlayerPosition(outTime.ticks);
+            return __result({ moved: true, positionSeconds: __ticksToSeconds(outTime.ticks) });
+          } catch (ex) {
+            var outTicks = seq.getOutPoint();
+            seq.setPlayerPosition(outTicks);
+            return __result({ moved: true, positionSeconds: __ticksToSeconds(outTicks) });
+          }
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    go_to_next_edit: {
+      description: "Move the playhead to the next edit point on the timeline. Uses QE DOM.",
+      parameters: {},
+      handler: async () => {
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          app.enableQE();
+          try {
+            qe.project.getActiveSequence().player.goToNextEdit();
+            return __result({ moved: true });
+          } catch (ex) {
+            return __error("Go to next edit failed: " + ex.toString());
+          }
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    go_to_previous_edit: {
+      description: "Move the playhead to the previous edit point on the timeline. Uses QE DOM.",
+      parameters: {},
+      handler: async () => {
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          app.enableQE();
+          try {
+            qe.project.getActiveSequence().player.goToPreviousEdit();
+            return __result({ moved: true });
+          } catch (ex) {
+            return __error("Go to previous edit failed: " + ex.toString());
+          }
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
   };
 }

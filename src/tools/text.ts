@@ -172,8 +172,156 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
           
           var success = seq.importMGTFromLibrary(mogrtName, startTicks, ${trackIndex}, ${trackIndex});
           if (!success) return __error("Failed to import MOGRT from library: " + mogrtName);
-          
+
           return __result({ imported: true, mogrtName: mogrtName, trackIndex: ${trackIndex} });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    get_mogrt_properties: {
+      description:
+        "List all editable properties of a MOGRT (Motion Graphics Template) clip on the timeline",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          track_index: { type: "number", description: "Video track index (0-based)" },
+          clip_index: { type: "number", description: "Clip index on the track" },
+        },
+        required: ["track_index", "clip_index"],
+      },
+      handler: async (args: { track_index: number; clip_index: number }) => {
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          if (${args.track_index} >= seq.videoTracks.numTracks) return __error("Track index out of range");
+          var track = seq.videoTracks[${args.track_index}];
+          if (${args.clip_index} >= track.clips.numItems) return __error("Clip index out of range");
+          var clip = track.clips[${args.clip_index}];
+
+          var props = [];
+          var mgtFound = false;
+          try {
+            var mgt = clip.getMGTComponent();
+            if (mgt) {
+              mgtFound = true;
+              for (var i = 0; i < mgt.properties.numItems; i++) {
+                var prop = mgt.properties[i];
+                var info = { index: i, displayName: prop.displayName };
+                try { info.value = prop.getValue(); } catch (ex) {}
+                props.push(info);
+              }
+            }
+          } catch (ex) {}
+
+          if (!mgtFound) {
+            for (var i = 0; i < clip.components.numItems; i++) {
+              var comp = clip.components[i];
+              for (var j = 0; j < comp.properties.numItems; j++) {
+                var info = {
+                  componentIndex: i,
+                  componentName: comp.displayName,
+                  propertyIndex: j,
+                  displayName: comp.properties[j].displayName
+                };
+                try { info.value = comp.properties[j].getValue(); } catch (ex) {}
+                props.push(info);
+              }
+            }
+          }
+          return __result({ properties: props, mgtComponent: mgtFound });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    set_mogrt_property: {
+      description:
+        "Set a MOGRT (Motion Graphics Template) property value by display name on a timeline clip",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          track_index: { type: "number", description: "Video track index" },
+          clip_index: { type: "number", description: "Clip index on the track" },
+          property_name: {
+            type: "string",
+            description: "Display name of the property to set (e.g., 'Source Text', 'Position', 'Color')",
+          },
+          value: {
+            description:
+              "Value to set. Strings for text, numbers for numeric, [x,y] for positions, [r,g,b] for colors",
+          },
+        },
+        required: ["track_index", "clip_index", "property_name", "value"],
+      },
+      handler: async (args: {
+        track_index: number;
+        clip_index: number;
+        property_name: string;
+        value: any;
+      }) => {
+        const valueLiteral = JSON.stringify(args.value);
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          if (${args.track_index} >= seq.videoTracks.numTracks) return __error("Track index out of range");
+          var track = seq.videoTracks[${args.track_index}];
+          if (${args.clip_index} >= track.clips.numItems) return __error("Clip index out of range");
+          var clip = track.clips[${args.clip_index}];
+
+          var newValue = ${valueLiteral};
+          var propertyName = "${escapeForExtendScript(args.property_name)}";
+
+          try {
+            var mgt = clip.getMGTComponent();
+            if (mgt) {
+              for (var i = 0; i < mgt.properties.numItems; i++) {
+                if (mgt.properties[i].displayName === propertyName) {
+                  mgt.properties[i].setValue(newValue, true);
+                  return __result({ property: propertyName, set: true, viaMGT: true });
+                }
+              }
+            }
+          } catch (ex) {}
+
+          for (var i = 0; i < clip.components.numItems; i++) {
+            for (var j = 0; j < clip.components[i].properties.numItems; j++) {
+              if (clip.components[i].properties[j].displayName === propertyName) {
+                clip.components[i].properties[j].setValue(newValue, true);
+                return __result({ property: propertyName, set: true, componentIndex: i });
+              }
+            }
+          }
+          return __error("Property not found: " + propertyName);
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    get_available_mogrts: {
+      description:
+        "Get a list of MOGRT (Motion Graphics Template) project items currently imported into the project",
+      parameters: {},
+      handler: async () => {
+        const script = buildToolScript(`
+          var items = [];
+          function walk(rootItem) {
+            for (var i = 0; i < rootItem.children.numItems; i++) {
+              var item = rootItem.children[i];
+              if (item.type === 2) {
+                walk(item);
+              } else {
+                var name = item.name || "";
+                var path = "";
+                try { path = item.getMediaPath ? item.getMediaPath() : ""; } catch (ex) {}
+                if (path.toLowerCase().indexOf(".mogrt") >= 0 || name.toLowerCase().indexOf(".mogrt") >= 0) {
+                  items.push({ name: name, nodeId: item.nodeId, path: path });
+                }
+              }
+            }
+          }
+          walk(app.project.rootItem);
+          return __result({ mogrts: items, count: items.length });
         `);
         return sendCommand(script, bridgeOptions);
       },

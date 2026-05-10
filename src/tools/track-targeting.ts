@@ -1317,5 +1317,116 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
         return sendCommand(script, bridgeOptions);
       },
     },
+
+    get_clip_transform: {
+      description:
+        "Get all motion/transform properties of a clip in one call: position, scale, rotation, anchor point, opacity, anti-flicker, plus uniform-scale flags.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the clip" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string }) => {
+        const script = buildToolScript(`
+          var result = __findClip("${args.node_id.replace(/"/g, '\\"')}");
+          if (!result) return __error("Clip not found");
+          var clip = result.clip;
+
+          var info = { name: clip.name };
+          for (var i = 0; i < clip.components.numItems; i++) {
+            var comp = clip.components[i];
+            var cname = comp.displayName;
+            if (cname === "Motion" || cname === "Opacity" || cname === "Time Remapping") {
+              for (var j = 0; j < comp.properties.numItems; j++) {
+                var p = comp.properties[j];
+                var pname = p.displayName;
+                try {
+                  info[pname] = p.getValue();
+                } catch (ex) {}
+              }
+            }
+          }
+          return __result(info);
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    set_clip_transform: {
+      description:
+        "Set multiple motion/transform properties of a clip in one call (position, scale, rotation, anchor, opacity). Pass only the fields you want to change.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the clip" },
+          position: {
+            type: "array",
+            description: "[x, y] position (normalized 0-1, e.g. [0.5, 0.5] = center)",
+          },
+          scale: { type: "number", description: "Uniform scale (100 = 100%)" },
+          scale_width: { type: "number", description: "Horizontal scale (when uniform_scale=false)" },
+          scale_height: { type: "number", description: "Vertical scale (when uniform_scale=false)" },
+          uniform_scale: { type: "boolean", description: "true to lock scale W/H together" },
+          rotation: { type: "number", description: "Rotation in degrees" },
+          anchor_point: { type: "array", description: "[x, y] anchor point" },
+          opacity: { type: "number", description: "Opacity 0-100" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        position?: number[];
+        scale?: number;
+        scale_width?: number;
+        scale_height?: number;
+        uniform_scale?: boolean;
+        rotation?: number;
+        anchor_point?: number[];
+        opacity?: number;
+      }) => {
+        const propsToSet: string[] = [];
+        if (args.position) propsToSet.push(`{ comp: "Motion", name: "Position", value: [${args.position[0]}, ${args.position[1]}] }`);
+        if (args.scale !== undefined) propsToSet.push(`{ comp: "Motion", name: "Scale", value: ${args.scale} }`);
+        if (args.scale_width !== undefined) propsToSet.push(`{ comp: "Motion", name: "Scale Width", value: ${args.scale_width} }`);
+        if (args.scale_height !== undefined) propsToSet.push(`{ comp: "Motion", name: "Scale Height", value: ${args.scale_height} }`);
+        if (args.uniform_scale !== undefined) propsToSet.push(`{ comp: "Motion", name: "Uniform Scale", value: ${args.uniform_scale} }`);
+        if (args.rotation !== undefined) propsToSet.push(`{ comp: "Motion", name: "Rotation", value: ${args.rotation} }`);
+        if (args.anchor_point) propsToSet.push(`{ comp: "Motion", name: "Anchor Point", value: [${args.anchor_point[0]}, ${args.anchor_point[1]}] }`);
+        if (args.opacity !== undefined) propsToSet.push(`{ comp: "Opacity", name: "Opacity", value: ${args.opacity} }`);
+
+        const propsArr = `[${propsToSet.join(",")}]`;
+        const script = buildToolScript(`
+          var result = __findClip("${args.node_id.replace(/"/g, '\\"')}");
+          if (!result) return __error("Clip not found");
+          var clip = result.clip;
+          var changes = ${propsArr};
+          var applied = [];
+          var notFound = [];
+
+          for (var k = 0; k < changes.length; k++) {
+            var change = changes[k];
+            var foundC = false;
+            for (var i = 0; i < clip.components.numItems; i++) {
+              if (clip.components[i].displayName !== change.comp) continue;
+              var comp = clip.components[i];
+              for (var j = 0; j < comp.properties.numItems; j++) {
+                if (comp.properties[j].displayName === change.name) {
+                  comp.properties[j].setValue(change.value, true);
+                  applied.push(change.name);
+                  foundC = true;
+                  break;
+                }
+              }
+              if (foundC) break;
+            }
+            if (!foundC) notFound.push(change.name);
+          }
+          return __result({ clip: clip.name, applied: applied, notFound: notFound });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
   };
 }

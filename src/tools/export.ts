@@ -582,5 +582,119 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
         return sendCommand(script, bridgeOptions);
       },
     },
+
+    export_edl: {
+      description:
+        "Export the active sequence as an EDL (Edit Decision List) — industry standard for color grading, online conform, and broadcast workflows.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          output_path: {
+            type: "string",
+            description: "Absolute output path for the EDL file (e.g., /path/to/sequence.edl)",
+          },
+          track_index: {
+            type: "number",
+            description:
+              "Optional video track index to export (default: 0 = V1). EDL traditionally exports a single video track.",
+          },
+        },
+        required: ["output_path"],
+      },
+      handler: async (args: { output_path: string; track_index?: number }) => {
+        const trackIndex = args.track_index ?? 0;
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          try {
+            seq.exportAsEDL("${escapeForExtendScript(args.output_path)}", ${trackIndex});
+            return __result({ exported: true, outputPath: "${escapeForExtendScript(args.output_path)}", trackIndex: ${trackIndex} });
+          } catch (ex) {
+            return __error("Failed to export EDL: " + ex.toString());
+          }
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    render_sequence_preview: {
+      description:
+        "Render preview files for the active sequence (in/out range or whole sequence). Equivalent to pressing Enter in Premiere — generates green-bar previews so playback is realtime.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          start_seconds: {
+            type: "number",
+            description:
+              "Optional start time in seconds (sets in-point). Omit to render entire sequence.",
+          },
+          end_seconds: {
+            type: "number",
+            description: "Optional end time in seconds (sets out-point)",
+          },
+        },
+      },
+      handler: async (args: { start_seconds?: number; end_seconds?: number }) => {
+        const setRange =
+          args.start_seconds !== undefined && args.end_seconds !== undefined;
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          ${
+            setRange
+              ? `seq.setInPoint(${args.start_seconds});\n          seq.setOutPoint(${args.end_seconds});`
+              : ""
+          }
+          try {
+            seq.renderPreview ? seq.renderPreview() : seq.renderSelection(true);
+            return __result({ rendered: true });
+          } catch (ex) {
+            try {
+              seq.renderSelection(true);
+              return __result({ rendered: true, fallback: "renderSelection" });
+            } catch (ex2) {
+              return __error("Render preview failed: " + ex.toString());
+            }
+          }
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    export_direct: {
+      description:
+        "Export the active sequence directly without going through Adobe Media Encoder (synchronous, blocking). Faster for one-off exports but doesn't queue.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          output_path: {
+            type: "string",
+            description: "Absolute output path for the exported file",
+          },
+          preset_path: {
+            type: "string",
+            description: "Absolute path to an .epr export preset file",
+          },
+        },
+        required: ["output_path", "preset_path"],
+      },
+      handler: async (args: { output_path: string; preset_path: string }) => {
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          try {
+            seq.exportAsMediaDirect(
+              "${escapeForExtendScript(args.output_path)}",
+              "${escapeForExtendScript(args.preset_path)}",
+              app.encoder.ENCODE_ENTIRE
+            );
+            return __result({ exported: true, outputPath: "${escapeForExtendScript(args.output_path)}" });
+          } catch (ex) {
+            return __error("Direct export failed: " + ex.toString());
+          }
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
   };
 }

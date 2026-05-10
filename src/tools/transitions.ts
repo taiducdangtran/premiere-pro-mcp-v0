@@ -256,5 +256,99 @@ export function getTransitionsTools(bridgeOptions: BridgeOptions) {
         return sendCommand(script, bridgeOptions);
       },
     },
+
+    set_default_transition: {
+      description:
+        "Set the default video or audio transition (used by keyboard shortcuts and one-click transition buttons).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          transition_name: {
+            type: "string",
+            description: "Exact name of the transition (e.g., 'Cross Dissolve', 'Constant Power')",
+          },
+          track_type: {
+            type: "string",
+            enum: ["video", "audio"],
+            description: "Set as default for video or audio (default: video)",
+          },
+        },
+        required: ["transition_name"],
+      },
+      handler: async (args: { transition_name: string; track_type?: string }) => {
+        const trackType = args.track_type || "video";
+        const script = buildToolScript(`
+          app.enableQE();
+          try {
+            var list = ${trackType === "audio" ? "qe.project.getAudioTransitionList()" : "qe.project.getVideoTransitionList()"};
+            for (var i = 0; i < list.numItems; i++) {
+              if (list[i].name === "${escapeForExtendScript(args.transition_name)}") {
+                if (list[i].setAsDefaultTransition) {
+                  list[i].setAsDefaultTransition();
+                  return __result({ set: true, transition: "${escapeForExtendScript(args.transition_name)}" });
+                }
+                return __result({ set: false, note: "setAsDefaultTransition API not available; transition exists." });
+              }
+            }
+            return __error("Transition not found: ${escapeForExtendScript(args.transition_name)}");
+          } catch (ex) {
+            return __error("Failed: " + ex.toString());
+          }
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    remove_transition: {
+      description:
+        "Remove the transition at the start or end of a clip on the timeline. Uses QE DOM.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          track_type: {
+            type: "string",
+            enum: ["video", "audio"],
+            description: "Track type",
+          },
+          track_index: { type: "number", description: "Track index (0-based)" },
+          clip_index: { type: "number", description: "Clip index on the track" },
+          position: {
+            type: "string",
+            enum: ["start", "end"],
+            description: "Which transition to remove (default: start)",
+          },
+        },
+        required: ["track_type", "track_index", "clip_index"],
+      },
+      handler: async (args: {
+        track_type: string;
+        track_index: number;
+        clip_index: number;
+        position?: string;
+      }) => {
+        const position = args.position || "start";
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          app.enableQE();
+          try {
+            var qeSeq = qe.project.getActiveSequence();
+            var qeTrack = ${
+              args.track_type === "video"
+                ? `qeSeq.getVideoTrackAt(${args.track_index})`
+                : `qeSeq.getAudioTrackAt(${args.track_index})`
+            };
+            if (!qeTrack) return __error("QE track not found");
+            var qeClip = qeTrack.getItemAt(${args.clip_index});
+            if (!qeClip) return __error("QE clip not found");
+            qeClip.removeTransition(${position === "start" ? "true" : "false"});
+            return __result({ removed: true, position: "${position}" });
+          } catch (ex) {
+            return __error("Failed to remove transition: " + ex.toString());
+          }
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
   };
 }

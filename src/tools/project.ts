@@ -579,5 +579,45 @@ export function getProjectTools(bridgeOptions: BridgeOptions) {
         return sendCommand(script, bridgeOptions);
       },
     },
+
+    import_sequences_from_project: {
+      description:
+        "Import one or more sequences from another Premiere Pro project (.prproj) file into the current project.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          project_path: {
+            type: "string",
+            description: "Absolute path to the source .prproj file",
+          },
+          sequence_ids: {
+            type: "array",
+            description:
+              "Array of sequence IDs (or names) to import from the source project. Pass empty array to import all sequences.",
+          },
+        },
+        required: ["project_path"],
+      },
+      handler: async (args: { project_path: string; sequence_ids?: string[] }) => {
+        const ids = JSON.stringify(args.sequence_ids ?? []);
+        const script = buildToolScript(`
+          var path = "${escapeForExtendScript(args.project_path)}";
+          var ids = ${ids};
+          try {
+            var ok = app.project.importSequences
+              ? app.project.importSequences(path, ids)
+              : null;
+            if (ok === null) {
+              app.openDocument(path);
+              return __result({ imported: false, note: "importSequences API not available; opened source project instead." });
+            }
+            return __result({ imported: true, count: ids.length || "all" });
+          } catch (ex) {
+            return __error("Failed to import sequences: " + ex.toString());
+          }
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
   };
 }
