@@ -175,6 +175,44 @@
 3. **Phase 3.1 Dynamic Link AE** (research-heavy)
 4. Push to origin (15 commits ahead)
 
+### 📌 Session post-compact long-haul (batch 7-18, v1.1.4 → v1.1.15)
+
+**Tổng kết batch 7-18 (10 batches liên tục):** 362 → 422 tools (+60 net).
+
+| Batch | Version | Effects wrapped | Skip / Notes |
+|---|---|---|---|
+| 7 | v1.1.4 | Replicate, Roughen Edges, Bevel Edges, Reduce Interlace Flicker, Median Legacy | Bevel Edges thickness/intensity 0-1 normalized |
+| 8 | v1.1.5 | Color Replace, Color Pass, Gamma Correction, Channel Blur, Strobe Light | Adobe typo "Random Strobe Probablity"; Gamma stored 1-28 raw |
+| 9 | v1.1.6 | Lens Distortion, Posterize Time, Edge Feather, Magnify, Compound Blur | Compound Blur "Blur Layer" external ref NOT settable |
+| 10 | v1.1.7 | Brush Strokes, Emboss, Color Emboss, Linear Wipe, Radial Wipe | Linear/Radial Wipe are EFFECTS not Transitions |
+| 11 | v1.1.8 | ASC CDL, Color Space Transform, Cineon Converter, Solid Composite, Texturize | Texture Contrast clamps max 2.0; CST SCS/TCS Arb Data binary blobs |
+| 12 | v1.1.9 | Ramp, Grid, Checkerboard, 4-Color Gradient, Cell Pattern | **New pattern**: dup-name flag handling for Width/Height (slider vs feather), Color 4 (color vs panel toggle), Cells Vertical |
+| 13 | v1.1.10 | Venetian Blinds, Block Dissolve, Convolution Kernel, Compound Arithmetic, Pixel Motion Blur | Compound Arithmetic Second Source Layer ref NOT settable |
+| 14 | v1.1.11 | Color Key, Luma Key, Non Red Key, Circle, Ellipse | **400-tool milestone** passed |
+| 15 | v1.1.12 | Lightning, Vector Motion, Eyedropper Fill, Calculations, Alpha Adjust | **Skip**: Shape (binary Path/Appearance blobs); Calc Second Layer Opacity 0-1 normalized |
+| 16 | v1.1.13 | Turbulent Displace, Arithmetic, Auto Reframe, Radial Shadow, Paint Bucket | Auto Reframe Adjust Position getValue returns object — removed from wrapper |
+| 17 | v1.1.14 | Corner Pin, Transform, Offset, Fast Blur, Extract | Clean batch, 15 props verified |
+| 18 | v1.1.15 | Rolling Shutter Repair, Clip Name, Timecode, Video Limiter, Noise HLS | **Skip**: Metadata & Timecode Burn-in (6 dup metadata-line groups); Video Limiter Clip Level/Compression silently no-op (panel toggle gated) |
+
+**Patterns được phát hiện và áp dụng nhất quán:**
+1. **Dup-name flag pattern**: Khi effect có duplicate displayName (slider vs feather toggle, color vs panel toggle), wrapper declare `var fooSeen = false` trước property loop và guard với `&& !fooSeen` để chỉ set first occurrence.
+2. **Layer-ref props NOT settable**: Compound Blur "Blur Layer", Texturize "Texture Layer", Compound Arithmetic "Second Source Layer", Calculations "Second Layer", Set Matte "Take Matte From Layer" — all default to placeholder `4294967295` and reject API setValue. Wrapper chỉ expose other params + document limitation.
+3. **Binary blob props**: Color Space Transform "SCS Arb Data", Shape "Path"/"Appearance" — encoded blobs, không settable cleanly. Skip những effect chủ yếu là binary blobs (Shape).
+4. **Normalized vs percent**: nhiều effect có numeric props là 0-1 normalized (NOT 0-100 like UI suggests). Đã document từng wrapper: Bevel Edges Edge Thickness/Light Intensity, Calc Second Layer Opacity, Radial Shadow Opacity, Find Edges Blend With Original, Dust & Scratches Threshold, etc.
+5. **Adobe quirks**: Strobe Light "Random Strobe Probablity" (typo "Probablity"), Gamma Correction stored 1-28 raw (not gamma curve), Median Legacy matchName `AE.ADBE Median` (no Legacy suffix), Solarize matchName `PR.ADBE Solarize` (PR prefix not AE).
+
+**Pending còn lại (estimate ~3 batches):**
+- **Batch 19** — Noise HLS Auto, Noise Alpha, Remove Matte, Write-on, Timewarp
+- **Batch 20** — SDR Conform, Vertical/Horizontal Flip (toggles), Lighting Effects, Gradient Wipe
+- **Batch 21** — VR effects (Plane to Sphere, Rotate Sphere, VR Blur, VR Sharpen, VR Glow, VR Color Gradients, VR Projection, VR Digital Glitch, VR Chromatic Aberrations, VR Fractal Noise, VR De-Noise) — có thể nén thành 1-2 batch lớn
+
+→ Sau batch 21: tổng ~437-440 tools, hoàn thành effect-wrapping work.
+
+**Sau khi xong effects:**
+1. Phase 3.1 Dynamic Link AE — research-heavy, cần AE running, defer to next session
+2. Push to origin (24 commits ahead khi commit batch 18)
+3. Possible v1.2.0 jump as a major-feature checkpoint
+
 ### 📌 Session post-compact progress (2026-05-10 batch 6) — v1.1.6 release
 
 **Đã hoàn thành (372 → 377):**
