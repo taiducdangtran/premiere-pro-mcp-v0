@@ -24,6 +24,9 @@
 | (next) | **Phase 3.5 VR/360** — 3 tools (get_sequence_vr_settings, set_sequence_vr_settings, list_vr_effects_and_transitions) | **346** | +3 (round-trip verified). 3.6 Surround pan: NOT FEASIBLE (track has no pan API). |
 | (next) | **Phase 4 batch 5 + clear_sequence_in_out fix** — 8 effect wrappers (Tint, Alpha Glow, Posterize, Threshold, Find Edges, Mirror, Sharpen, ProcAmp) + latent bug fix | **354** | +8 (runtime verified) |
 | (next) | **Phase 4 batch 6** — 8 effect wrappers (Echo, Solarize, Spherize, Twirl, Wave Warp, Bevel Alpha, Noise, Dust & Scratches) | **362** | +8 (runtime verified) |
+| (next) | **v1.1.3 release checkpoint** — package.json bump 1.1.2→1.1.3, CHANGELOG backfill v1.1.0/v1.1.1/v1.1.2/v1.1.3 | **362** | net 0 (release) |
+| (next) | **Phase 4 batch 7** — 5 effect wrappers (Replicate, Roughen Edges, Bevel Edges, Reduce Interlace Flicker, Median Legacy) | **367** | +5 (runtime verified) |
+| (next) | **v1.1.4 release** — package.json 1.1.3→1.1.4, CHANGELOG entry | **367** | net 0 (release) |
 
 ### 📌 Session continuation note (post-compact, 2026-05-10)
 
@@ -78,6 +81,58 @@
 3. Workspace tools — save_workspace_layout, auto_save_settings, create_project_from_template
 4. Phase 3.1 Dynamic Link AE (research-heavy, defer)
 5. v1.1.3 bump sau khi xong Phase 3 hoàn chỉnh
+
+### 📌 Session post-compact progress (2026-05-10 batch 3) — v1.1.3 release
+
+**Đã hoàn thành sau batch 2 (5 commits, 346 → 362, +16 net):**
+
+1. ✅ **Phase 4 batch 5** (commit `e20ae6e`, 346 → 354):
+   - 8 effect wrappers: `apply_tint`, `apply_alpha_glow`, `apply_posterize`, `apply_threshold`, `apply_find_edges`, `apply_mirror`, `apply_sharpen`, `apply_proc_amp`
+   - Latent bug fix: `clear_sequence_in_out` (track-targeting.ts:924) — replaced `seq.setInPoint(seq.zeroPoint.ticks)` (Number, Illegal Parameter type) với `seq.setInPoint("0")` literal
+   - Property scale phát hiện: "Blend With Original" trong Find Edges là 0.0-1.0 (không phải 0-100). Description updated.
+
+2. ✅ **Phase 4 batch 6** (commit `68d971f`, 354 → 362):
+   - 8 effect wrappers: `apply_echo`, `apply_solarize`, `apply_spherize`, `apply_twirl`, `apply_wave_warp`, `apply_bevel_alpha`, `apply_noise`, `apply_dust_and_scratches`
+   - Property scale phát hiện: "Threshold" trong Dust & Scratches là 0.0-1.0 normalized (không phải 0-255). Description updated.
+   - matchName anomaly: Solarize dùng prefix `PR.ADBE Solarize` (không phải typical `AE.ADBE`). Documented.
+
+3. ✅ **v1.1.3 release checkpoint** (commit `19a2692`):
+   - `package.json`: 1.1.2 → 1.1.3, description tool count 340 → 362
+   - `CHANGELOG.md` backfilled: v1.1.0 (HTTP/SSE), v1.1.1 (bug fixes), v1.1.2 (Phase 1+2 + 25.4 regression fixes), v1.1.3 (Phase 3.5/3.8 + Phase 4 batch 5/6)
+
+**Cumulative this multi-session work (v1.1.2 → v1.1.3):**
+- 307 → 362 tools (+55 net)
+- 12 commits on local main, ahead of origin
+- All effect wrappers runtime-verified on test clip C7984.MP4
+- Test clip cleaned up (chỉ còn intrinsic Opacity + Motion)
+
+**Pending sau v1.1.3 (theo ROI):**
+1. **Phase 4 batch 7** — Replicate, Roughen Edges, Bevel Edges, Reduce Interlace Flicker, Median (Legacy) — đã probed trong catalog, chưa wrap
+2. **Workspace tools** — save_workspace_layout, auto_save_settings, create_project_from_template
+3. **Phase 3.1 Dynamic Link AE** (research-heavy, cần AE)
+4. Push to origin (12 commits ahead)
+
+### 📌 Session post-compact progress (2026-05-10 batch 4) — v1.1.4 release
+
+**Đã hoàn thành sau v1.1.3 (uncommitted, 362 → 367):**
+
+1. ✅ **Phase 4 batch 7** (362 → 367):
+   - 5 effect wrappers: `apply_replicate`, `apply_roughen_edges`, `apply_bevel_edges`, `apply_reduce_interlace_flicker`, `apply_median_legacy`
+   - Property scale notes:
+     - **Bevel Edges**: Edge Thickness và Light Intensity 0.0-1.0 normalized (KHÔNG phải 0-100). Default 0.1 / 0.4.
+     - **Median (Legacy)**: matchName là `AE.ADBE Median` — không có suffix "Legacy" trong matchName.
+     - **Roughen Edges**: có 2 dup props "Random Seed" (int seed + bool toggle) — wrapper bỏ qua, dùng default 0.
+   - Round-trip verified via `execute_extendscript`: setValue → getValue cho Count=3, Edge Type=3 (Spiky), Border=20, Edge Sharpness=2, Complexity=4, Edge Thickness=0.3, Light Angle=45, Light Intensity=0.6, Softness=1.0, Radius=2, Operate On Alpha Channel=true.
+
+2. ✅ **v1.1.4 release**:
+   - `package.json` 1.1.3 → 1.1.4, description "362 tools" → "367 tools"
+   - `CHANGELOG.md` thêm entry [1.1.4]
+
+**Pending sau v1.1.4 (theo ROI):**
+1. **Workspace tools** — save_workspace_layout, auto_save_settings, create_project_from_template
+2. **More Phase 4 batches** nếu user đề xuất (còn nhiều effect Premiere ngoài 27 đã wrap)
+3. **Phase 3.1 Dynamic Link AE** (research-heavy)
+4. Push to origin (14 commits ahead khi commit batch 7)
 
 ### Key discoveries — Premiere 25.4 ExtendScript regressions & limitations
 

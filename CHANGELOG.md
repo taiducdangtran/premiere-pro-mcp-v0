@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.4] - 2026-05-10
+
+### Added — 5 new tools (362 → 367)
+
+#### Phase 4 batch 7 — Stylize/Distort/Quality wrappers (5 tools, `src/tools/effects.ts`)
+
+- **`apply_replicate`** — divide screen into NxN grid, each cell shows a scaled copy of the clip (warhol effect). Param: count (integer 2-10).
+- **`apply_roughen_edges`** — fractal-noise distortion of alpha edges with 9 styles (Roughen/Cut/Spiky/Stained Glass/Photocopy/Rusty + color variants). Params: edge_type, border, edge_sharpness, fractal_influence, scale, complexity, evolution.
+- **`apply_bevel_edges`** — 3D bevel along rectangular frame (use `apply_bevel_alpha` for alpha-shaped bevel). Params: edge_thickness (0-1 normalized), light_angle, light_intensity (0-1 normalized).
+- **`apply_reduce_interlace_flicker`** — vertical softening to suppress interlace flicker on 1080i/SD output. Param: softness.
+- **`apply_median_legacy`** — median-filter neighborhoods, removes salt-and-pepper noise; painterly look at higher radii. Params: radius (pixels), operate_on_alpha.
+
+### Changed
+
+- Tool count: 362 → 367
+- Updated `package.json` description to reflect new total
+
+### Verified
+
+- All 5 effects probed in 25.4.1; property names canonicalized; setValue() round-trip verified for: Count, Edge Type/Border/Edge Sharpness/Complexity, Edge Thickness/Light Angle/Light Intensity, Softness, Radius/Operate On Alpha Channel.
+- Property scale notes captured in tool descriptions (Bevel Edges thickness/intensity are 0-1 normalized, not 0-100).
+
 ## [1.1.3] - 2026-05-10
 
 ### Added — 22 new tools (340 → 362)

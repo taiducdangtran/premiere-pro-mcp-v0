@@ -3054,5 +3054,312 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
         return sendCommand(script, bridgeOptions);
       },
     },
+
+    apply_replicate: {
+      description:
+        "Apply Replicate effect — divides screen into a grid and shows a scaled-down copy of the clip in each cell. Useful for warhol/multiplication looks.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          count: { type: "number", description: "Grid size NxN (default 2 → 2x2 = 4 copies). Integer 2-10. Higher = more cells, smaller copies." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; count?: number }) => {
+        const setLines: string[] = [];
+        if (args.count !== undefined) setLines.push(`if (n === "Count") prop.setValue(${Math.round(args.count)}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Replicate is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Replicate") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Replicate");
+            if (!eff || !eff.name) return __error("Replicate effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Replicate") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_roughen_edges: {
+      description:
+        "Apply Roughen Edges effect — distorts alpha edges with fractal noise for grungy/torn-paper looks. Multiple edge styles (rough/spiky/photocopy/rusty etc.).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          edge_type: { type: "number", description: "Edge style 0-8: 0=Roughen, 1=Roughen Color, 2=Cut, 3=Spiky, 4=Stained Glass, 5=Photocopy, 6=Photocopy Color, 7=Rusty, 8=Rusty Color (default 0)" },
+          border: { type: "number", description: "Border thickness in pixels (default 8)" },
+          edge_sharpness: { type: "number", description: "Edge sharpness (default 1, higher = harder edges)" },
+          fractal_influence: { type: "number", description: "Fractal noise contribution 0-2 (default 1)" },
+          scale: { type: "number", description: "Fractal scale (default 100)" },
+          complexity: { type: "number", description: "Noise complexity 1-10 integer (default 2)" },
+          evolution: { type: "number", description: "Evolution angle in degrees (default 0). Animate to evolve fractal pattern." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        edge_type?: number;
+        border?: number;
+        edge_sharpness?: number;
+        fractal_influence?: number;
+        scale?: number;
+        complexity?: number;
+        evolution?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.edge_type !== undefined) setLines.push(`if (n === "Edge Type") prop.setValue(${Math.round(args.edge_type)}, true);`);
+        if (args.border !== undefined) setLines.push(`if (n === "Border") prop.setValue(${args.border}, true);`);
+        if (args.edge_sharpness !== undefined) setLines.push(`if (n === "Edge Sharpness") prop.setValue(${args.edge_sharpness}, true);`);
+        if (args.fractal_influence !== undefined) setLines.push(`if (n === "Fractal Influence") prop.setValue(${args.fractal_influence}, true);`);
+        if (args.scale !== undefined) setLines.push(`if (n === "Scale") prop.setValue(${args.scale}, true);`);
+        if (args.complexity !== undefined) setLines.push(`if (n === "Complexity") prop.setValue(${Math.round(args.complexity)}, true);`);
+        if (args.evolution !== undefined) setLines.push(`if (n === "Evolution") prop.setValue(${args.evolution}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Roughen Edges is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Roughen Edges") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Roughen Edges");
+            if (!eff || !eff.name) return __error("Roughen Edges effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Roughen Edges") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_bevel_edges: {
+      description:
+        "Apply Bevel Edges effect — adds 3D-look bevel along the rectangular frame edges. For rounded/alpha-shaped bevels use apply_bevel_alpha instead.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          edge_thickness: { type: "number", description: "Edge thickness 0.0-1.0 normalized (default 0.1). Note: normalized, not pixels." },
+          light_angle: { type: "number", description: "Light angle in degrees (default -60)" },
+          light_intensity: { type: "number", description: "Light intensity 0.0-1.0 normalized (default 0.4)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        edge_thickness?: number;
+        light_angle?: number;
+        light_intensity?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.edge_thickness !== undefined) setLines.push(`if (n === "Edge Thickness") prop.setValue(${args.edge_thickness}, true);`);
+        if (args.light_angle !== undefined) setLines.push(`if (n === "Light Angle") prop.setValue(${args.light_angle}, true);`);
+        if (args.light_intensity !== undefined) setLines.push(`if (n === "Light Intensity") prop.setValue(${args.light_intensity}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Bevel Edges is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Bevel Edges") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Bevel Edges");
+            if (!eff || !eff.name) return __error("Bevel Edges effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Bevel Edges") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_reduce_interlace_flicker: {
+      description:
+        "Apply Reduce Interlace Flicker effect — softens horizontal lines that flicker on interlaced output (typical of fine high-contrast detail in 1080i/SD).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          softness: { type: "number", description: "Softness amount (default 0). Higher = stronger vertical blur to suppress flicker. Typical range 0.0-2.0." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; softness?: number }) => {
+        const setLines: string[] = [];
+        if (args.softness !== undefined) setLines.push(`if (n === "Softness") prop.setValue(${args.softness}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Reduce Interlace Flicker is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Reduce Interlace Flicker") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Reduce Interlace Flicker");
+            if (!eff || !eff.name) return __error("Reduce Interlace Flicker effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Reduce Interlace Flicker") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_median_legacy: {
+      description:
+        "Apply Median (Legacy) effect — replaces each pixel with the median of neighboring pixels. Removes salt-and-pepper noise; creates a painterly look at higher radii.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          radius: { type: "number", description: "Neighborhood radius in pixels (default 0 = no effect, typical 1-5). Larger = stronger smoothing/painterly look but heavier compute." },
+          operate_on_alpha: { type: "boolean", description: "Apply median to alpha channel too (default false)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; radius?: number; operate_on_alpha?: boolean }) => {
+        const setLines: string[] = [];
+        if (args.radius !== undefined) setLines.push(`if (n === "Radius") prop.setValue(${args.radius}, true);`);
+        if (args.operate_on_alpha !== undefined) setLines.push(`if (n === "Operate On Alpha Channel") prop.setValue(${args.operate_on_alpha ? "true" : "false"}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Median (Legacy) is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Median (Legacy)") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Median (Legacy)");
+            if (!eff || !eff.name) return __error("Median (Legacy) effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Median (Legacy)") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
   };
 }
