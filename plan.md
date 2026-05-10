@@ -270,6 +270,7 @@
 
 | Feature | Lý do |
 |---|---|
+| **Phase 3.1 Dynamic Link AE — replace_with_ae_comp / round-trip workflow** | `app.dynamicLink` undefined. `app.openInAE`/`clip.openInAE`/`clip.replaceWithAEComp`/`clip.createReplacementComp`/`seq.replaceClipsWithAEComp` đều undefined. Chỉ có `app.project.importAEComps(aepPath, [names])` và `importAllAEComps(aepPath)` — already wrapped qua existing `import_ae_comps` tool. UI-only "Replace With After Effects Composition" command không expose qua ExtendScript. Cần AE running để test khả năng `.executeMenuCommand`/`callSystem` workarounds, nhưng app.executeCommand/findMenuCommandId cũng undefined trong 25.4. **Phase 3.1 đóng lại — chỉ import AE comps khả thi.** |
 | Save workspace layout / Save Workspace As | `app.saveWorkspace`, `saveWorkspaceAs`, `deleteWorkspace`, `getCurrentWorkspace`, `refreshCurrentWorkspace` đều undefined. Chỉ `getWorkspaces()` và `setWorkspace(name)` có. UI-only operation. |
 | Auto-save preferences config | `app.preferences`, `app.autoSavePrefs`, `app.userPreferences` đều undefined. `app.properties.setProperty(key, value)` exists nhưng wild-key API — Adobe không document keys, probe 19 common candidates đều miss. |
 | Mask bezier path / addMask / addBezierMask | Method không tồn tại ở mọi level (DOM, QE clip, QE sequence, qe.project) |
