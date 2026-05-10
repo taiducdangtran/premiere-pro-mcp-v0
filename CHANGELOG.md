@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.16] - 2026-05-10
+
+### Added — 5 new tools (422 → 427)
+
+#### Phase 4 batch 19 — Noise/matte/animation/retiming (5 tools, `src/tools/effects.ts`)
+
+- **`apply_noise_hls_auto`** — animated HLS-channel noise with built-in Noise Animation Speed fps (no keyframing needed).
+- **`apply_noise_alpha`** — alpha-channel noise (grungy edges, weathered overlays).
+- **`apply_remove_matte`** — removes premultiplied edge fringing (White or Black matte cleanup).
+- **`apply_write_on`** — animated brush stroke. Animate brush_position to draw; stroke_length controls trail fade.
+- **`apply_timewarp`** — frame-accurate retiming with optical-flow / pixel-motion / frame-blend (preserves motion blur). Wrapper exposes stable numeric/enum props; Smoothing/Tuning/Weighting/Motion Blur panel toggles return object — skipped from wrapper.
+
+### Changed
+
+- Tool count: 422 → 427
+- Updated `package.json` description
+
+### Verified
+
+- 15 properties round-trip verified.
+
 ## [1.1.15] - 2026-05-10
 
 ### Added — 5 new tools (417 → 422)

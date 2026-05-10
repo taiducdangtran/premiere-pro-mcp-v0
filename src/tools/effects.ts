@@ -3305,6 +3305,344 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_noise_hls_auto: {
+      description:
+        "Apply Noise HLS Auto — animated color-aware noise (auto-evolves over time at noise_animation_speed fps). Like apply_noise_hls but built-in animation; no need to keyframe Phase.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          noise_type: { type: "number", description: "0=Uniform (default), 1=Squared, 2=Grain" },
+          hue: { type: "number", description: "Hue noise amount 0-100 (default 0)" },
+          lightness: { type: "number", description: "Lightness noise 0-100 (default 0)" },
+          saturation: { type: "number", description: "Saturation noise 0-100 (default 0)" },
+          grain_size: { type: "number", description: "Grain size (default 1)" },
+          noise_animation_speed: { type: "number", description: "Auto-animation speed fps (default 24)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.noise_type !== undefined) setLines.push(`if (n === "Noise") prop.setValue(${Math.round(args.noise_type)}, true);`);
+        if (args.hue !== undefined) setLines.push(`if (n === "Hue") prop.setValue(${args.hue}, true);`);
+        if (args.lightness !== undefined) setLines.push(`if (n === "Lightness") prop.setValue(${args.lightness}, true);`);
+        if (args.saturation !== undefined) setLines.push(`if (n === "Saturation") prop.setValue(${args.saturation}, true);`);
+        if (args.grain_size !== undefined) setLines.push(`if (n === "Grain Size") prop.setValue(${args.grain_size}, true);`);
+        if (args.noise_animation_speed !== undefined) setLines.push(`if (n === "Noise Animation Speed") prop.setValue(${args.noise_animation_speed}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Noise HLS Auto is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Noise HLS Auto") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Noise HLS Auto");
+            if (!eff || !eff.name) return __error("Noise HLS Auto effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Noise HLS Auto") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_noise_alpha: {
+      description:
+        "Apply Noise Alpha effect — adds noise to the alpha channel only. Useful for grungy edges, weathered overlays, animated grain on titles.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          noise_type: { type: "number", description: "Noise type enum (default 0=Uniform Random)" },
+          amount: { type: "number", description: "Noise amount 0-200 (default 0)" },
+          original_alpha: { type: "number", description: "Original Alpha mode enum (default 1=Add)" },
+          overflow: { type: "number", description: "Overflow handling enum (default 1=Clip)" },
+          contextual_control: { type: "number", description: "Contextual slider (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.noise_type !== undefined) setLines.push(`if (n === "Noise") prop.setValue(${Math.round(args.noise_type)}, true);`);
+        if (args.amount !== undefined) setLines.push(`if (n === "Amount") prop.setValue(${args.amount}, true);`);
+        if (args.original_alpha !== undefined) setLines.push(`if (n === "Original Alpha") prop.setValue(${Math.round(args.original_alpha)}, true);`);
+        if (args.overflow !== undefined) setLines.push(`if (n === "Overflow") prop.setValue(${Math.round(args.overflow)}, true);`);
+        if (args.contextual_control !== undefined) setLines.push(`if (n === "Contextual Control") prop.setValue(${args.contextual_control}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Noise Alpha is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Noise Alpha") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Noise Alpha");
+            if (!eff || !eff.name) return __error("Noise Alpha effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Noise Alpha") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_remove_matte: {
+      description:
+        "Apply Remove Matte effect — removes color fringing from premultiplied edges (Black or White matte cleanup). Single param: matte_type.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          matte_type: { type: "number", description: "0=White (default), 1=Black. Choose the color the source was premultiplied against." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; matte_type?: number }) => {
+        const setLines: string[] = [];
+        if (args.matte_type !== undefined) setLines.push(`if (n === "Matte Type") prop.setValue(${Math.round(args.matte_type)}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Remove Matte is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Remove Matte") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Remove Matte");
+            if (!eff || !eff.name) return __error("Remove Matte effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Remove Matte") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_write_on: {
+      description:
+        "Apply Write-on effect — animated brush stroke that draws on a path over time. Animate `brush_position` to draw the stroke; use stroke_length to fade the trail.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          brush_x: { type: "number", description: "Brush X 0.0-1.0 (default 0.5). Animate to draw." },
+          brush_y: { type: "number", description: "Brush Y 0.0-1.0 (default 0.5)" },
+          color: { type: "array", items: { type: "number" }, description: "Brush color [R,G,B] 0-255 (default white)" },
+          brush_size: { type: "number", description: "Brush diameter (default 2)" },
+          brush_hardness: { type: "number", description: "Brush hardness 0-1 (default 0.75)" },
+          brush_opacity: { type: "number", description: "Brush opacity 0-1 (default 1)" },
+          stroke_length: { type: "number", description: "Stroke trail length in seconds (default 0 = persistent)" },
+          brush_spacing: { type: "number", description: "Brush spacing in seconds (default 0.01)" },
+          paint_style: { type: "number", description: "Paint style enum (default 0=On Original Image)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.brush_x !== undefined || args.brush_y !== undefined) {
+          const bx = args.brush_x ?? 0.5;
+          const by = args.brush_y ?? 0.5;
+          setLines.push(`if (n === "Brush Position") prop.setValue([${bx}, ${by}], true);`);
+        }
+        if (args.brush_size !== undefined) setLines.push(`if (n === "Brush Size") prop.setValue(${args.brush_size}, true);`);
+        if (args.brush_hardness !== undefined) setLines.push(`if (n === "Brush Hardness") prop.setValue(${args.brush_hardness}, true);`);
+        if (args.brush_opacity !== undefined) setLines.push(`if (n === "Brush Opacity") prop.setValue(${args.brush_opacity}, true);`);
+        if (args.stroke_length !== undefined) setLines.push(`if (n === "Stroke Length (secs)") prop.setValue(${args.stroke_length}, true);`);
+        if (args.brush_spacing !== undefined) setLines.push(`if (n === "Brush Spacing (secs)") prop.setValue(${args.brush_spacing}, true);`);
+        if (args.paint_style !== undefined) setLines.push(`if (n === "Paint Style") prop.setValue(${Math.round(args.paint_style)}, true);`);
+        if (args.color && args.color.length >= 3) {
+          const [r, g, b] = args.color;
+          const a = args.color[3] ?? 255;
+          setLines.push(`if (n === "Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Write-on is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Write-on") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Write-on");
+            if (!eff || !eff.name) return __error("Write-on effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Write-on") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_timewarp: {
+      description:
+        "Apply Timewarp effect — frame-accurate time retiming with optical-flow / pixel-motion / frame-blend modes (alternative to clip-level speed change). Useful when you need slow-motion that preserves motion blur. Note: 'Smoothing' has dup name (slider + toggle); 'Tuning' / 'Weighting' / 'Motion Blur' panel toggles return object — wrapper exposes only stable numeric/enum props.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          method: { type: "number", description: "Method enum: 0=Whole Frames, 1=Frame Mix, 2=Pixel Motion (default)" },
+          adjust_time_by: { type: "number", description: "0=Speed (default), 1=Source Frame" },
+          speed: { type: "number", description: "Speed percent (default 50). Used when adjust_time_by=0." },
+          source_frame: { type: "number", description: "Source frame number (default 0). Used when adjust_time_by=1." },
+          vector_detail: { type: "number", description: "Motion-vector detail percent (default 20)" },
+          global_smoothness: { type: "number", description: "Global smoothness (default 500)" },
+          local_smoothness: { type: "number", description: "Local smoothness (default 500)" },
+          smoothing_iterations: { type: "number", description: "Smoothing iterations (default 5)" },
+          filtering: { type: "number", description: "Filtering enum (default 0)" },
+          error_threshold: { type: "number", description: "Error threshold (default 1)" },
+          block_size: { type: "number", description: "Block size (default 6)" },
+          shutter_control: { type: "number", description: "Shutter control enum (default 1)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.method !== undefined) setLines.push(`if (n === "Method") prop.setValue(${Math.round(args.method)}, true);`);
+        if (args.adjust_time_by !== undefined) setLines.push(`if (n === "Adjust Time By") prop.setValue(${Math.round(args.adjust_time_by)}, true);`);
+        if (args.speed !== undefined) setLines.push(`if (n === "Speed") prop.setValue(${args.speed}, true);`);
+        if (args.source_frame !== undefined) setLines.push(`if (n === "Source Frame") prop.setValue(${args.source_frame}, true);`);
+        if (args.vector_detail !== undefined) setLines.push(`if (n === "Vector Detail") prop.setValue(${args.vector_detail}, true);`);
+        if (args.global_smoothness !== undefined) setLines.push(`if (n === "Global Smoothness") prop.setValue(${args.global_smoothness}, true);`);
+        if (args.local_smoothness !== undefined) setLines.push(`if (n === "Local Smoothness") prop.setValue(${args.local_smoothness}, true);`);
+        if (args.smoothing_iterations !== undefined) setLines.push(`if (n === "Smoothing Iterations") prop.setValue(${args.smoothing_iterations}, true);`);
+        if (args.filtering !== undefined) setLines.push(`if (n === "Filtering") prop.setValue(${Math.round(args.filtering)}, true);`);
+        if (args.error_threshold !== undefined) setLines.push(`if (n === "Error Threshold") prop.setValue(${args.error_threshold}, true);`);
+        if (args.block_size !== undefined) setLines.push(`if (n === "Block Size") prop.setValue(${args.block_size}, true);`);
+        if (args.shutter_control !== undefined) setLines.push(`if (n === "Shutter Control") prop.setValue(${Math.round(args.shutter_control)}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Timewarp is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Timewarp") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Timewarp");
+            if (!eff || !eff.name) return __error("Timewarp effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Timewarp") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_rolling_shutter_repair: {
       description:
         "Apply Rolling Shutter Repair — corrects skew/wobble caused by rolling-shutter sensors during fast pan/whip. Set rolling_shutter_rate based on sensor; typical 50% for many cameras.",

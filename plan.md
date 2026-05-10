@@ -193,6 +193,7 @@
 | 16 | v1.1.13 | Turbulent Displace, Arithmetic, Auto Reframe, Radial Shadow, Paint Bucket | Auto Reframe Adjust Position getValue returns object — removed from wrapper |
 | 17 | v1.1.14 | Corner Pin, Transform, Offset, Fast Blur, Extract | Clean batch, 15 props verified |
 | 18 | v1.1.15 | Rolling Shutter Repair, Clip Name, Timecode, Video Limiter, Noise HLS | **Skip**: Metadata & Timecode Burn-in (6 dup metadata-line groups); Video Limiter Clip Level/Compression silently no-op (panel toggle gated) |
+| 19 | v1.1.16 | Noise HLS Auto, Noise Alpha, Remove Matte, Write-on, Timewarp | Timewarp Smoothing/Tuning/Weighting/Motion Blur panel toggles return object — skipped from wrapper |
 
 **Patterns được phát hiện và áp dụng nhất quán:**
 1. **Dup-name flag pattern**: Khi effect có duplicate displayName (slider vs feather toggle, color vs panel toggle), wrapper declare `var fooSeen = false` trước property loop và guard với `&& !fooSeen` để chỉ set first occurrence.
