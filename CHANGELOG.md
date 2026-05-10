@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.17] - 2026-05-10
+
+### Added — 5 new tools (427 → 432)
+
+#### Phase 4 batch 20 — HDR/flip/lighting/wipe (5 tools, `src/tools/effects.ts`)
+
+- **`apply_sdr_conform`** — quick brightness/contrast/soft-knee for HDR→SDR or SDR delivery.
+- **`apply_vertical_flip`** — flip top-to-bottom (no params, toggle).
+- **`apply_horizontal_flip`** — flip left-to-right (no params, toggle).
+- **`apply_lighting_effects`** — Photoshop-style multi-light (5 lights + ambient + bump). Wrapper exposes Light 1 + ambient/surface params using seen-flag pattern. Light 2-5 require apply_effect_with_properties.
+- **`apply_gradient_wipe`** — luminance-mapped wipe (Gradient Layer ref NOT settable from API).
+
+### Changed
+
+- Tool count: 427 → 432
+- Updated `package.json` description
+
+### Verified
+
+- 13 properties + 2 toggle effects round-trip verified.
+
+### Discovery
+
+- **Gradient Wipe `Transition Completion` / `Transition Softness` are 0.0-1.0 normalized** (NOT 0-100 like Linear/Radial Wipe). Set 50 clamps to 1.0. Documented in description.
+- **Lighting Effects has 5 lights × 9 props each = 45 dup-named props**. Wrapper uses 8 seen-flag vars (lightTypeSeen, lightColorSeen, centerSeen, majSeen, minSeen, angleSeen, intensitySeen, focusSeen) to target Light 1 only.
+
 ## [1.1.16] - 2026-05-10
 
 ### Added — 5 new tools (422 → 427)

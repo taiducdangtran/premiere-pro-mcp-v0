@@ -3305,6 +3305,301 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_sdr_conform: {
+      description:
+        "Apply SDR Conform effect — quick brightness/contrast/soft-knee adjustments for HDR→SDR conversion or general tone-mapping. Lightweight alternative to Lumetri Color for simple SDR delivery.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          brightness: { type: "number", description: "Brightness offset (default 10)" },
+          contrast: { type: "number", description: "Contrast (default 0)" },
+          soft_knee: { type: "number", description: "Soft knee compression at highlights 0-100 (default 100)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; brightness?: number; contrast?: number; soft_knee?: number }) => {
+        const setLines: string[] = [];
+        if (args.brightness !== undefined) setLines.push(`if (n === "Brightness") prop.setValue(${args.brightness}, true);`);
+        if (args.contrast !== undefined) setLines.push(`if (n === "Contrast") prop.setValue(${args.contrast}, true);`);
+        if (args.soft_knee !== undefined) setLines.push(`if (n === "Soft Knee") prop.setValue(${args.soft_knee}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("SDR Conform is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "SDR Conform") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("SDR Conform");
+            if (!eff || !eff.name) return __error("SDR Conform effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "SDR Conform") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_vertical_flip: {
+      description:
+        "Apply Vertical Flip effect — flips clip top-to-bottom (mirror Y). Toggle effect; no parameters.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string }) => {
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Vertical Flip is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Vertical Flip") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Vertical Flip");
+            if (!eff || !eff.name) return __error("Vertical Flip effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_horizontal_flip: {
+      description:
+        "Apply Horizontal Flip effect — flips clip left-to-right (mirror X). Toggle effect; no parameters.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string }) => {
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Horizontal Flip is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Horizontal Flip") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Horizontal Flip");
+            if (!eff || !eff.name) return __error("Horizontal Flip effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_lighting_effects: {
+      description:
+        "Apply Lighting Effects — multi-light photoshop-style lighting (5 lights + ambient + bump). Wrapper exposes Light 1 + ambient/surface params. Use seen-flag pattern to target Light 1 (first occurrence of each shared name). For Light 2-5, use apply_effect_with_properties.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          light1_type: { type: "number", description: "Light 1 type enum: 0=None, 1=Directional, 2=Omni, 3=Spotlight (default)" },
+          light1_color: { type: "array", items: { type: "number" }, description: "Light 1 color [R,G,B] 0-255 (default white)" },
+          light1_center_x: { type: "number", description: "Light 1 center X 0-1 (default 0.5)" },
+          light1_center_y: { type: "number", description: "Light 1 center Y 0-1 (default 0.5)" },
+          light1_major_radius: { type: "number", description: "Light 1 major radius (default 30)" },
+          light1_minor_radius: { type: "number", description: "Light 1 minor radius (default 20)" },
+          light1_angle: { type: "number", description: "Light 1 angle in degrees (default 225)" },
+          light1_intensity: { type: "number", description: "Light 1 intensity 0-100 (default 30)" },
+          light1_focus: { type: "number", description: "Light 1 focus 0-100 (default 50)" },
+          ambient_light_color: { type: "array", items: { type: "number" }, description: "Ambient light color [R,G,B] 0-255" },
+          ambience_intensity: { type: "number", description: "Ambience intensity 0-100 (default 20)" },
+          surface_gloss: { type: "number", description: "Surface gloss -100..100 (default 0)" },
+          surface_material: { type: "number", description: "Surface material -100..100 (default 45)" },
+          exposure: { type: "number", description: "Exposure -100..100 (default 0)" },
+          bump_height: { type: "number", description: "Bump map height 0-100 (default 50)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.light1_type !== undefined) setLines.push(`if (n === "Light Type" && !lightTypeSeen) { prop.setValue(${Math.round(args.light1_type)}, true); lightTypeSeen = true; }`);
+        if (args.light1_color && args.light1_color.length >= 3) {
+          const [r, g, b] = args.light1_color;
+          const a = args.light1_color[3] ?? 255;
+          setLines.push(`if (n === "Light Color" && !lightColorSeen) { prop.setColorValue(${r}, ${g}, ${b}, ${a}); lightColorSeen = true; }`);
+        }
+        if (args.light1_center_x !== undefined || args.light1_center_y !== undefined) {
+          const cx = args.light1_center_x ?? 0.5;
+          const cy = args.light1_center_y ?? 0.5;
+          setLines.push(`if (n === "Center" && !centerSeen) { prop.setValue([${cx}, ${cy}], true); centerSeen = true; }`);
+        }
+        if (args.light1_major_radius !== undefined) setLines.push(`if (n === "Major Radius" && !majSeen) { prop.setValue(${args.light1_major_radius}, true); majSeen = true; }`);
+        if (args.light1_minor_radius !== undefined) setLines.push(`if (n === "Minor Radius" && !minSeen) { prop.setValue(${args.light1_minor_radius}, true); minSeen = true; }`);
+        if (args.light1_angle !== undefined) setLines.push(`if (n === "Angle" && !angleSeen) { prop.setValue(${args.light1_angle}, true); angleSeen = true; }`);
+        if (args.light1_intensity !== undefined) setLines.push(`if (n === "Intensity" && !intensitySeen) { prop.setValue(${args.light1_intensity}, true); intensitySeen = true; }`);
+        if (args.light1_focus !== undefined) setLines.push(`if (n === "Focus" && !focusSeen) { prop.setValue(${args.light1_focus}, true); focusSeen = true; }`);
+        if (args.ambient_light_color && args.ambient_light_color.length >= 3) {
+          const [r, g, b] = args.ambient_light_color;
+          const a = args.ambient_light_color[3] ?? 255;
+          setLines.push(`if (n === "Ambient Light Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+        if (args.ambience_intensity !== undefined) setLines.push(`if (n === "Ambience Intensity") prop.setValue(${args.ambience_intensity}, true);`);
+        if (args.surface_gloss !== undefined) setLines.push(`if (n === "Surface Gloss") prop.setValue(${args.surface_gloss}, true);`);
+        if (args.surface_material !== undefined) setLines.push(`if (n === "Surface Material") prop.setValue(${args.surface_material}, true);`);
+        if (args.exposure !== undefined) setLines.push(`if (n === "Exposure") prop.setValue(${args.exposure}, true);`);
+        if (args.bump_height !== undefined) setLines.push(`if (n === "Bump Height") prop.setValue(${args.bump_height}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Lighting Effects is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Lighting Effects") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Lighting Effects");
+            if (!eff || !eff.name) return __error("Lighting Effects effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Lighting Effects") {
+              var lightTypeSeen = false; var lightColorSeen = false; var centerSeen = false;
+              var majSeen = false; var minSeen = false; var angleSeen = false;
+              var intensitySeen = false; var focusSeen = false;
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_gradient_wipe: {
+      description:
+        "Apply Gradient Wipe effect — uses a gradient image's luminance as a wipe mask (e.g. dissolve from a brush stroke gradient). Note: 'Gradient Layer' selects external layer reference and is NOT settable from API in 25.4. Other params still useful for adjusting an already-set wipe.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          transition_completion: { type: "number", description: "Wipe progress 0.0-1.0 normalized (default 0). Note: NOT 0-100 like Linear/Radial Wipe — Gradient Wipe uses 0-1." },
+          transition_softness: { type: "number", description: "Wipe edge softness 0.0-1.0 normalized (default 0)" },
+          gradient_placement: { type: "number", description: "Gradient placement enum (default 2)" },
+          invert_gradient: { type: "boolean", description: "Invert gradient mapping (default false)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.transition_completion !== undefined) setLines.push(`if (n === "Transition Completion") prop.setValue(${args.transition_completion}, true);`);
+        if (args.transition_softness !== undefined) setLines.push(`if (n === "Transition Softness") prop.setValue(${args.transition_softness}, true);`);
+        if (args.gradient_placement !== undefined) setLines.push(`if (n === "Gradient Placement") prop.setValue(${Math.round(args.gradient_placement)}, true);`);
+        if (args.invert_gradient !== undefined) setLines.push(`if (n === "Invert Gradient") prop.setValue(${args.invert_gradient ? "true" : "false"}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Gradient Wipe is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Gradient Wipe") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Gradient Wipe");
+            if (!eff || !eff.name) return __error("Gradient Wipe effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Gradient Wipe") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_noise_hls_auto: {
       description:
         "Apply Noise HLS Auto — animated color-aware noise (auto-evolves over time at noise_animation_speed fps). Like apply_noise_hls but built-in animation; no need to keyframe Phase.",
