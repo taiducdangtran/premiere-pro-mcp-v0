@@ -3305,6 +3305,379 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_color_key: {
+      description:
+        "Apply Color Key (legacy chroma key) — keys out a single solid color with tolerance. For better results use the existing apply_ultra_key. Color Key remains useful for simple solid-color removals.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          key_color: {
+            type: "array",
+            items: { type: "number" },
+            description: "Color to key out [R, G, B] each 0-255 (optional 4th alpha). Default black.",
+          },
+          color_tolerance: { type: "number", description: "Tolerance 0-255 (default 0). Higher = wider color range keyed out." },
+          edge_thin: { type: "number", description: "Edge thinning -5 to 5 (default 0). Negative grows, positive shrinks." },
+          edge_feather: { type: "number", description: "Edge feather in pixels (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        key_color?: number[]; color_tolerance?: number;
+        edge_thin?: number; edge_feather?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.color_tolerance !== undefined) setLines.push(`if (n === "Color Tolerance") prop.setValue(${args.color_tolerance}, true);`);
+        if (args.edge_thin !== undefined) setLines.push(`if (n === "Edge Thin") prop.setValue(${args.edge_thin}, true);`);
+        if (args.edge_feather !== undefined) setLines.push(`if (n === "Edge Feather") prop.setValue(${args.edge_feather}, true);`);
+        if (args.key_color && args.key_color.length >= 3) {
+          const [r, g, b] = args.key_color;
+          const a = args.key_color[3] ?? 255;
+          setLines.push(`if (n === "Key Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Color Key is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Color Key") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Color Key");
+            if (!eff || !eff.name) return __error("Color Key effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Color Key") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_luma_key: {
+      description:
+        "Apply Luma Key (legacy luminance key) — keys out pixels based on brightness. Threshold sets the start of the key range, Cutoff softens the falloff. Useful for keying smoke/light effects against dark backgrounds.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          threshold: { type: "number", description: "Luminance threshold 0-100 (default 100)" },
+          cutoff: { type: "number", description: "Cutoff 0-100 (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; threshold?: number; cutoff?: number }) => {
+        const setLines: string[] = [];
+        if (args.threshold !== undefined) setLines.push(`if (n === "Threshold") prop.setValue(${args.threshold}, true);`);
+        if (args.cutoff !== undefined) setLines.push(`if (n === "Cutoff") prop.setValue(${args.cutoff}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Luma Key is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Luma Key") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Luma Key");
+            if (!eff || !eff.name) return __error("Luma Key effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Luma Key") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_non_red_key: {
+      description:
+        "Apply Non Red Key (legacy chroma key) — early Adobe keyer optimized for blue/green screens by treating non-red channels. Use apply_ultra_key for modern workflows; this is for legacy project compatibility.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          threshold: { type: "number", description: "Threshold 0-100 (default 100)" },
+          cutoff: { type: "number", description: "Cutoff 0-100 (default 0)" },
+          defringing: { type: "number", description: "Defringing enum int (default 0=None)" },
+          smoothing: { type: "number", description: "Smoothing enum int (default 0=None)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        threshold?: number; cutoff?: number;
+        defringing?: number; smoothing?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.threshold !== undefined) setLines.push(`if (n === "Threshold") prop.setValue(${args.threshold}, true);`);
+        if (args.cutoff !== undefined) setLines.push(`if (n === "Cutoff") prop.setValue(${args.cutoff}, true);`);
+        if (args.defringing !== undefined) setLines.push(`if (n === "Defringing") prop.setValue(${Math.round(args.defringing)}, true);`);
+        if (args.smoothing !== undefined) setLines.push(`if (n === "Smoothing") prop.setValue(${Math.round(args.smoothing)}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Non Red Key is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Non Red Key") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Non Red Key");
+            if (!eff || !eff.name) return __error("Non Red Key effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Non Red Key") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_circle: {
+      description:
+        "Apply Circle effect — generates a circle shape overlay. Useful for vignettes, masks, lower-thirds backgrounds. Note: 'Feather Inner Edge' has duplicate names — wrapper sets only first occurrence (the actual feather slider).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          center_x: { type: "number", description: "Center X 0.0-1.0 (default 0.5)" },
+          center_y: { type: "number", description: "Center Y 0.0-1.0 (default 0.5)" },
+          radius: { type: "number", description: "Circle radius in pixels (default 75)" },
+          edge: { type: "number", description: "Edge mode enum (default 0). Affects how Contextual Slider is interpreted." },
+          contextual_slider: { type: "number", description: "Edge thickness/inner radius (default 10). Meaning depends on edge enum." },
+          feather_outer_edge: { type: "number", description: "Outer edge feather in pixels (default 0)" },
+          feather_inner_edge: { type: "number", description: "Inner edge feather in pixels (default 0)" },
+          invert_circle: { type: "boolean", description: "Invert: solid outside, empty inside (default false)" },
+          color: { type: "array", items: { type: "number" }, description: "Circle color [R,G,B] 0-255 (optional 4th alpha). Default white." },
+          opacity: { type: "number", description: "Opacity 0-100 (default 100)" },
+          blending_mode: { type: "number", description: "Blend mode int (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        center_x?: number; center_y?: number;
+        radius?: number; edge?: number; contextual_slider?: number;
+        feather_outer_edge?: number; feather_inner_edge?: number;
+        invert_circle?: boolean;
+        color?: number[]; opacity?: number; blending_mode?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.center_x !== undefined || args.center_y !== undefined) {
+          const cx = args.center_x ?? 0.5;
+          const cy = args.center_y ?? 0.5;
+          setLines.push(`if (n === "Center") prop.setValue([${cx}, ${cy}], true);`);
+        }
+        if (args.radius !== undefined) setLines.push(`if (n === "Radius") prop.setValue(${args.radius}, true);`);
+        if (args.edge !== undefined) setLines.push(`if (n === "Edge") prop.setValue(${Math.round(args.edge)}, true);`);
+        if (args.contextual_slider !== undefined) setLines.push(`if (n === "Contextual Slider") prop.setValue(${args.contextual_slider}, true);`);
+        if (args.feather_outer_edge !== undefined) setLines.push(`if (n === "Feather Outer Edge") prop.setValue(${args.feather_outer_edge}, true);`);
+        if (args.feather_inner_edge !== undefined) setLines.push(`if (n === "Feather Inner Edge" && !innerSeen) { prop.setValue(${args.feather_inner_edge}, true); innerSeen = true; }`);
+        if (args.invert_circle !== undefined) setLines.push(`if (n === "Invert Circle") prop.setValue(${args.invert_circle ? "true" : "false"}, true);`);
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.blending_mode !== undefined) setLines.push(`if (n === "Blending Mode") prop.setValue(${Math.round(args.blending_mode)}, true);`);
+        if (args.color && args.color.length >= 3) {
+          const [r, g, b] = args.color;
+          const a = args.color[3] ?? 255;
+          setLines.push(`if (n === "Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Circle is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Circle") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Circle");
+            if (!eff || !eff.name) return __error("Circle effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Circle") {
+              var innerSeen = false;
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_ellipse: {
+      description:
+        "Apply Ellipse effect — generates an outlined ellipse. Configurable inside/outside colors and softness. Useful for highlights, vignettes, target reticles.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          center_x: { type: "number", description: "Center X 0.0-1.0 (default 0.5)" },
+          center_y: { type: "number", description: "Center Y 0.0-1.0 (default 0.5)" },
+          width: { type: "number", description: "Ellipse width in pixels (default 50)" },
+          height: { type: "number", description: "Ellipse height in pixels (default 50)" },
+          thickness: { type: "number", description: "Outline thickness in pixels (default 8)" },
+          softness: { type: "number", description: "Edge softness 0-1 (default 0.5)" },
+          inside_color: { type: "array", items: { type: "number" }, description: "Inside color [R,G,B] 0-255" },
+          outside_color: { type: "array", items: { type: "number" }, description: "Outside color [R,G,B] 0-255" },
+          composite_on_original: { type: "boolean", description: "Composite over the source layer instead of replacing (default false)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        center_x?: number; center_y?: number;
+        width?: number; height?: number; thickness?: number; softness?: number;
+        inside_color?: number[]; outside_color?: number[];
+        composite_on_original?: boolean;
+      }) => {
+        const setLines: string[] = [];
+        if (args.center_x !== undefined || args.center_y !== undefined) {
+          const cx = args.center_x ?? 0.5;
+          const cy = args.center_y ?? 0.5;
+          setLines.push(`if (n === "Center") prop.setValue([${cx}, ${cy}], true);`);
+        }
+        if (args.width !== undefined) setLines.push(`if (n === "Width") prop.setValue(${args.width}, true);`);
+        if (args.height !== undefined) setLines.push(`if (n === "Height") prop.setValue(${args.height}, true);`);
+        if (args.thickness !== undefined) setLines.push(`if (n === "Thickness") prop.setValue(${args.thickness}, true);`);
+        if (args.softness !== undefined) setLines.push(`if (n === "Softness") prop.setValue(${args.softness}, true);`);
+        if (args.composite_on_original !== undefined) setLines.push(`if (n === "Composite On Original") prop.setValue(${args.composite_on_original ? "true" : "false"}, true);`);
+        if (args.inside_color && args.inside_color.length >= 3) {
+          const [r, g, b] = args.inside_color;
+          const a = args.inside_color[3] ?? 255;
+          setLines.push(`if (n === "Inside Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+        if (args.outside_color && args.outside_color.length >= 3) {
+          const [r, g, b] = args.outside_color;
+          const a = args.outside_color[3] ?? 255;
+          setLines.push(`if (n === "Outside Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Ellipse is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Ellipse") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Ellipse");
+            if (!eff || !eff.name) return __error("Ellipse effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Ellipse") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_venetian_blinds: {
       description:
         "Apply Venetian Blinds effect — louvre-style wipe revealing transparency in horizontal/vertical bands. Acts on a single clip; animate `transition_completion` for the actual blinds-opening motion.",

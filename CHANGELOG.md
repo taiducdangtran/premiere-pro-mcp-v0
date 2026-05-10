@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.11] - 2026-05-10
+
+### Added — 5 new tools (397 → 402)
+
+#### Phase 4 batch 14 — Legacy keyers + shape generators (5 tools, `src/tools/effects.ts`)
+
+- **`apply_color_key`** — legacy chroma key (single solid color removal). Modern alternative: `apply_ultra_key`.
+- **`apply_luma_key`** — legacy luminance-based key (threshold + cutoff).
+- **`apply_non_red_key`** — legacy blue/green-screen keyer (threshold/cutoff/defringing/smoothing).
+- **`apply_circle`** — circle shape generator with feather, invert, blend mode. Dup `Feather Inner Edge` handled with seen-flag.
+- **`apply_ellipse`** — outlined ellipse with inside/outside colors, thickness, softness.
+
+### Changed
+
+- Tool count: 397 → 402 (**402 tools** — passing 400-tool milestone)
+- Updated `package.json` description
+
+### Verified
+
+- 23 properties round-trip verified across 5 effects.
+- Legacy keyers (Color/Luma/Non Red Key) kept for project compatibility — modern workflows should use `apply_ultra_key` instead.
+- Circle effect property layout: outer feather + inner feather are at indices 5-6; the duplicate "Feather Inner Edge" at index 7 is a panel toggle.
+
 ## [1.1.10] - 2026-05-10
 
 ### Added — 5 new tools (392 → 397)
