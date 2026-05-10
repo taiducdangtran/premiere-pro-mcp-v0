@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.8] - 2026-05-10
+
+### Added — 5 new tools (382 → 387)
+
+#### Phase 4 batch 11 — Color/grading workflow wrappers (5 tools, `src/tools/effects.ts`)
+
+- **`apply_asc_cdl`** — industry-standard ASC Color Decision List. 10 params: red/green/blue × slope/offset/power + saturation. All default to identity (1/0/1, sat=1). Round-trips across DaVinci/Avid/Nuke.
+- **`apply_color_space_transform`** — explicit color space conversion. Numeric SCS/TCS enums + Tone Map Method/Gain/Desaturation/Knee/GC Methods. Note: SCS/TCS Arb Data are binary blobs — only numeric properties exposed.
+- **`apply_cineon_converter`** — Cineon log↔linear conversion. Params: conversion_type (0=Log→Lin, 1=Lin→Log default, 2=Log→Log), 10-bit/internal black/white points, gamma (default 1.7), highlight_rolloff.
+- **`apply_solid_composite`** — solid-color overlay with blend mode. Params: source_opacity, color [R,G,B,A], opacity, blending_mode int.
+- **`apply_texturize`** — light-direction + contrast on a texture from another layer. Note: `Texture Layer` reference NOT settable from API in 25.4 (same as Compound Blur).
+
+### Changed
+
+- Tool count: 382 → 387
+- Updated `package.json` description
+
+### Verified
+
+- 17 numeric properties + 1 setColorValue round-trip verified.
+- Texture Contrast clamps to max 2.0 (set 2.5 → stored 2.0). Documented.
+- ASC CDL is the industry-standard portable grading metadata; preferable over Lumetri for cross-tool grading exchange.
+
 ## [1.1.7] - 2026-05-10
 
 ### Added — 5 new tools (377 → 382)

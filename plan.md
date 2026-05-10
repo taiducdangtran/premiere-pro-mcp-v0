@@ -30,6 +30,7 @@
 | (next) | **Phase 4 batch 8 + v1.1.5** — 5 effect wrappers (Color Replace, Color Pass, Gamma Correction, Channel Blur, Strobe Light) | **372** | +5 (runtime verified) |
 | (next) | **Phase 4 batch 9 + v1.1.6** — 5 effect wrappers (Lens Distortion, Posterize Time, Edge Feather, Magnify, Compound Blur) | **377** | +5 (runtime verified) |
 | (next) | **Phase 4 batch 10 + v1.1.7** — 5 effect wrappers (Brush Strokes, Emboss, Color Emboss, Linear Wipe, Radial Wipe) | **382** | +5 (runtime verified) |
+| (next) | **Phase 4 batch 11 + v1.1.8** — 5 effect wrappers (ASC CDL, Color Space Transform, Cineon Converter, Solid Composite, Texturize) | **387** | +5 (runtime verified) |
 
 ### 📌 Session continuation note (post-compact, 2026-05-10)
 

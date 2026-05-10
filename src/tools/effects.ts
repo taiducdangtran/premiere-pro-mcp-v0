@@ -3305,6 +3305,367 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_asc_cdl: {
+      description:
+        "Apply ASC CDL effect — industry-standard Color Decision List (Slope/Offset/Power per RGB + Saturation). Used in DI/finishing pipelines for portable color grades that round-trip across DaVinci/Avid/Nuke. All 10 numeric params default to identity (Slope=1, Offset=0, Power=1, Saturation=1).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          red_slope: { type: "number", description: "Red slope (gain), default 1.0. >1 brightens highlights." },
+          red_offset: { type: "number", description: "Red offset (lift), default 0. Adds to all values." },
+          red_power: { type: "number", description: "Red power (gamma), default 1.0. Lower = brighter midtones." },
+          green_slope: { type: "number", description: "Green slope, default 1.0" },
+          green_offset: { type: "number", description: "Green offset, default 0" },
+          green_power: { type: "number", description: "Green power, default 1.0" },
+          blue_slope: { type: "number", description: "Blue slope, default 1.0" },
+          blue_offset: { type: "number", description: "Blue offset, default 0" },
+          blue_power: { type: "number", description: "Blue power, default 1.0" },
+          saturation: { type: "number", description: "Overall saturation, default 1.0 (0=B&W, 2=oversaturated)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        red_slope?: number; red_offset?: number; red_power?: number;
+        green_slope?: number; green_offset?: number; green_power?: number;
+        blue_slope?: number; blue_offset?: number; blue_power?: number;
+        saturation?: number;
+      }) => {
+        const setLines: string[] = [];
+        const map: [string, number | undefined][] = [
+          ["Red Slope", args.red_slope], ["Red Offset", args.red_offset], ["Red Power", args.red_power],
+          ["Green Slope", args.green_slope], ["Green Offset", args.green_offset], ["Green Power", args.green_power],
+          ["Blue Slope", args.blue_slope], ["Blue Offset", args.blue_offset], ["Blue Power", args.blue_power],
+          ["Saturation", args.saturation],
+        ];
+        for (const [n, v] of map) {
+          if (v !== undefined) setLines.push(`if (n === "${n}") prop.setValue(${v}, true);`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("ASC CDL is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "ASC CDL") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("ASC CDL");
+            if (!eff || !eff.name) return __error("ASC CDL effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "ASC CDL") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_color_space_transform: {
+      description:
+        "Apply Color Space Transform effect — explicit color space conversion (e.g. Rec.709 → Rec.2020). Note: SCS/TCS are integer enums whose mapping is internal to Premiere; probe via execute_extendscript before relying on specific values. Tone-mapping params (Gain/Desaturation/Knee) work standalone.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          scs: { type: "number", description: "Source Color Space integer enum (default 0). Mapping is internal — verify via execute_extendscript. Most uses keep this default." },
+          tcs: { type: "number", description: "Target Color Space integer enum (default 0). Same caveat as scs." },
+          tone_map_method: { type: "number", description: "Tone-map method enum int (default 0)" },
+          gain: { type: "number", description: "Output gain multiplier (default 1.0)" },
+          desaturation: { type: "number", description: "Desaturation factor (default 1.0)" },
+          knee: { type: "number", description: "Knee for tone-map curve (default 0)" },
+          gc_methods: { type: "number", description: "Gamut compression method enum int (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        scs?: number; tcs?: number; tone_map_method?: number;
+        gain?: number; desaturation?: number; knee?: number; gc_methods?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.scs !== undefined) setLines.push(`if (n === "SCS") prop.setValue(${Math.round(args.scs)}, true);`);
+        if (args.tcs !== undefined) setLines.push(`if (n === "TCS") prop.setValue(${Math.round(args.tcs)}, true);`);
+        if (args.tone_map_method !== undefined) setLines.push(`if (n === "Tone Map Method") prop.setValue(${Math.round(args.tone_map_method)}, true);`);
+        if (args.gain !== undefined) setLines.push(`if (n === "Gain") prop.setValue(${args.gain}, true);`);
+        if (args.desaturation !== undefined) setLines.push(`if (n === "Desaturation") prop.setValue(${args.desaturation}, true);`);
+        if (args.knee !== undefined) setLines.push(`if (n === "Knee") prop.setValue(${args.knee}, true);`);
+        if (args.gc_methods !== undefined) setLines.push(`if (n === "GC Methods") prop.setValue(${Math.round(args.gc_methods)}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Color Space Transform is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Color Space Transform") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Color Space Transform");
+            if (!eff || !eff.name) return __error("Color Space Transform effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Color Space Transform") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_cineon_converter: {
+      description:
+        "Apply Cineon Converter effect — convert between Cineon log and linear color spaces. Standard for film scan workflows. Default config is Lin→Log conversion with 10-bit black=95, white=685 (Cineon spec).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          conversion_type: { type: "number", description: "0=Log to Linear, 1=Linear to Log (default), 2=Log to Log" },
+          ten_bit_black_point: { type: "number", description: "10-bit black point in code values (default 95)" },
+          internal_black_point: { type: "number", description: "Internal (linear) black point 0-1 (default 0)" },
+          ten_bit_white_point: { type: "number", description: "10-bit white point in code values (default 685)" },
+          internal_white_point: { type: "number", description: "Internal (linear) white point 0-1 (default 1)" },
+          gamma: { type: "number", description: "Gamma correction (default 1.7 — Cineon film density)" },
+          highlight_rolloff: { type: "number", description: "Highlight rolloff (default 20). Compresses values above white point." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        conversion_type?: number;
+        ten_bit_black_point?: number; internal_black_point?: number;
+        ten_bit_white_point?: number; internal_white_point?: number;
+        gamma?: number; highlight_rolloff?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.conversion_type !== undefined) setLines.push(`if (n === "Conversion Type") prop.setValue(${Math.round(args.conversion_type)}, true);`);
+        if (args.ten_bit_black_point !== undefined) setLines.push(`if (n === "10 Bit Black Point") prop.setValue(${args.ten_bit_black_point}, true);`);
+        if (args.internal_black_point !== undefined) setLines.push(`if (n === "Internal Black Point") prop.setValue(${args.internal_black_point}, true);`);
+        if (args.ten_bit_white_point !== undefined) setLines.push(`if (n === "10 Bit White Point") prop.setValue(${args.ten_bit_white_point}, true);`);
+        if (args.internal_white_point !== undefined) setLines.push(`if (n === "Internal White Point") prop.setValue(${args.internal_white_point}, true);`);
+        if (args.gamma !== undefined) setLines.push(`if (n === "Gamma") prop.setValue(${args.gamma}, true);`);
+        if (args.highlight_rolloff !== undefined) setLines.push(`if (n === "Highlight Rolloff") prop.setValue(${args.highlight_rolloff}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Cineon Converter is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Cineon Converter") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Cineon Converter");
+            if (!eff || !eff.name) return __error("Cineon Converter effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Cineon Converter") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_solid_composite: {
+      description:
+        "Apply Solid Composite effect — composites a solid color over the clip with configurable blend mode + opacities. Useful for tints, color washes, or quick lookahead overlays.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          source_opacity: { type: "number", description: "Source layer opacity 0-100 (default 100)" },
+          color: {
+            type: "array",
+            items: { type: "number" },
+            description: "Solid color [R, G, B] each 0-255 (optional 4th alpha 0-255). Default white.",
+          },
+          opacity: { type: "number", description: "Solid color opacity 0-100 (default 100)" },
+          blending_mode: { type: "number", description: "Blend mode integer enum (default 0=Normal). Common: 1=Multiply, 5=Screen, 9=Overlay." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        source_opacity?: number;
+        color?: number[];
+        opacity?: number;
+        blending_mode?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.source_opacity !== undefined) setLines.push(`if (n === "Source Opacity") prop.setValue(${args.source_opacity}, true);`);
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.blending_mode !== undefined) setLines.push(`if (n === "Blending Mode") prop.setValue(${Math.round(args.blending_mode)}, true);`);
+        if (args.color && args.color.length >= 3) {
+          const [r, g, b] = args.color;
+          const a = args.color[3] ?? 255;
+          setLines.push(`if (n === "Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Solid Composite is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Solid Composite") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Solid Composite");
+            if (!eff || !eff.name) return __error("Solid Composite effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Solid Composite") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_texturize: {
+      description:
+        "Apply Texturize effect — applies a texture from an external layer with light direction and contrast. Note: 'Texture Layer' parameter selects the source layer and is NOT settable from API in 25.4 (layer reference). Other params still useful for adjusting an already-set texture.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          light_direction: { type: "number", description: "Light direction in degrees (default 135)" },
+          texture_contrast: { type: "number", description: "Texture intensity (default 1.0)" },
+          texture_placement: { type: "number", description: "0=Tile (default), 1=Center, 2=Stretch" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        light_direction?: number;
+        texture_contrast?: number;
+        texture_placement?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.light_direction !== undefined) setLines.push(`if (n === "Light Direction") prop.setValue(${args.light_direction}, true);`);
+        if (args.texture_contrast !== undefined) setLines.push(`if (n === "Texture Contrast") prop.setValue(${args.texture_contrast}, true);`);
+        if (args.texture_placement !== undefined) setLines.push(`if (n === "Texture Placement") prop.setValue(${Math.round(args.texture_placement)}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Texturize is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Texturize") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Texturize");
+            if (!eff || !eff.name) return __error("Texturize effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Texturize") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_brush_strokes: {
       description:
         "Apply Brush Strokes effect — painterly look with configurable angle/size/density. Common stylization for art-style transitions or watercolor look.",
