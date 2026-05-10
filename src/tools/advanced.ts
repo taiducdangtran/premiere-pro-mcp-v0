@@ -29,7 +29,7 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
             : qeSeq.getAudioTrackAt(result.trackIndex);
           if (!qeTrack) return __error("QE track not found");
           
-          var qeClip = qeTrack.getItemAt(result.clipIndex);
+          var qeClip = __getQEClip(result);
           if (!qeClip) return __error("QE clip not found");
           
           qeClip.rippleDelete();
@@ -67,7 +67,7 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
           var qeTrack = result.trackType === "video"
             ? qeSeq.getVideoTrackAt(result.trackIndex)
             : qeSeq.getAudioTrackAt(result.trackIndex);
-          var qeClip = qeTrack.getItemAt(result.clipIndex);
+          var qeClip = __getQEClip(result);
           if (!qeClip) return __error("QE clip not found");
           
           var offsetTicks = __secondsToTicks(${args.offset_seconds}).toString();
@@ -106,7 +106,7 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
           var qeTrack = result.trackType === "video"
             ? qeSeq.getVideoTrackAt(result.trackIndex)
             : qeSeq.getAudioTrackAt(result.trackIndex);
-          var qeClip = qeTrack.getItemAt(result.clipIndex);
+          var qeClip = __getQEClip(result);
           if (!qeClip) return __error("QE clip not found");
           
           var offsetTicks = __secondsToTicks(${args.offset_seconds}).toString();
@@ -145,7 +145,7 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
           var qeTrack = result.trackType === "video"
             ? qeSeq.getVideoTrackAt(result.trackIndex)
             : qeSeq.getAudioTrackAt(result.trackIndex);
-          var qeClip = qeTrack.getItemAt(result.clipIndex);
+          var qeClip = __getQEClip(result);
           if (!qeClip) return __error("QE clip not found");
           
           var offsetTicks = __secondsToTicks(${args.offset_seconds}).toString();
@@ -184,7 +184,7 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
           var qeTrack = result.trackType === "video"
             ? qeSeq.getVideoTrackAt(result.trackIndex)
             : qeSeq.getAudioTrackAt(result.trackIndex);
-          var qeClip = qeTrack.getItemAt(result.clipIndex);
+          var qeClip = __getQEClip(result);
           if (!qeClip) return __error("QE clip not found");
           
           qeClip.moveToTrack(${args.target_track_index});
@@ -218,7 +218,7 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
           var qeTrack = result.trackType === "video"
             ? qeSeq.getVideoTrackAt(result.trackIndex)
             : qeSeq.getAudioTrackAt(result.trackIndex);
-          var qeClip = qeTrack.getItemAt(result.clipIndex);
+          var qeClip = __getQEClip(result);
           if (!qeClip) return __error("QE clip not found");
           
           qeClip.removeEffects();
@@ -260,7 +260,7 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
           var qeTrack = result.trackType === "video"
             ? qeSeq.getVideoTrackAt(result.trackIndex)
             : qeSeq.getAudioTrackAt(result.trackIndex);
-          var qeClip = qeTrack.getItemAt(result.clipIndex);
+          var qeClip = __getQEClip(result);
           if (!qeClip) return __error("QE clip not found");
           
           qeClip.setSpeed(${args.speed_percent});
@@ -306,7 +306,7 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
           var qeTrack = result.trackType === "video"
             ? qeSeq.getVideoTrackAt(result.trackIndex)
             : qeSeq.getAudioTrackAt(result.trackIndex);
-          var qeClip = qeTrack.getItemAt(result.clipIndex);
+          var qeClip = __getQEClip(result);
           if (!qeClip) return __error("QE clip not found");
           
           qeClip.setReverse(${rev});
@@ -344,7 +344,7 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
           var qeTrack = result.trackType === "video"
             ? qeSeq.getVideoTrackAt(result.trackIndex)
             : qeSeq.getAudioTrackAt(result.trackIndex);
-          var qeClip = qeTrack.getItemAt(result.clipIndex);
+          var qeClip = __getQEClip(result);
           if (!qeClip) return __error("QE clip not found");
           
           qeClip.setFrameBlend(${args.enabled});
@@ -382,7 +382,7 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
           var qeTrack = result.trackType === "video"
             ? qeSeq.getVideoTrackAt(result.trackIndex)
             : qeSeq.getAudioTrackAt(result.trackIndex);
-          var qeClip = qeTrack.getItemAt(result.clipIndex);
+          var qeClip = __getQEClip(result);
           if (!qeClip) return __error("QE clip not found");
           
           qeClip.setTimeInterpolationType(${args.interpolation_type});
@@ -425,7 +425,7 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
           var qeTrack = result.trackType === "video"
             ? qeSeq.getVideoTrackAt(result.trackIndex)
             : qeSeq.getAudioTrackAt(result.trackIndex);
-          var qeClip = qeTrack.getItemAt(result.clipIndex);
+          var qeClip = __getQEClip(result);
           if (!qeClip) return __error("QE clip not found");
           
           var oldName = result.clip.name;

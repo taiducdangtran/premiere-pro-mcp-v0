@@ -281,7 +281,7 @@ export function getClipboardTools(bridgeOptions: BridgeOptions) {
     },
 
     remove_effect_by_name: {
-      description: "Remove all instances of a specific effect from a clip by display name.",
+      description: "Remove all instances of a specific effect from a clip by display name. Uses QE DOM in Premiere 25.4+.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -291,7 +291,7 @@ export function getClipboardTools(bridgeOptions: BridgeOptions) {
           },
           effect_name: {
             type: "string",
-            description: "Display name of the effect to remove",
+            description: "Display name of the effect to remove (all matching instances will be removed)",
           },
         },
         required: ["node_id", "effect_name"],
@@ -302,17 +302,38 @@ export function getClipboardTools(bridgeOptions: BridgeOptions) {
           if (!result) return __error("Clip not found");
 
           var clip = result.clip;
+          var beforeCount = clip.components.numItems;
+
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("QE sequence unavailable");
+          var qeTrack = result.trackType === "video"
+            ? qeSeq.getVideoTrackAt(result.trackIndex)
+            : qeSeq.getAudioTrackAt(result.trackIndex);
+          if (!qeTrack) return __error("QE track not found");
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          // Iterate backwards so removals do not invalidate later indices.
           var removed = 0;
-          // Iterate backwards to avoid index issues when removing
           for (var i = clip.components.numItems - 1; i >= 0; i--) {
             if (clip.components[i].displayName === "${escapeForExtendScript(args.effect_name)}") {
-              clip.components[i].remove();
-              removed++;
+              var qeComp = qeClip.getComponentAt(i);
+              if (qeComp) {
+                qeComp.remove();
+                removed++;
+              }
             }
           }
 
           if (removed === 0) return __error("Effect not found: ${escapeForExtendScript(args.effect_name)}");
-          return __result({ removed: removed, effect: "${escapeForExtendScript(args.effect_name)}", clip: clip.name });
+          return __result({
+            removed: removed,
+            effect: "${escapeForExtendScript(args.effect_name)}",
+            clip: clip.name,
+            componentsBefore: beforeCount,
+            componentsAfter: clip.components.numItems
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

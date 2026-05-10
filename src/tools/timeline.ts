@@ -342,7 +342,10 @@ export function getTimelineTools(bridgeOptions: BridgeOptions) {
           ` : ""}
           
           ${args.speed !== undefined ? `
-          clip.setSpeed(${args.speed * 100});
+          // Premiere 25.4: DOM clip.setSpeed removed; use QE clip with 5-arg signature.
+          var __qeClipForSpeed = __getQEClip(result);
+          if (!__qeClipForSpeed) return __error("QE clip not found for setSpeed");
+          __qeClipForSpeed.setSpeed(${args.speed * 100}, "1", false, false, false);
           changes.speed = ${args.speed};
           ` : ""}
           
@@ -467,11 +470,62 @@ export function getTimelineTools(bridgeOptions: BridgeOptions) {
           if (!result) return __error("Clip not found");
           
           var clip = result.clip;
-          var speed = "${args.speed_percent}";
-          ${args.reverse ? 'speed = "-" + speed;' : ""}
-          
-          clip.setSpeed(speed);
+          // Premiere 25.4: DOM clip.setSpeed removed; use QE clip with 5-arg signature.
+          // Reversed flag is the 4th arg (no longer encoded in negative speed string).
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+          qeClip.setSpeed(${args.speed_percent}, "1", false, ${args.reverse ? "true" : "false"}, false);
           return __result({ speedChanged: true, clipName: clip.name, speed: ${args.speed_percent}, reverse: ${!!args.reverse} });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    set_clip_time_interpolation: {
+      description:
+        "Set how Premiere generates intermediate frames when a clip's speed differs from native (e.g., slow-mo). " +
+        "Frame Sample (default) drops/duplicates frames; Frame Blend cross-fades adjacent frames; Optical Flow uses motion estimation for smoother results (recommended for slow-mo). " +
+        "Note: Premiere 25.4 does NOT expose speed-ramp keyframes via ExtendScript — use this for the clip's flat interpolation method, and combine with `speed_change` for flat speed.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          interpolation: {
+            type: "string",
+            enum: ["Frame Sample", "Frame Blend", "Optical Flow"],
+            description: "Time interpolation algorithm",
+          },
+        },
+        required: ["node_id", "interpolation"],
+      },
+      handler: async (args: { node_id: string; interpolation: string }) => {
+        const interpMap: Record<string, number> = {
+          "Frame Sample": 0,
+          "Frame Blend": 1,
+          "Optical Flow": 2,
+        };
+        const v = interpMap[args.interpolation];
+        if (v === undefined) throw new Error(`Invalid interpolation: ${args.interpolation}`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Time interpolation applies only to video clips");
+
+          var qeTrack = qeSeq.getVideoTrackAt(result.trackIndex);
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+          if (typeof qeClip.setTimeInterpolationType !== "function") return __error("setTimeInterpolationType unavailable in this Premiere build");
+
+          qeClip.setTimeInterpolationType(${v});
+          return __result({
+            clipName: result.clip.name,
+            interpolation: "${escapeForExtendScript(args.interpolation)}",
+            interpolationType: ${v}
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

@@ -213,20 +213,19 @@ export function getAudioTools(bridgeOptions: BridgeOptions) {
           if (!seq) return __error("No active sequence");
           app.enableQE();
           try {
-            var qeSeq = qe.project.getActiveSequence();
-            var qeTrack = qeSeq.getAudioTrackAt(${args.track_index});
-            if (!qeTrack) return __error("QE audio track not found");
-            var qeClip = qeTrack.getItemAt(${args.clip_index});
+            var domTrack = seq.audioTracks[${args.track_index}];
+            if (!domTrack) return __error("DOM audio track not found");
+            if (${args.clip_index} >= domTrack.clips.numItems) return __error("clip_index out of range");
+            var fakeResult = { trackIndex: ${args.track_index}, clipIndex: ${args.clip_index}, trackType: "audio", clip: domTrack.clips[${args.clip_index}] };
+            var qeClip = __getQEClip(fakeResult);
             if (!qeClip) return __error("QE clip not found");
 
-            var transitions = qe.project.getAudioTransitionList();
-            for (var i = 0; i < transitions.numItems; i++) {
-              if (transitions[i].name === "${transitionName}") {
-                qeClip.addTransition(transitions[i], true);
-                return __result({ transition: "${transitionName}", added: true });
-              }
-            }
-            return __error("Audio transition not found: ${transitionName}");
+            // Premiere 25.4+: getAudioTransitionList returns string[]; resolve via getAudioTransitionByName.
+            var transObj = qe.project.getAudioTransitionByName("${transitionName}");
+            if (!transObj || !transObj.name) return __error("Audio transition not found: ${transitionName}");
+            // 25.4: addTransition signature is (transition, alignmentInt). 1 = clip's END.
+            qeClip.addTransition(transObj, 1);
+            return __result({ transition: "${transitionName}", added: true });
           } catch (ex) {
             return __error("Failed: " + ex.toString());
           }

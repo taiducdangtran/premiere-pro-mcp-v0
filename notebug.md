@@ -135,3 +135,167 @@ nodeId, sourceTimebase, timeDisplayFormat, treePath, type
   - [ ] `delete_project_item` với bin (type === 2)
   - [ ] `delete_project_item` với sequence project item (route sang deleteSequence)
   - [ ] `delete_multiple_project_items` với mix nhiều type
+
+---
+
+## Bug 3 (CRITICAL): QE DOM API regression trong Premiere 25.4
+
+**Phát hiện:** 2026-05-10 trong Phase 0 spike của plan nâng cấp VFX (xem [plan.md](plan.md#L341)).
+
+### 3a. `getVideoEffectList` / `getAudioEffectList` / `getXxxTransitionList` đổi return type
+
+**Cũ (≤24.x):** Return collection-like object với `.numItems` + items là QE objects có `.name`.
+**Mới (25.4):** Return JS Array với `.length` + items là **string** (tên effect).
+
+**Triệu chứng:** Pattern `for (var i = 0; i < effects.numItems; i++) { if (effects[i].name === ...) ... }` chạy không lỗi nhưng:
+- `effects.numItems` = `undefined` → loop không chạy
+- `effects[i].name` = `undefined` → so sánh fail
+- → `apply_effect` báo "Effect not found" cho mọi effect kể cả Lumetri Color
+
+**Fix:** Dùng `qe.project.getVideoEffectByName(name)` (cũng `getAudioEffectByName`, `getVideoTransitionByName`, `getAudioTransitionByName`).
+
+```javascript
+// CŨ (broken in 25.4):
+var effects = qe.project.getVideoEffectList();
+for (var i = 0; i < effects.numItems; i++) {
+  if (effects[i].name === "Lumetri Color") qeClip.addVideoEffect(effects[i]);
+}
+
+// MỚI (works in 25.4):
+var effObj = qe.project.getVideoEffectByName("Lumetri Color");
+if (!effObj || !effObj.name) return __error("not found");
+qeClip.addVideoEffect(effObj);
+```
+
+**Files đã fix:** `src/tools/effects.ts` (8 sites), `src/tools/transitions.ts` (6 sites), `src/tools/audio.ts` (1 site).
+
+### 3b. `getXxxByName` luôn return non-null (silent failure mode)
+
+`qe.project.getVideoEffectByName("XYZ_random")` **không return null** — luôn return một QE object placeholder với `.name === ""`. `qeClip.addVideoEffect(invalidObj)` không throw nhưng cũng không apply (silent no-op → bug khó debug).
+
+→ Validity check bắt buộc: `if (!effObj || !effObj.name) return __error(...)`.
+
+### 3c. Component removal API biến mất ở DOM, NHƯNG còn ở QE
+
+DOM-side **đều mất**:
+```javascript
+clip.components[i].remove()        // → "remove is not a function"
+clip.components.deleteComponent()  // → "deleteComponent is not a function"
+clip.components.removeAt(i)        // → undefined
+app.undo()                         // → undefined
+app.executeCommand(...)            // → undefined
+app.findMenuCommandId(...)         // → undefined
+```
+
+QE-side `qeClip.removeEffects(...)` **không xóa được custom effect** (test: gọi với mọi tổ hợp flag `(true, true, true, true, true, true, true)` không impact gì).
+
+✅ **Path duy nhất xóa thật được — qua QE Component:**
+```javascript
+app.enableQE();
+var qeSeq = qe.project.getActiveSequence();
+var qeTrack = qeSeq.getVideoTrackAt(trackIndex);
+var qeClip = qeTrack.getItemAt(clipIndex);
+var qeComp = qeClip.getComponentAt(idx);   // QE component có .remove()!
+qeComp.remove();                            // thật sự xóa khỏi DOM
+```
+
+**Verified 2026-05-10:** Apply Lumetri Color → componentsBefore=3 → `qeComp.remove()` → componentsAfter=2 (component idx 2 disappeared).
+
+**Caveats:**
+- DOM `clip.components[i]` thiếu `.enabled`, `.active`, `.bypass` — không có cách disable component-level qua API (chỉ có section "Active" toggles bên trong properties).
+- Sau khi remove, `qeClip.numComponents` cached/stale; phải dùng `clip.components.numItems` để verify.
+- Khi xóa nhiều cùng lúc, iterate **backwards** để tránh shift index.
+
+**Files đã fix dùng path này:** `src/tools/effects.ts` (`remove_effect`), `src/tools/clipboard.ts` (`remove_effect_by_name`).
+
+### 3e. ⚠️ DOM clipIndex ≠ QE clipIndex (phát hiện Phase 0.5, 2026-05-10) — ĐÃ FIX
+
+**Triệu chứng:** `apply_effect` báo `applied: true` nhưng effect không xuất hiện trên clip target — silent leak vào Empty placeholder.
+
+**Nguyên nhân:** QE track items bao gồm `type === "Empty"` placeholders xen kẽ giữa real clips. DOM `track.clips` chỉ iterate real clips. Vì vậy `qeTrack.getItemAt(domClipIndex)` thường trỏ vào Empty placeholder cho clip sau bất kỳ Empty nào.
+
+Verified trên project test:
+- V1: Empty at QE idx 2, 23 (24 items, 22 clips) → DOM clip idx 2 (C7971) thực ra ở QE idx 3
+- V2: 9 Empty placeholders rải rác — hầu hết DOM idx mismatch QE idx
+- A2/A3: cùng pattern
+
+**Fix:** Thêm helper `__getQEClip(result)` vào `script-builder.ts`, walk QE track skipping Empty items, return Nth non-Empty matching DOM clipIndex. 21 site refactor sang dùng helper.
+
+```javascript
+function __getQEClip(result) {
+  app.enableQE();
+  var qeTrack = result.trackType === "video"
+    ? qe.project.getActiveSequence().getVideoTrackAt(result.trackIndex)
+    : qe.project.getActiveSequence().getAudioTrackAt(result.trackIndex);
+  var nonEmptyOrdinal = 0;
+  for (var i = 0; i < qeTrack.numItems; i++) {
+    var qc = qeTrack.getItemAt(i);
+    if (qc && qc.type !== "Empty") {
+      if (nonEmptyOrdinal === result.clipIndex) return qc;
+      nonEmptyOrdinal++;
+    }
+  }
+  return null;
+}
+```
+
+**Files refactored:** advanced.ts (11 sites), effects.ts (8 sites), clipboard.ts (1), timeline.ts (1) = 21 sites.
+
+### 3c-tris. `clip.setSpeed` (DOM) cũng mất, dùng `qeClip.setSpeed` — ĐÃ FIX (Phase 0.5)
+
+```javascript
+// CŨ (broken trong 25.4):
+clip.setSpeed(150);
+// → "clip.setSpeed is not a function" + clip.speed === undefined
+
+// MỚI:
+qeClip.setSpeed(percentNumber, "1", maintainAudioPitch, reversed, rippleEdit);
+// 5-arg signature; "1" là timeBase string
+```
+
+`qeClip.speed` (read-only attribute) hiện đúng — `setSpeed` cập nhật được attribute này. Cũng có:
+- `qeClip.setReverse(bool)` — đảo chiều
+- `qeClip.setTimeInterpolationType(int)` — 0=Frame Sample, 1=Frame Blend, 2=Optical Flow
+- `qeClip.setFrameBlend(bool)` — toggle frame blend
+- ❌ `qeClip.enableTimeRemapping`, `qeClip.addSpeedKeyframe`, `qeClip.setSpeedRamp` đều undefined → speed-ramp keyframes KHÔNG khả thi qua ExtendScript trong 25.4
+
+**Files đã fix (Phase 0.5):** `src/tools/timeline.ts` `set_clip_properties` speed branch + `speed_change`. Dùng `__getQEClip(result)` + 5-arg signature.
+
+### 3c-bis. `qeTrack.addTransition` cũng đã chuyển sang `qeClip` — ĐÃ FIX (Phase 0.5)
+
+Pattern y hệt qeComp.remove(): API di chuyển từ track-level sang clip-level trong 25.4.
+
+```javascript
+// CŨ (broken trong 25.4):
+qeTrack.addTransition(transitionQE, alignBool, cutTicks, durationTicks, "0", false);
+// → "qeTrack.addTransition is not a function"
+
+// MỚI (works):
+qeClip.addTransition(transitionQE, alignmentInt);
+// alignmentInt: 1 chắc chắn work; 0 và 2 cần verify thêm
+// (alignment, cutTicks, "1", false) các signature khác đều "Illegal Parameter type"
+```
+
+Verified: probe `qeClip.addTransition(crossDiss, 1)` → numTransitions tăng 27 → 28. Signature 2-arg hoạt động.
+
+`qeTrack.numTransitions` (number) và `qeTrack.getTransitionAt(idx)` (function) còn dùng được để enumerate.
+
+**Files đã fix (Phase 0.5):**
+- `src/tools/transitions.ts` — 4 sites (add_transition, add_transition_to_clip start/end, batch_add_transitions). New signature `qeClip.addTransition(transition, alignmentInt)`. alignment 0 = clip's START (incoming), 1 = clip's END (outgoing). alignment 2 = "Invalid parameter".
+- `src/tools/audio.ts` — 1 site (apply_audio_crossfade) cũng dùng `qeClip.addTransition(transition, 1)`.
+
+**Caveats:**
+- duration_seconds bị bỏ qua (signature 2-arg không nhận duration; transition dùng default Premiere length).
+- "Center at Cut" alignment cũ KHÔNG khả thi qua signature mới — chỉ có start (0) hoặc end (1) of clip.
+
+Verified end-to-end 2026-05-10: `add_transition_to_clip(C8007, "Morph Cut", end)` → Morph Cut xuất hiện đúng giữa C8007 và C8009 trên V3.
+
+### 3d. Mask API hoàn toàn vắng mặt
+
+Test toàn diện: không có method `addMask`, `addEllipseMask`, `addRectangleMask`, `addBezierMask`, `createMask` ở bất kỳ level nào (component, qeClip, qeSequence, qe.project). Mask path API trong ExtendScript **không tồn tại** trong 25.4.
+
+→ Tính năng 1.2 Masking trong plan phải dùng workaround: effect "Crop" (4 crops built-in) hoặc track matte multi-track.
+
+### Phụ lục: kết quả spike Lumetri/Ultra Key/Warp Stabilizer
+
+Đã dump full property maps. Lumetri có 130 props, Ultra Key 27 props (matchName `AE.ADBE Ultra Key`), Warp Stabilizer 32 props (matchName `AE.ADBE SubspaceStabilizer`, có `AnalysisStatusCounter` để monitor analysis progress). Chi tiết trong [plan.md](plan.md#L341).

@@ -38,34 +38,39 @@ export function getTransitionsTools(bridgeOptions: BridgeOptions) {
           app.enableQE();
           var qeSeq = qe.project.getActiveSequence();
           if (!qeSeq) return __error("No active sequence (QE)");
-          
-          var qeTrack = qeSeq.getVideoTrackAt(${args.track_index});
-          if (!qeTrack) return __error("Track not found");
-          
+
           var transitionName = "${escapeForExtendScript(args.transition_name)}";
-          var transitions = qe.project.getVideoTransitionList();
-          var transitionQE = null;
-          
-          for (var i = 0; i < transitions.numItems; i++) {
-            if (transitions[i].name === transitionName) {
-              transitionQE = transitions[i];
-              break;
-            }
+          // Premiere 25.4+: getVideoTransitionList returns string[]; resolve via getVideoTransitionByName.
+          var transitionQE = qe.project.getVideoTransitionByName(transitionName);
+          if (!transitionQE || !transitionQE.name) return __error("Transition not found: " + transitionName);
+
+          // 25.4: qeTrack.addTransition removed; must call qeClip.addTransition on the clip
+          // at the cut. We find the DOM clip whose end matches the cut point, then resolve
+          // its QE counterpart (skipping Empty placeholders) via __getQEClip.
+          var seq = app.project.activeSequence;
+          var domTrack = seq.videoTracks[${args.track_index}];
+          if (!domTrack) return __error("DOM track not found");
+          var cutTicksNum = __secondsToTicks(${args.cut_point_seconds});
+          var pickedClipIndex = -1;
+          for (var c = 0; c < domTrack.clips.numItems; c++) {
+            var clipEnd = parseFloat(domTrack.clips[c].end.ticks);
+            if (Math.abs(clipEnd - cutTicksNum) < 1) { pickedClipIndex = c; break; }
           }
-          
-          if (!transitionQE) return __error("Transition not found: " + transitionName);
-          
-          var cutTicks = __secondsToTicks(${args.cut_point_seconds}).toString();
-          var durationTicks = __secondsToTicks(${duration}).toString();
-          
-          qeTrack.addTransition(transitionQE, true, cutTicks, durationTicks, "0", false);
-          
+          if (pickedClipIndex === -1) return __error("No clip ends at cut_point_seconds=" + ${args.cut_point_seconds});
+          var fakeResult = { trackIndex: ${args.track_index}, clipIndex: pickedClipIndex, trackType: "video", clip: domTrack.clips[pickedClipIndex] };
+          var qeClip = __getQEClip(fakeResult);
+          if (!qeClip) return __error("QE clip not found for cut point");
+
+          // alignment 1 = transition at clip's END (out-going side of the cut). Verified working in 25.4.
+          qeClip.addTransition(transitionQE, 1);
+
           return __result({
             added: true,
             transition: transitionName,
             trackIndex: ${args.track_index},
             atSeconds: ${args.cut_point_seconds},
-            durationSeconds: ${duration}
+            durationSeconds: ${duration},
+            note: "Premiere 25.4: duration_seconds is currently ignored (new qeClip.addTransition signature is 2-arg)."
           });
         `);
         return sendCommand(script, bridgeOptions);
@@ -115,28 +120,20 @@ export function getTransitionsTools(bridgeOptions: BridgeOptions) {
           if (!result) return __error("Clip not found");
           
           var transitionName = "${escapeForExtendScript(args.transition_name)}";
-          var transitions = qe.project.getVideoTransitionList();
-          var transitionQE = null;
-          for (var i = 0; i < transitions.numItems; i++) {
-            if (transitions[i].name === transitionName) {
-              transitionQE = transitions[i];
-              break;
-            }
-          }
-          if (!transitionQE) return __error("Transition not found: " + transitionName);
-          
-          var qeTrack = qeSeq.getVideoTrackAt(result.trackIndex);
-          var durationTicks = __secondsToTicks(${duration}).toString();
+          var transitionQE = qe.project.getVideoTransitionByName(transitionName);
+          if (!transitionQE || !transitionQE.name) return __error("Transition not found: " + transitionName);
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
           var clip = result.clip;
           var position = "${position}";
-          
+
+          // 25.4: alignment 0 = transition at clip's START (in-coming), 1 = at clip's END (out-going).
           if (position === "start" || position === "both") {
-            var startTicks = clip.start.ticks;
-            qeTrack.addTransition(transitionQE, true, startTicks, durationTicks, "0", false);
+            qeClip.addTransition(transitionQE, 0);
           }
           if (position === "end" || position === "both") {
-            var endTicks = clip.end.ticks;
-            qeTrack.addTransition(transitionQE, true, endTicks, durationTicks, "0", false);
+            qeClip.addTransition(transitionQE, 1);
           }
           
           return __result({
@@ -188,26 +185,20 @@ export function getTransitionsTools(bridgeOptions: BridgeOptions) {
           if (!seq) return __error("No active sequence");
           
           var transitionName = "${escapeForExtendScript(args.transition_name)}";
-          var transitions = qe.project.getVideoTransitionList();
-          var transitionQE = null;
-          for (var i = 0; i < transitions.numItems; i++) {
-            if (transitions[i].name === transitionName) {
-              transitionQE = transitions[i];
-              break;
-            }
-          }
-          if (!transitionQE) return __error("Transition not found: " + transitionName);
-          
+          var transitionQE = qe.project.getVideoTransitionByName(transitionName);
+          if (!transitionQE || !transitionQE.name) return __error("Transition not found: " + transitionName);
+
           var track = seq.videoTracks[${trackIndex}];
-          var qeTrack = qeSeq.getVideoTrackAt(${trackIndex});
-          var durationTicks = __secondsToTicks(${duration}).toString();
           var count = 0;
-          
-          // Add transition at each cut point (between consecutive clips)
+
+          // 25.4: walk DOM clips, resolve each to QE clip via __getQEClip (skips Empty placeholders),
+          // call addTransition with alignment 1 (clip's end).
           for (var c = 0; c < track.clips.numItems - 1; c++) {
-            var cutTicks = track.clips[c].end.ticks;
+            var fakeResult = { trackIndex: ${trackIndex}, clipIndex: c, trackType: "video", clip: track.clips[c] };
+            var qeClip = __getQEClip(fakeResult);
+            if (!qeClip) continue;
             try {
-              qeTrack.addTransition(transitionQE, true, cutTicks, durationTicks, "0", false);
+              qeClip.addTransition(transitionQE, 1);
               count++;
             } catch(e) {}
           }
@@ -229,10 +220,11 @@ export function getTransitionsTools(bridgeOptions: BridgeOptions) {
       handler: async () => {
         const script = buildToolScript(`
           app.enableQE();
+          // Premiere 25.4+: returns Array of strings (length, not numItems).
           var transitions = qe.project.getVideoTransitionList();
           var list = [];
-          for (var i = 0; i < transitions.numItems; i++) {
-            list.push({ name: transitions[i].name, index: i });
+          for (var i = 0; i < transitions.length; i++) {
+            list.push({ name: String(transitions[i]), index: i });
           }
           return __result(list);
         `);
@@ -248,8 +240,8 @@ export function getTransitionsTools(bridgeOptions: BridgeOptions) {
           app.enableQE();
           var transitions = qe.project.getAudioTransitionList();
           var list = [];
-          for (var i = 0; i < transitions.numItems; i++) {
-            list.push({ name: transitions[i].name, index: i });
+          for (var i = 0; i < transitions.length; i++) {
+            list.push({ name: String(transitions[i]), index: i });
           }
           return __result(list);
         `);
@@ -280,17 +272,15 @@ export function getTransitionsTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           app.enableQE();
           try {
-            var list = ${trackType === "audio" ? "qe.project.getAudioTransitionList()" : "qe.project.getVideoTransitionList()"};
-            for (var i = 0; i < list.numItems; i++) {
-              if (list[i].name === "${escapeForExtendScript(args.transition_name)}") {
-                if (list[i].setAsDefaultTransition) {
-                  list[i].setAsDefaultTransition();
-                  return __result({ set: true, transition: "${escapeForExtendScript(args.transition_name)}" });
-                }
-                return __result({ set: false, note: "setAsDefaultTransition API not available; transition exists." });
-              }
+            var transObj = ${trackType === "audio"
+              ? `qe.project.getAudioTransitionByName("${escapeForExtendScript(args.transition_name)}")`
+              : `qe.project.getVideoTransitionByName("${escapeForExtendScript(args.transition_name)}")`};
+            if (!transObj || !transObj.name) return __error("Transition not found: ${escapeForExtendScript(args.transition_name)}");
+            if (transObj.setAsDefaultTransition) {
+              transObj.setAsDefaultTransition();
+              return __result({ set: true, transition: "${escapeForExtendScript(args.transition_name)}" });
             }
-            return __error("Transition not found: ${escapeForExtendScript(args.transition_name)}");
+            return __result({ set: false, note: "setAsDefaultTransition API not available; transition exists." });
           } catch (ex) {
             return __error("Failed: " + ex.toString());
           }

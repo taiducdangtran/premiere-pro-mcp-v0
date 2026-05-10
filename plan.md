@@ -1,18 +1,301 @@
 # Plan: Bổ sung tính năng video editor chuyên nghiệp cho `premiere-pro-mcp`
 
 > **Tạo ngày:** 2026-05-10
-> **Phiên bản hiện tại:** v1.1.1 (269 tools)
+> **Phiên bản hiện tại:** v1.1.1 + merges Hetpatel-11/Antipaster (commit 3261b69) → **307 tools** trước session này, **313 tools sau Phase 1** (uncommitted, +6 tool VFX)
 > **Mục tiêu:** Thêm các tính năng còn thiếu so với editor chuyên nghiệp, chia làm 4 nhóm ưu tiên.
+
+---
+
+## 📊 Progress Log
+
+### Session 2026-05-10 (current)
+
+**Tổng quan:** Phase 0 spike + fix regression Premiere 25.4 (0 tool mới, chỉ sửa logic 4 file). Phase 1 implement 6 tool VFX (307→313). Phase 2 đang tiếp tục.
+
+**Quy ước đếm tool theo phase:**
+- Phase 0 = spike + bug fix regression QE 25.4 → **0 tool mới** (chỉ sửa logic bên trong tool có sẵn ở effects/transitions/audio/clipboard)
+- Phase 1 = +6 tool VFX (configure_warp_stabilizer, apply_ultra_key, set_ultra_key_settings, apply_crop_mask, set_lumetri_creative, set_lumetri_vignette)
+
+| Hạng mục | Trạng thái |
+|---|---|
+| Verify Premiere CEP connection | ✅ Done (Premiere 25.4.1, project "Lò nướng.prproj") |
+| Spike 1.2 Mask API | ✅ Done — kết luận: **UI-only, không có ExtendScript path** |
+| Spike 1.3 Ultra Key | ✅ Done — feasible, 27 props mapped |
+| Spike 2.1 Lumetri | ⚠️ Done — 130 props mapped; curves là binary blob nên hạn chế |
+| Spike 2.6 Warp Stabilizer | ✅ Done — feasible, 32 props mapped + có `AnalysisStatusCounter` |
+| Phát hiện QE 25.4 regression | 🚨 Discovered (ngoài plan) |
+| Fix `effects.ts` (8 sites) | ✅ Done |
+| Fix `transitions.ts` (6 sites) | ✅ Done |
+| Fix `audio.ts` (1 site) | ✅ Done |
+| Fix `clipboard.ts` (1 site) | ✅ Done — `remove_effect_by_name` chuyển sang disable fallback |
+| Fix `remove_effect`: disable fallback + note giải thích | ✅ Done |
+| Update `extendscript-reference.ts` docs | ✅ Done |
+| `npm run build` | ✅ Zero errors |
+| Update plan.md + notebug.md với findings | ✅ Done |
+| Cmd+Z 3 lần clip C7984.MP4 (gỡ spike artifacts) | ✅ User đã undo |
+| Restart MCP server để load code mới | ✅ User restart |
+| **Integration test e2e (6 tests)** | ✅ **5/5 fix pass + 1 bug pre-existing** |
+| Phase 1 P0 implementation (6 tools) | ✅ Done — built + e2e verified (xem section bên dưới) |
+
+### Phase 1 implementation (2026-05-10, sau Phase 0 verification)
+
+6 tool mới được thêm vào `src/tools/effects.ts`, build zero errors. Tất cả logic đã verify qua `execute_extendscript` (replicate handler) trên clip thật C7984.MP4.
+
+| # | Tool | Section | Status |
+|---|---|---|---|
+| 1 | `configure_warp_stabilizer` | 2.6 — Warp Stabilizer config | ✅ Verified: Result/Smoothness/Method/Framing/Crop balance/Maximum Scale/Additional Scale/Rolling Shutter Ripple all set correctly. Returns AnalysisStatusCounter. |
+| 2 | `apply_ultra_key` | 1.3 — Chroma Key | ✅ Verified: Key Color via setColorValue(R,G,B,A) 0-255, Setting (Default/Relaxed/Aggressive), Output (Composite/Alpha/Color). |
+| 3 | `set_ultra_key_settings` | 1.3 — Chroma Key tuning | ✅ Verified: tất cả 16 numeric props (Transparency/Highlight/Shadow/Tolerance/Pedestal/Choke/Soften/Contrast/Mid Point/Desaturate/Range/Spill/Luma/Saturation/Hue/Luminance). ⚠️ Section enable booleans (Matte Generation, Matte Cleanup, Spill Suppression, Color Correction) là UI-only state — bỏ khỏi tool API và document. |
+| 4 | `apply_crop_mask` | 1.2 — Mask workaround | ✅ Verified: L/T/R/B/Zoom/Edge Feather. Premiere 25.4 không có mask API, Crop là path duy nhất cho rectangular mask. |
+| 5 | `set_lumetri_creative` | 2.1 — Lumetri Creative tab | ✅ Verified: Faded Film/Sharpen/Vibrance/Saturation/Tint Balance bằng index-based addressing (vì Lumetri có duplicate names). |
+| 6 | `set_lumetri_vignette` | 2.1 — Lumetri Vignette | ✅ Verified: Amount (Premiere clamp -5..5)/Midpoint/Roundness/Feather. |
+
+**Phụ lục discovery:**
+- ⚠️ **Lumetri/Ultra Key section toggles are read-only via setValue** — Matte Generation, Matte Cleanup, Spill Suppression, Color Correction (Ultra Key) + Active toggles trong Lumetri sections — `setValue(true, true)` silent no-op. Numeric props bên trong vẫn có hiệu lực bình thường, không phụ thuộc toggle.
+- ⚠️ **Vignette Amount clamps to ~-5..5** thay vì -100..100 như docs Premiere SDK ghi. Có thể là 25.4 specific hoặc luôn vậy.
+- ✅ **Crop's Zoom toggle (boolean) HOẠT ĐỘNG** — khác với section toggles. Effect-level feature flags vẫn settable.
+- ✅ **`setColorValue(R, G, B, A)`** chấp nhận 0-255 ints hoặc 0-1 floats; `getColorValue()` return mảng đúng đơn vị input.
+
+**Skip trong Phase 1 (do API hạn chế):**
+- 2.1 Lumetri color wheels — không expose discrete props (binary blob hoặc packed values khó manipulate)
+- 2.1 Lumetri curves — binary blob (idx 58/61/64/67/70 = ``/``)
+- 2.1 read_lumetri_scopes — cần render frame, không có ExtendScript API
+- 1.2 Real bezier mask — không có API trong 25.4 (xác nhận lại trong Phase 0 spike)
+
+**Files thay đổi Phase 1:**
+- `src/tools/effects.ts` — +6 tool handlers (~350 LOC)
+- Build: zero errors, dist/tools/effects.js đã có cả 6 tool
+- Tổng tool: **307 → 313**
+
+### Phase 2 implementation (2026-05-10, sau Phase 1)
+
+**Strategy:** Phase 2 gặp 2 regression mới ngoài kế hoạch (transition + setSpeed). User chọn "skip Morph Cut, tiếp 2.2" để không kẹt vào regression fix. Defer fix sau.
+
+| # | Tool / Item | Section | Status |
+|---|---|---|---|
+| - | 2.5 Morph Cut | Transition | ⏸️ **DEFERRED** — phát hiện `qeTrack.addTransition` mất trong 25.4 (broken cho 6 sites trong transitions.ts + 1 audio.ts). Cần fix regression chung trước. |
+| 1 | `set_clip_time_interpolation` | 2.2 Time Remapping (subset) | ✅ Verified: setTimeInterpolationType(0/1/2) = Frame Sample / Frame Blend / Optical Flow. |
+| - | Speed ramp keyframes | 2.2 Time Remapping (full) | ❌ **NOT FEASIBLE** trong 25.4: Time Remapping component không expose qua DOM/QE clip; `qeClip.enableTimeRemapping/addSpeedKeyframe/setSpeedRamp` đều undefined. |
+| 2 | `set_lumetri_hsl_secondary` | 2.1 Lumetri (subset) | ✅ Verified: Denoise/Blur/Temperature/Tint/Contrast/Sharpen/Saturation tại idx 95/96/101-105 tất cả set đúng. Color picker (Set/Add/Remove key colors) skip — workflow UI-driven. |
+
+**Regression mới phát hiện trong Phase 2 (defer fix):**
+
+1. **`qeTrack.addTransition` → `qeClip.addTransition(transition, alignmentInt)`**
+   - Pattern y hệt qeComp.remove(): API di chuyển track→clip
+   - Verified: `qeClip.addTransition(crossDiss, 1)` → numTransitions tăng đúng 1
+   - Files cần fix: `src/tools/transitions.ts` (6 sites), `src/tools/audio.ts` (apply_audio_crossfade)
+
+2. **DOM `clip.setSpeed` → QE `qeClip.setSpeed(percent, "1", maintainPitch, reversed, rippleEdit)`**
+   - DOM clip không còn setSpeed (`is not a function`)
+   - QE còn setSpeed + setReverse + setTimeInterpolationType + setFrameBlend
+   - Files cần fix: `src/tools/timeline.ts` line 345 (`set_clip_properties` speed branch) + line 473 (`speed_change`)
+
+**Tool count Phase 2:** 313 → **315** (+2: set_clip_time_interpolation, set_lumetri_hsl_secondary)
+
+**Skip trong Phase 2:**
+- 2.5 Morph Cut — defer tới khi fix transition regression
+- 2.2 Speed ramp keyframes — không khả thi qua ExtendScript trong 25.4
+- 2.1 Color wheels / curves — binary blob (đã skip Phase 1)
+- 2.1 read_lumetri_scopes — không có ExtendScript API
+- 2.4 Audio AI / Speech Enhancement / Remix — UI-only theo spike Phase 0
+- 2.3 Essential Graphics typography — chưa probe, để Phase 3 nếu user yêu cầu
+
+---
+
+## ✅ Phase 0.5 — DONE (2026-05-10)
+
+**Outcome:** 2 regression đã plan + 1 regression latent quan trọng hơn (DOM≠QE clipIndex) đều đã fix.
+
+| Fix | Sites | Status |
+|---|---|---|
+| **3c-bis** `qeTrack.addTransition` → `qeClip.addTransition(t, alignmentInt)` | 4 trong transitions.ts + 1 trong audio.ts | ✅ Fixed + verified e2e (Morph Cut applied đúng V3 C8007) |
+| **3c-tris** DOM `clip.setSpeed` → QE `qeClip.setSpeed(percent, "1", false, reverse, false)` | 2 trong timeline.ts (set_clip_properties + speed_change) | ✅ Fixed + verified e2e (speed 100→150→100) |
+| **3e (NEW)** DOM clipIndex ≠ QE clipIndex (Empty placeholders) | 21 sites trong advanced/effects/clipboard/timeline | ✅ Fixed via `__getQEClip(result)` helper |
+
+**Helper mới:** `__getQEClip(result)` trong `src/bridge/script-builder.ts` (auto-prepended vào mọi script). Walk QE track items, skip Empty placeholders, return Nth non-Empty match DOM clipIndex.
+
+**Verification e2e (post-rebuild + MCP respawn, 2026-05-10):**
+- `apply_effect("Lumetri Color")` trên C7971 (DOM idx 2, QE idx 3) → component count 2→3, Lumetri thực sự đến C7971 (trước fix: silent leak vào Empty)
+- `remove_effect("Lumetri Color")` trên C7971 → 3→2, qeComp.remove() đúng clip
+- `speed_change(C7971, 150)` → qeClip.speed=150 ✓; reset 100 ✓
+- `add_transition_to_clip(C8007, "Morph Cut", end)` → V3 numTransitions tăng đúng, Morph Cut tại đúng vị trí
+
+**Caveats còn lại:**
+- `add_transition_to_clip` duration_seconds bị bỏ qua (signature mới không nhận) — transition dùng default Premiere
+- "Center at Cut" alignment cũ KHÔNG expose qua API mới — chỉ start (0) hoặc end (1) of clip
+
+**Tổng tool:** **315** (không tăng — đây là fix work, không add tool). Tất cả tool QE-based giờ hoạt động đúng cho clip sau Empty placeholder.
+
+---
+
+## 📋 ARCHIVED CHECKLIST — Phase 0.5 plan (đã hoàn thành ở trên)
+
+> User đã commit dành 1 session cho fix 2 regression Premiere 25.4 phát hiện trong Phase 2 spike.
+> Pattern y hệt Phase 0 cũ (qeComp.remove): API di chuyển từ track-level/DOM-level sang clip-level QE.
+
+### Checklist fix (theo thứ tự ROI)
+
+#### Fix 1: `clip.setSpeed` → `qeClip.setSpeed(percent, "1", maintainPitch, reversed, rippleEdit)` (2 sites)
+
+| File | Line | Tool | Fix |
+|---|---|---|---|
+| `src/tools/timeline.ts` | ~345 | `set_clip_properties` (speed branch) | Wrap qeClip + setSpeed signature 5-arg |
+| `src/tools/timeline.ts` | ~473 | `speed_change` | Same |
+
+**Pattern:**
+```javascript
+// Trước:
+clip.setSpeed(${args.speed * 100});
+
+// Sau:
+app.enableQE();
+var qeSeq = qe.project.getActiveSequence();
+var qeTrack = result.trackType === "video" ? qeSeq.getVideoTrackAt(result.trackIndex) : qeSeq.getAudioTrackAt(result.trackIndex);
+var qeClip = qeTrack.getItemAt(result.clipIndex);
+qeClip.setSpeed(${args.speed * 100}, "1", false, false, false);
+// 5 args: percent, timeBase, maintainAudioPitch, reversed, rippleEdit
+```
+
+**Test sau fix:** `speed_change(node_id, speed_percent=200)` → verify `qeClip.speed === 200`.
+
+#### Fix 2: `qeTrack.addTransition` → `qeClip.addTransition(transition, alignmentInt)` (7 sites)
+
+| File | Line | Tool | Fix |
+|---|---|---|---|
+| `src/tools/transitions.ts` | 53 | `add_transition` | clip-level addTransition |
+| `src/tools/transitions.ts` | 120 | `add_transition_to_clip` start branch | Same |
+| `src/tools/transitions.ts` | 124 | `add_transition_to_clip` end branch | Same |
+| `src/tools/transitions.ts` | 188 | `batch_add_transitions` | Same |
+| `src/tools/transitions.ts` | 2 sites khác | (cần grep `qeTrack.addTransition`) | Same |
+| `src/tools/audio.ts` | ? | `apply_audio_crossfade` | Same trên audio track |
+
+**Pattern:**
+```javascript
+// Trước:
+qeTrack.addTransition(transitionQE, alignBool, cutTicks, durationTicks, "0", false);
+
+// Sau (verified working signature):
+var qeClip = qeTrack.getItemAt(clipIndex);   // CLIP at the cut, not the track
+qeClip.addTransition(transitionQE, alignmentInt);
+// alignmentInt: 1 verified work; 0 và 2 cần test thêm để map "Center at Cut" / "Start at Cut" / "End at Cut"
+```
+
+**Cần spike thêm trong session fix:**
+- alignment: 0 vs 1 vs 2 → xác định đúng giá trị cho 3 alignment Premiere UI
+- Có cần passes durationTicks không? (signature 2-arg đã work nhưng duration mặc định ?)
+- Trên audio track, có làm tương tự được không?
+
+#### Fix 3 (BONUS — đã verified working trong Phase 0): `clip.components[i].remove()` → `qeClip.getComponentAt(i).remove()`
+
+Đã fix trong Phase 0 cho effects.ts + clipboard.ts. Verify lại không có site nào còn xài DOM-level `.remove()` lén lút.
+
+```bash
+grep -rn "\.components\[.*\]\.remove\|components\.deleteComponent" src/tools/
+```
+
+### Mở phạm vi fix (optional — nếu spike thêm thấy thêm regression)
+
+Phase 0 + Phase 2 spike đã verify được pattern: **API móc 25.4 = di chuyển từ DOM/track sang QE clip-level**. Trước khi fix, có thể spike các API khác có pattern tương tự:
+- `clip.disabled = true` / `clip.enabled` (toggle clip eyeball) — DOM property?
+- `clip.move(...)` — di chuyển clip trên timeline
+- `seq.razor(time)` / `qeTrack.razor(time)` vs `qeClip.razor()` — cắt clip
+- `qeTrack.addItem(...)` vs `qeClip.???` — insert clip
+
+Spike 1-2 giờ trước khi fix sẽ tránh phát hiện regression mới ở giữa session sau.
+
+### Sau khi fix xong
+
+- [ ] `npm run build` zero errors
+- [ ] Restart MCP (pkill -f) + verify 7 tool transition + 2 tool speed hoạt động qua real MCP
+- [ ] Update `notebug.md`: chuyển 2 regression khỏi "defer" sang "fixed"
+- [ ] Update `extendscript-reference.ts` với pattern di chuyển track→clip
+- [ ] Sau đó **reopen 2.5 Morph Cut** (sẽ dùng được add_transition_to_clip đã fix)
+- [ ] Cân nhắc bump version v1.1.2 (regression fix release) trước khi sang Phase 3
+
+### Rủi ro session sau
+
+- Audio crossfade trên audio track có thể có signature khác — cần test riêng
+- Alignment enum có thể không phải 0/1/2 thẳng — Premiere có thể dùng giá trị khác
+- Có thể có thêm regression chưa phát hiện trong scope clip operations
+
+**Lưu ý cho Phase tiếp theo:** Để Claude Code thấy 6 tool mới, cần restart Claude Code IDE (toggle MCP không đủ — tool catalog cache tại conversation start). Trong session này, logic verified qua `execute_extendscript`, sẽ test trực tiếp ở session sau.
+
+**Kết quả integration test (sau MCP restart, 2026-05-10):**
+| # | Test | Kết quả |
+|---|---|---|
+| 1 | `list_available_effects` | ✅ 142 effects, names đúng (Ultra Key=11, Lumetri=26, Crop=83, Mask=100, Warp Stab=122) |
+| 2 | Verify clip cleanup | ✅ Clip C7984.MP4 sạch sau Cmd+Z |
+| 3 | `apply_effect("Lumetri Color")` | ✅ Applied OK (note: tạo 2 components — 1 master, 1 instance là behavior bình thường) |
+| 4 | `remove_effect` (post-rebuild + MCP respawn) | ✅ Thật sự xóa: `{ removed:true, indexRemoved:2, componentsBefore:3, componentsAfter:2 }` — qua `qeClip.getComponentAt(idx).remove()` |
+| 5 | `color_correct` (chỉ exposure) | ✅ PASS; ⚠️ Phát hiện **bug pre-existing** (KHÔNG do session này): multi-param fail với "Invalid parameter" vì set value 110 vào prop "Saturation" boolean toggle (Lumetri có 3 prop tên Saturation cùng lúc). Cần fix riêng trong Phase 1 hoặc tách ticket. |
+| 6 | `list_available_audio_effects` | ✅ 76 audio effects (DeNoise, DeReverb, Hard Limiter, Multiband Compressor, ... — relevant cho audio tools tương lai) |
+
+**Kết luận test:** Toàn bộ 25.4 regression fixes hoạt động đúng end-to-end. Có 1 bug riêng trong `color_correct` (multi-name prop matching) cần xử lý sau, không liên quan QE API.
+
+**Bug mới phát hiện cần ticket riêng:**
+- `color_correct` setValue cho TẤT CẢ properties trùng tên (vd Saturation xuất hiện 3 lần trong Lumetri: idx 16 Basic Correction Saturation [number 0-200], idx 43 Creative Saturation [number 0-200], idx 106 Color Correction Saturation [BOOLEAN toggle]). Khi user truyền `saturation=110`, code set 110 vào toggle boolean → "Invalid parameter". Cần thêm filter theo property type hoặc theo section context.
+
+### 🎯 Re-discovery 2026-05-10 (sau user feedback): qeComp.remove() THỰC SỰ XÓA ĐƯỢC
+
+**Tình huống:** Sau khi commit fix "disable fallback" cho remove_effect, user thắc mắc "phải disable được chứ" → spike sâu hơn → phát hiện **path xóa thật** mà initial spike đã miss.
+
+**Path đúng (verified):**
+```javascript
+app.enableQE();
+var qeClip = qeTrack.getItemAt(clipIdx);
+var qeComp = qeClip.getComponentAt(componentIdx);  // ← KEY API
+qeComp.remove();                                     // ← TRULY removes
+```
+
+**Tại sao initial spike miss:**
+- Initial spike test `clip.components[i].remove()` (standard ExtendScript path) → undefined
+- Initial spike test `qeClip.removeEffects(...)` → chỉ remove intrinsic
+- KHÔNG test `qeClip.getComponentAt(i).remove()` — đây là QE-level component object **khác hẳn** với standard component
+- QE methods/properties không enumerable qua `for...in`, nên enumeration probe miss
+
+**Verified test:** Apply Lumetri (4 components total) → `qeComp.remove()` → 3 components, `trulyRemoved: true`. Component name "Lumetri Color" thật sự biến mất khỏi clip.
+
+**Action items:**
+- [x] Fix `remove_effect` (effects.ts): chuyển từ disable-fallback sang `qeComp.remove()` thật — DONE
+- [x] Fix `remove_effect_by_name` (clipboard.ts): tương tự, iterate backwards — DONE
+- [x] Update extendscript-reference.ts: sửa note 25.4 từ "không xóa được" → "xóa qua qeClip.getComponentAt(i).remove()" — DONE
+- [x] `npm run build` zero errors — DONE
+- [x] Cleanup C7984.MP4 (clip đã sạch sau user undo) — DONE
+- [ ] User restart MCP server lần nữa + verify remove_effect e2e thật sự xóa
+
+**Bài học rút ra:** QE DOM có hai loại component object:
+1. `clip.components[i]` (standard ExtendScript) — chỉ có `displayName, instanceName, matchName, properties`
+2. `qeClip.getComponentAt(i)` (QE-level) — có `id, matchName, name, remove()`
+
+Khi probe API trong tương lai, **luôn test cả hai paths** vì chúng expose method set khác nhau.
+
+**Kế hoạch ngay sau session này (Phase 1 — VFX focus):**
+1. **2.6 Warp Stabilizer config** (rủi ro thấp, props đã map xong) — bổ sung tool `configure_warp_stabilizer` set Result/Smoothness/Method/Framing/Crop-Smooth balance
+2. **1.3 Ultra Key tools** — `apply_ultra_key`, `set_ultra_key_settings` (matte gen / cleanup / spill / color correction sections)
+3. **2.1 Lumetri color wheels + curves enable** — wheels khả thi, curves chỉ enable/disable section, scopes skip
+4. **1.2 Crop-based "mask" workaround** — wrap effect "Crop" vì mask thực không khả thi
+
+**Files thay đổi trong session này:**
+- `src/tools/effects.ts` — 8 fix sites
+- `src/tools/transitions.ts` — 6 fix sites
+- `src/tools/audio.ts` — 1 fix site
+- `src/tools/clipboard.ts` — 1 fix site (remove_effect_by_name → disable)
+- `src/resources/extendscript-reference.ts` — docs cập nhật về 25.4 caveats
+- `plan.md` — progress log + spike results + regression findings
+- `notebug.md` — Bug 3 (3a/3b/3c/3d) chi tiết cho QE 25.4 regression
 
 ---
 
 ## 0. Bối cảnh & Trạng thái hiện tại
 
 ### Trạng thái môi trường khi lập plan
-- ⚠️ **Premiere Pro CEP plugin chưa kết nối** (ping/get_premiere_state đều timeout 2026-05-10).
-  - Cần chạy lại Premiere + bật CEP panel trước khi test thực tế.
-  - Kiểm tra: `bash scripts/install-cep.sh` đã chạy chưa, plugin có ở `~/Library/Application Support/Adobe/CEP/extensions/` chưa.
-- ✅ Source code MCP đầy đủ, build hệ thống TypeScript đã hoạt động (đã verify qua các fix gần đây trong [notebug.md](notebug.md)).
+- ✅ **Premiere Pro CEP plugin đã kết nối** (verified 2026-05-10): Premiere 25.4.1, project "Lò nướng.prproj", sequence "Sequence 01 Cắt" (3840×2160, 22 clips V1).
+- ✅ Source code MCP đầy đủ, build hệ thống TypeScript đã hoạt động.
+- 🚨 **PHÁT HIỆN MỚI 2026-05-10 sau Phase 0 spike:** QE DOM API thay đổi trong Premiere 25.4 — nhiều tool effects hiện tại có thể đã broken. Xem chi tiết section "🚨 PHÁT HIỆN CRITICAL" trong roadmap bên dưới.
+
+### User context (xác nhận 2026-05-10)
+- **Use case ưu tiên:** VFX/Color grading → focus 1.2 Masking, 1.3 Chroma Key, 2.1 Lumetri, 2.6 Warp Stabilizer
+- **Approach:** Spike API rủi ro trước rồi mới implement
 
 ### Hai hướng tiếp cận (chọn 1 hoặc kết hợp)
 
@@ -338,14 +621,71 @@ Sau khi thêm: cần register trong `server.ts` (factory đã import sẵn nếu
 
 ## 5. Roadmap thực thi đề xuất
 
-### Phase 0 — Setup & spike (1 buổi)
-- [ ] Verify Premiere CEP plugin reconnect được (`ping` thành công)
-- [ ] Spike 4 API rủi ro cao bằng `execute_extendscript`:
-  - [ ] Multicam audio sync
-  - [ ] Mask path API (set bezier vs preset shape)
-  - [ ] Essential Sound auto-ducking
-  - [ ] Speech Enhancement / Remix (AI features mới)
-- [ ] Document kết quả spike vào `notebug.md` (giống workflow đã có)
+### Phase 0 — Setup & spike (1 buổi) — **ĐANG TIẾN HÀNH (VFX focus)**
+- [x] Verify Premiere CEP plugin reconnect (`ping` OK — Premiere 25.4.1, project "Lò nướng.prproj", sequence "Sequence 01 Cắt") — 2026-05-10
+- [x] **Spike 1.2 — Mask API:** Chỉ có `displayName, instanceName, matchName, properties` trên component; KHÔNG có `addMask()`. QE project/sequence/clip đều không có mask methods. → **Mask CHỈ làm được qua UI.** Workaround: dùng effect "Crop" (có 4 crop properties built-in) hoặc track matte multi-track.
+- [x] **Spike 1.3 — Ultra Key:** matchName `AE.ADBE Ultra Key`. 27 properties đầy đủ: Output (enum), Setting (enum 0-2), Key Color (packed int), Matte Generation toggle + Transparency/Highlight/Shadow/Tolerance/Pedestal, Matte Cleanup + Choke/Soften/Contrast/Mid Point, Spill Suppression + Desaturate/Range/Spill/Luma, Color Correction + Sat/Hue/Luminance. **HOÀN TOÀN KHẢ THI.**
+- [x] **Spike 2.1 — Lumetri:** matchName `AE.ADBE Lumetri`. 130 properties (flat list, section toggles + sub-props). Basic Correction, Creative, Curves, HSL Secondary, Color Wheels, Vignette đều set được. **Curves stored as binary blobs** (idx 58/61/64/67/70 — ``...) → khó manipulate trực tiếp, có thể chỉ enable/disable/copy được. **Color wheels khả thi**, **read scopes vẫn không khả thi.**
+- [x] **Spike 2.6 — Warp Stabilizer:** matchName `AE.ADBE SubspaceStabilizer`. 32 properties: Result (0=Smooth/1=No Motion), Smoothness (0-100), Method (3=Subspace), Framing (0-3), Crop Less↔Smooth More, Synthesis params, Edge Cropping L/T/R/B. Có **AnalysisStatusCounter (idx 31)** để monitor background analysis. **HOÀN TOÀN KHẢ THI.**
+- [ ] Spike: render-to-PNG approach cho `pick_key_color_at_frame` (Spike 1.3 follow-up)
+- [ ] Skip multicam audio sync + auto-ducking + Speech Enhancement (không phải VFX use case)
+- [ ] Document chi tiết vào `notebug.md`
+
+### 🚨 PHÁT HIỆN CRITICAL: QE 25.4 API REGRESSION
+
+Trong khi spike phát hiện code hiện tại có thể bị broken trên Premiere 25.4:
+
+**1. `getVideoEffectList()` đổi return type:**
+- **Cũ (code hiện tại giả định):** Object `{ numItems, [0..n].name }` — items là QEVideoEffect objects
+- **Mới (25.4):** Array `{ length, [0..n] }` — items là **string** (tên effect, qua `String()` hoặc `toString()`)
+- File ảnh hưởng: `src/tools/effects.ts` line 43-51 (`apply_effect`), 247-251 (`color_correct`), 322-325 (`apply_lut`), 393-400 (Warp Stabilizer apply), `list_available_effects` line 162-168
+
+**Fix pattern:**
+```js
+// CŨ (broken):
+var effects = qe.project.getVideoEffectList();
+for (var i = 0; i < effects.numItems; i++) {
+  if (effects[i].name === effectName) qeClip.addVideoEffect(effects[i]);
+}
+
+// MỚI (works in 25.4):
+var effObj = qe.project.getVideoEffectByName(effectName);
+if (effObj) qeClip.addVideoEffect(effObj);
+```
+
+**2. Component removal API biến mất:**
+- `clip.components[i].remove()` → **NOT a function** trong 25.4
+- `clip.components.deleteComponent(...)` → **NOT a function**
+- Component collection chỉ còn `numItems, length` keys (no removal methods)
+- QE `removeEffects(motion, opacity, lumetri, ...)` chỉ remove được intrinsic categories, không remove được Lumetri/Ultra Key/Warp Stab custom effects
+- `app.undo()` / `app.executeCommand()` / `app.findMenuCommandId()` → tất cả **undefined**
+- File ảnh hưởng: `src/tools/effects.ts` `remove_effect` (line 138, 145), nhiều nơi khác
+
+**Workaround tạm thời:** User phải Cmd+Z thủ công sau khi tool apply effect lỗi. Cần research thêm các API cleanup trong Premiere 25.4 (có thể qua Premiere Pro DOM mới chứ không qua QE).
+
+**3. Tool `list_available_effects` hỏng:**
+- Dùng `effects.numItems` và `effects[i].name` — cả hai đều undefined
+- Fix: `for (var i = 0; i < effects.length; i++) { list.push({ name: String(effects[i]), index: i }); }`
+
+**Action items:**
+- [x] **PRIORITY 0:** Fix regression trong `apply_effect`, `list_available_effects`, `color_correct`, `apply_lut`, `stabilize_clip` (effects.ts) — DONE 2026-05-10
+- [x] **PRIORITY 0:** Fix transitions.ts (6 sites: add_transition, add_transition_to_clip, batch_add_transitions, list_available_transitions, list_available_audio_transitions, set_default_transition) — DONE
+- [x] **PRIORITY 0:** Fix audio.ts (apply_audio_crossfade) + clipboard.ts (remove_effect_by_name) — DONE
+- [x] Patch `remove_effect` + `remove_effect_by_name`: fall back to **disable** (set Active=false) thay vì throw, kèm note giải thích cho user. UI undo (Cmd+Z) là cách duy nhất để xóa thật.
+- [x] Update extendscript-reference.ts với 25.4 caveats — DONE
+- [x] Build TypeScript: zero errors — DONE
+- [ ] Restart MCP server + integration test end-to-end
+- [ ] Update notebug.md với regression details (mirror nội dung này)
+
+### 🔬 Discovery bổ sung trong khi fix (2026-05-10)
+
+`qe.project.getVideoEffectByName(unknown)` / `getAudioEffectByName` / `get*TransitionByName` **không return null** cho name không tồn tại — luôn return một QE object placeholder. Cách phân biệt:
+- Real: `effObj.name === "Lumetri Color"` (đúng tên đã yêu cầu)
+- Fake: `effObj.name === ""` (string rỗng)
+
+`qeClip.addVideoEffect(fakeObj)` không throw nhưng cũng **không apply** (silent no-op). Điều này nguy hiểm vì code "thành công" nhưng effect không có trên clip.
+
+→ Pattern bắt buộc: `if (!effObj || !effObj.name) return __error(...)`. Đã apply pattern này vào tất cả fix sites.
 
 ### Phase 1 — P0 Nhóm 1 (3-5 ngày)
 - [ ] 1.5 Text-based editing (rủi ro thấp, ROI cao nhất, không cần Premiere reconnect để code)

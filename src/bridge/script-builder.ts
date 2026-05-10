@@ -84,6 +84,55 @@ function __findClip(nodeId) {
   return null;
 }
 
+// Translate __findClip result (DOM-indexed) to a QE clip object.
+// Critical in Premiere 25.4: QE tracks include "Empty" placeholders between/around clips,
+// so DOM clipIndex (e.g. 2) does NOT match QE getItemAt index (which would return an Empty).
+// This helper walks the QE track skipping Empty items to find the Nth real clip,
+// where N matches DOM clip ordinal.
+function __getQEClip(result) {
+  if (!result) return null;
+  app.enableQE();
+  var qeSeq = qe.project.getActiveSequence();
+  if (!qeSeq) return null;
+  var qeTrack = result.trackType === "video"
+    ? qeSeq.getVideoTrackAt(result.trackIndex)
+    : qeSeq.getAudioTrackAt(result.trackIndex);
+  if (!qeTrack) return null;
+
+  var nonEmptyOrdinal = 0;
+  for (var i = 0; i < qeTrack.numItems; i++) {
+    var qc = qeTrack.getItemAt(i);
+    if (qc && qc.type !== "Empty") {
+      if (nonEmptyOrdinal === result.clipIndex) return qc;
+      nonEmptyOrdinal++;
+    }
+  }
+  return null;
+}
+
+// Same as __getQEClip but also returns the QE track for callers that need it
+// (e.g. transition tools that read qeTrack.numTransitions).
+function __getQEClipAndTrack(result) {
+  if (!result) return null;
+  app.enableQE();
+  var qeSeq = qe.project.getActiveSequence();
+  if (!qeSeq) return null;
+  var qeTrack = result.trackType === "video"
+    ? qeSeq.getVideoTrackAt(result.trackIndex)
+    : qeSeq.getAudioTrackAt(result.trackIndex);
+  if (!qeTrack) return null;
+
+  var nonEmptyOrdinal = 0;
+  for (var i = 0; i < qeTrack.numItems; i++) {
+    var qc = qeTrack.getItemAt(i);
+    if (qc && qc.type !== "Empty") {
+      if (nonEmptyOrdinal === result.clipIndex) return { qeClip: qc, qeTrack: qeTrack, qeSeq: qeSeq };
+      nonEmptyOrdinal++;
+    }
+  }
+  return null;
+}
+
 function __getAllClips(seq) {
   if (!seq) seq = app.project.activeSequence;
   if (!seq) return [];
