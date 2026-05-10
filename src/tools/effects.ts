@@ -3305,6 +3305,347 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_corner_pin: {
+      description:
+        "Apply Corner Pin effect — 4-corner perspective transform. Useful for screen replacement, billboards, putting content into a TV/phone in the shot. All 4 corners are 0.0-1.0 normalized to clip bounds.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          upper_left_x: { type: "number", description: "UL X 0.0-1.0 (default 0)" },
+          upper_left_y: { type: "number", description: "UL Y 0.0-1.0 (default 0)" },
+          upper_right_x: { type: "number", description: "UR X 0.0-1.0 (default 1)" },
+          upper_right_y: { type: "number", description: "UR Y 0.0-1.0 (default 0)" },
+          lower_left_x: { type: "number", description: "LL X 0.0-1.0 (default 0)" },
+          lower_left_y: { type: "number", description: "LL Y 0.0-1.0 (default 1)" },
+          lower_right_x: { type: "number", description: "LR X 0.0-1.0 (default 1)" },
+          lower_right_y: { type: "number", description: "LR Y 0.0-1.0 (default 1)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        const corners: [string, number | undefined, number | undefined, number, number][] = [
+          ["Upper Left", args.upper_left_x, args.upper_left_y, 0, 0],
+          ["Upper Right", args.upper_right_x, args.upper_right_y, 1, 0],
+          ["Lower Left", args.lower_left_x, args.lower_left_y, 0, 1],
+          ["Lower Right", args.lower_right_x, args.lower_right_y, 1, 1],
+        ];
+        for (const [label, x, y, dx, dy] of corners) {
+          if (x !== undefined || y !== undefined) {
+            const px = x ?? dx;
+            const py = y ?? dy;
+            setLines.push(`if (n === "${label}") prop.setValue([${px}, ${py}], true);`);
+          }
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Corner Pin is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Corner Pin") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Corner Pin");
+            if (!eff || !eff.name) return __error("Corner Pin effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Corner Pin") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_transform: {
+      description:
+        "Apply Transform effect — alternate transform with skew + opacity + motion-blur sampling. Use this when you need a second transform on top of intrinsic Motion (e.g., Motion drives camera move, Transform adds skew/opacity animation).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          anchor_x: { type: "number", description: "Anchor X 0.0-1.0 (default 0.5)" },
+          anchor_y: { type: "number", description: "Anchor Y 0.0-1.0 (default 0.5)" },
+          position_x: { type: "number", description: "Position X 0.0-1.0 (default 0.5)" },
+          position_y: { type: "number", description: "Position Y 0.0-1.0 (default 0.5)" },
+          uniform_scale: { type: "boolean", description: "Lock width to height scale (default true)" },
+          scale_height: { type: "number", description: "Height scale percent (default 100)" },
+          scale_width: { type: "number", description: "Width scale percent (default 100)" },
+          skew: { type: "number", description: "Skew amount (default 0)" },
+          skew_axis: { type: "number", description: "Skew axis in degrees (default 0)" },
+          rotation: { type: "number", description: "Rotation in degrees (default 0)" },
+          opacity: { type: "number", description: "Opacity 0-100 (default 100)" },
+          shutter_angle: { type: "number", description: "Motion-blur shutter angle in degrees (default 0)" },
+          sampling: { type: "number", description: "Sampling enum (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.anchor_x !== undefined || args.anchor_y !== undefined) {
+          const ax = args.anchor_x ?? 0.5;
+          const ay = args.anchor_y ?? 0.5;
+          setLines.push(`if (n === "Anchor Point") prop.setValue([${ax}, ${ay}], true);`);
+        }
+        if (args.position_x !== undefined || args.position_y !== undefined) {
+          const px = args.position_x ?? 0.5;
+          const py = args.position_y ?? 0.5;
+          setLines.push(`if (n === "Position") prop.setValue([${px}, ${py}], true);`);
+        }
+        if (args.uniform_scale !== undefined) setLines.push(`if (n === "Uniform Scale") prop.setValue(${args.uniform_scale ? "true" : "false"}, true);`);
+        if (args.scale_height !== undefined) setLines.push(`if (n === "Scale Height") prop.setValue(${args.scale_height}, true);`);
+        if (args.scale_width !== undefined) setLines.push(`if (n === "Scale Width") prop.setValue(${args.scale_width}, true);`);
+        if (args.skew !== undefined) setLines.push(`if (n === "Skew") prop.setValue(${args.skew}, true);`);
+        if (args.skew_axis !== undefined) setLines.push(`if (n === "Skew Axis") prop.setValue(${args.skew_axis}, true);`);
+        if (args.rotation !== undefined) setLines.push(`if (n === "Rotation") prop.setValue(${args.rotation}, true);`);
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.shutter_angle !== undefined) setLines.push(`if (n === "Shutter Angle") prop.setValue(${args.shutter_angle}, true);`);
+        if (args.sampling !== undefined) setLines.push(`if (n === "Sampling") prop.setValue(${Math.round(args.sampling)}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Transform is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Transform") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Transform");
+            if (!eff || !eff.name) return __error("Transform effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Transform") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_offset: {
+      description:
+        "Apply Offset effect — wraps the image so a different point becomes the center, with the original center wrapping to the edge. Useful for tiling textures, panning skybox shots, generating seamless loops.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          shift_x: { type: "number", description: "New center X 0.0-1.0 (default 0.5 = no shift)" },
+          shift_y: { type: "number", description: "New center Y 0.0-1.0 (default 0.5)" },
+          blend_with_original: { type: "number", description: "Blend with original 0.0-1.0 (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; shift_x?: number; shift_y?: number; blend_with_original?: number }) => {
+        const setLines: string[] = [];
+        if (args.shift_x !== undefined || args.shift_y !== undefined) {
+          const sx = args.shift_x ?? 0.5;
+          const sy = args.shift_y ?? 0.5;
+          setLines.push(`if (n === "Shift Center To") prop.setValue([${sx}, ${sy}], true);`);
+        }
+        if (args.blend_with_original !== undefined) setLines.push(`if (n === "Blend With Original") prop.setValue(${args.blend_with_original}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Offset is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Offset") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Offset");
+            if (!eff || !eff.name) return __error("Offset effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Offset") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_fast_blur: {
+      description:
+        "Apply Fast Blur effect — quick approximate blur (faster than Gaussian Blur, less precise). Good for real-time previews or when you just need cheap softening.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          blurriness: { type: "number", description: "Blur radius (default 0)" },
+          blur_dimensions: { type: "number", description: "0=Both (default), 1=Horizontal, 2=Vertical" },
+          repeat_edge_pixels: { type: "boolean", description: "Repeat edge pixels to avoid darkening (default true)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; blurriness?: number; blur_dimensions?: number; repeat_edge_pixels?: boolean }) => {
+        const setLines: string[] = [];
+        if (args.blurriness !== undefined) setLines.push(`if (n === "Blurriness") prop.setValue(${args.blurriness}, true);`);
+        if (args.blur_dimensions !== undefined) setLines.push(`if (n === "Blur Dimensions") prop.setValue(${Math.round(args.blur_dimensions)}, true);`);
+        if (args.repeat_edge_pixels !== undefined) setLines.push(`if (n === "Repeat Edge Pixels") prop.setValue(${args.repeat_edge_pixels ? "true" : "false"}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Fast Blur is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Fast Blur") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Fast Blur");
+            if (!eff || !eff.name) return __error("Fast Blur effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Fast Blur") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_extract: {
+      description:
+        "Apply Extract effect — luminance-based key with histogram-style controls. Pixels outside [black_input, white_input] become transparent; softness creates falloff.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          black_input_level: { type: "number", description: "Black input level 0-255 (default 64). Pixels below this become transparent." },
+          white_input_level: { type: "number", description: "White input level 0-255 (default 192). Pixels above become transparent." },
+          softness: { type: "number", description: "Edge softness 0-255 (default 25)" },
+          invert: { type: "boolean", description: "Invert: keep extremes, drop midtones (default false)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.black_input_level !== undefined) setLines.push(`if (n === "Black Input Level") prop.setValue(${args.black_input_level}, true);`);
+        if (args.white_input_level !== undefined) setLines.push(`if (n === "White Input Level") prop.setValue(${args.white_input_level}, true);`);
+        if (args.softness !== undefined) setLines.push(`if (n === "Softness") prop.setValue(${args.softness}, true);`);
+        if (args.invert !== undefined) setLines.push(`if (n === "Invert") prop.setValue(${args.invert ? "true" : "false"}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Extract is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Extract") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Extract");
+            if (!eff || !eff.name) return __error("Extract effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Extract") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_turbulent_displace: {
       description:
         "Apply Turbulent Displace effect — fractal-noise displacement for water/heat-haze/organic distortion. Use Twist mode for warp-zoom looks; animate Evolution for movement.",

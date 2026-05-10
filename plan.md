@@ -36,6 +36,7 @@
 | (next) | **Phase 4 batch 14 + v1.1.11** — 5 keyers/shapes (Color Key, Luma Key, Non Red Key, Circle, Ellipse) — passing 400-tool milestone | **402** | +5 (runtime verified) |
 | (next) | **Phase 4 batch 15 + v1.1.12** — 5 mixed (Lightning, Vector Motion, Eyedropper Fill, Calculations, Alpha Adjust). Shape skipped — binary Path/Appearance blobs | **407** | +5 (runtime verified) |
 | (next) | **Phase 4 batch 16 + v1.1.13** — 5 distort/math/AI/shadow/fill (Turbulent Displace, Arithmetic, Auto Reframe, Radial Shadow, Paint Bucket) | **412** | +5 (runtime verified) |
+| (next) | **Phase 4 batch 17 + v1.1.14** — 5 geometry/blur/key (Corner Pin, Transform, Offset, Fast Blur, Extract) | **417** | +5 (runtime verified) |
 
 ### 📌 Session continuation note (post-compact, 2026-05-10)
 

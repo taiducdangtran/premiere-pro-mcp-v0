@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.14] - 2026-05-10
+
+### Added — 5 new tools (412 → 417)
+
+#### Phase 4 batch 17 — Geometry/blur/key (5 tools, `src/tools/effects.ts`)
+
+- **`apply_corner_pin`** — 4-corner perspective transform (screen replacement, billboards, fitting content into a TV/phone in shot). All 4 corners 0-1 normalized.
+- **`apply_transform`** — alternate transform with skew + opacity + motion-blur sampling (stack with intrinsic Motion).
+- **`apply_offset`** — pixel-shift wrap (tiling/seamless loops/sky pan).
+- **`apply_fast_blur`** — quick approximate blur (faster than Gaussian).
+- **`apply_extract`** — luminance-based key with histogram-style controls (black/white input + softness + invert).
+
+### Changed
+
+- Tool count: 412 → 417
+- Updated `package.json` description
+
+### Verified
+
+- 15 properties round-trip verified.
+
 ## [1.1.13] - 2026-05-10
 
 ### Added — 5 new tools (407 → 412)
