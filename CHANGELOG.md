@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.13] - 2026-05-10
+
+### Added — 5 new tools (407 → 412)
+
+#### Phase 4 batch 16 — Distort/math/AI/shadow/fill (5 tools, `src/tools/effects.ts`)
+
+- **`apply_turbulent_displace`** — fractal-noise displacement (water/heat-haze/twist looks). 9 modes (Turbulent/Bulge/Twist + variants).
+- **`apply_arithmetic`** — simple per-channel arithmetic with constant RGB color (And/Or/Xor/Add/Sub/Mul/Diff/Max/Min). Lighter than Compound Arithmetic.
+- **`apply_auto_reframe`** — Adobe Sensei AI-driven reframing for aspect-ratio change. Wrapper exposes Motion Tracking enum, Reframe Offset/Scale/Rotation, and Overwrite generated path.
+- **`apply_radial_shadow`** — drop shadow with point light source (radial casting). Opacity 0-1 normalized.
+- **`apply_paint_bucket`** — flood-fill contiguous color region (animated color replacement on solid-color UI/cartoon).
+
+### Changed
+
+- Tool count: 407 → 412
+- Updated `package.json` description
+
+### Verified
+
+- 17 properties round-trip verified (Auto Reframe verified separately for Motion Tracking, Reframe Scale/Rotation, Overwrite generated path).
+
+### Discovery
+
+- **Auto Reframe `Adjust Position`**: `getValue()` returns object (not boolean) and `setValue(true/false)` throws "Illegal Parameter type". Likely backed by a non-bool internal type. Removed from wrapper params; Premiere manages this internally based on Overwrite generated path.
+- **Radial Shadow `Opacity`**: 0.0-1.0 normalized (NOT 0-100). Documented.
+
 ## [1.1.12] - 2026-05-10
 
 ### Added — 5 new tools (402 → 407)

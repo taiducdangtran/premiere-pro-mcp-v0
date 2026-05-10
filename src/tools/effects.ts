@@ -3305,6 +3305,376 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_turbulent_displace: {
+      description:
+        "Apply Turbulent Displace effect — fractal-noise displacement for water/heat-haze/organic distortion. Use Twist mode for warp-zoom looks; animate Evolution for movement.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          displacement: { type: "number", description: "Mode enum: 0=Turbulent (default), 1=Turbulent Smoother, 2=Bulge, 3=Bulge Smoother, 4=Twist, 5=Twist Smoother, 6=Vertical, 7=Horizontal, 8=Cross" },
+          amount: { type: "number", description: "Distortion amount (default 50)" },
+          size: { type: "number", description: "Noise size (default 100)" },
+          offset_x: { type: "number", description: "Offset X 0.0-1.0 (default 0.5)" },
+          offset_y: { type: "number", description: "Offset Y 0.0-1.0 (default 0.5)" },
+          complexity: { type: "number", description: "Noise complexity 1-10 (default 1)" },
+          evolution: { type: "number", description: "Evolution angle in degrees (default 0). Animate for motion." },
+          pinning: { type: "number", description: "Edge pinning enum (default 2)" },
+          resize_layer: { type: "boolean", description: "Resize layer to fit displaced result (default false)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.displacement !== undefined) setLines.push(`if (n === "Displacement") prop.setValue(${Math.round(args.displacement)}, true);`);
+        if (args.amount !== undefined) setLines.push(`if (n === "Amount") prop.setValue(${args.amount}, true);`);
+        if (args.size !== undefined) setLines.push(`if (n === "Size") prop.setValue(${args.size}, true);`);
+        if (args.offset_x !== undefined || args.offset_y !== undefined) {
+          const ox = args.offset_x ?? 0.5;
+          const oy = args.offset_y ?? 0.5;
+          setLines.push(`if (n === "Offset (Turbulence)") prop.setValue([${ox}, ${oy}], true);`);
+        }
+        if (args.complexity !== undefined) setLines.push(`if (n === "Complexity") prop.setValue(${args.complexity}, true);`);
+        if (args.evolution !== undefined) setLines.push(`if (n === "Evolution") prop.setValue(${args.evolution}, true);`);
+        if (args.pinning !== undefined) setLines.push(`if (n === "Pinning") prop.setValue(${Math.round(args.pinning)}, true);`);
+        if (args.resize_layer !== undefined) setLines.push(`if (n === "Resize Layer") prop.setValue(${args.resize_layer ? "true" : "false"}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Turbulent Displace is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Turbulent Displace") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Turbulent Displace");
+            if (!eff || !eff.name) return __error("Turbulent Displace effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Turbulent Displace") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_arithmetic: {
+      description:
+        "Apply Arithmetic effect — simple per-channel arithmetic between source and a constant RGB color. Lightweight alternative to Compound Arithmetic; no second-source layer needed.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          operator: { type: "number", description: "Operator enum (default 2). Common: 0=And, 1=Or, 2=Xor, 3=Add, 4=Subtract, 5=Multiply, 6=Difference, 7=Max, 8=Min." },
+          red_value: { type: "number", description: "Red constant 0-255 (default 0)" },
+          green_value: { type: "number", description: "Green constant 0-255 (default 0)" },
+          blue_value: { type: "number", description: "Blue constant 0-255 (default 0)" },
+          clip_result_values: { type: "boolean", description: "Clip result to valid 0-255 range (default true)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        operator?: number;
+        red_value?: number; green_value?: number; blue_value?: number;
+        clip_result_values?: boolean;
+      }) => {
+        const setLines: string[] = [];
+        if (args.operator !== undefined) setLines.push(`if (n === "Operator") prop.setValue(${Math.round(args.operator)}, true);`);
+        if (args.red_value !== undefined) setLines.push(`if (n === "Red Value") prop.setValue(${args.red_value}, true);`);
+        if (args.green_value !== undefined) setLines.push(`if (n === "Green Value") prop.setValue(${args.green_value}, true);`);
+        if (args.blue_value !== undefined) setLines.push(`if (n === "Blue Value") prop.setValue(${args.blue_value}, true);`);
+        if (args.clip_result_values !== undefined) setLines.push(`if (n === "Clip Result Values") prop.setValue(${args.clip_result_values ? "true" : "false"}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Arithmetic is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Arithmetic") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Arithmetic");
+            if (!eff || !eff.name) return __error("Arithmetic effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Arithmetic") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_auto_reframe: {
+      description:
+        "Apply Auto Reframe effect — Adobe Sensei AI-driven reframing for aspect-ratio change (16:9 → 9:16 or square). Auto-tracks subject and generates Position/Scale keyframes. Wrapper exposes only user-controllable params; auto-generated keyframes managed by Premiere internally.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          motion_tracking: { type: "number", description: "Tracking quality enum: 0=Slower (More Precise), 1=Default, 2=Faster (Less Precise)" },
+          overwrite_generated_path: { type: "boolean", description: "Overwrite auto-generated path with manual values (default false)" },
+          reframe_offset_x: { type: "number", description: "Manual offset X (used when overwrite=true)" },
+          reframe_offset_y: { type: "number", description: "Manual offset Y" },
+          reframe_scale: { type: "number", description: "Manual scale percent" },
+          reframe_rotation: { type: "number", description: "Manual rotation in degrees" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.motion_tracking !== undefined) setLines.push(`if (n === "Motion Tracking") prop.setValue(${Math.round(args.motion_tracking)}, true);`);
+        if (args.overwrite_generated_path !== undefined) setLines.push(`if (n === "Overwrite generated path") prop.setValue(${args.overwrite_generated_path ? "true" : "false"}, true);`);
+        if (args.reframe_offset_x !== undefined || args.reframe_offset_y !== undefined) {
+          const ox = args.reframe_offset_x ?? 0;
+          const oy = args.reframe_offset_y ?? 0;
+          setLines.push(`if (n === "Reframe Offset") prop.setValue([${ox}, ${oy}], true);`);
+        }
+        if (args.reframe_scale !== undefined) setLines.push(`if (n === "Reframe Scale") prop.setValue(${args.reframe_scale}, true);`);
+        if (args.reframe_rotation !== undefined) setLines.push(`if (n === "Reframe Rotation") prop.setValue(${args.reframe_rotation}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Auto Reframe is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Auto Reframe") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Auto Reframe");
+            if (!eff || !eff.name) return __error("Auto Reframe effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Auto Reframe") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_radial_shadow: {
+      description:
+        "Apply Radial Shadow effect — drop shadow with a point light source (radial casting), unlike Drop Shadow's directional offset. Useful for stage spotlights, magnifying glass shadows.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          shadow_color: { type: "array", items: { type: "number" }, description: "Shadow color [R,G,B] 0-255 (optional 4th alpha). Default black." },
+          opacity: { type: "number", description: "Shadow opacity 0.0-1.0 normalized (default 0.5). Note: NOT 0-100." },
+          light_x: { type: "number", description: "Light source X 0.0-1.0 (default 0.25)" },
+          light_y: { type: "number", description: "Light source Y 0.0-1.0 (default 0.25)" },
+          projection_distance: { type: "number", description: "Shadow projection distance (default 10)" },
+          softness: { type: "number", description: "Shadow softness in pixels (default 0)" },
+          render: { type: "number", description: "Render mode: 0=Regular (default), 1=Glass Edge" },
+          color_influence: { type: "number", description: "Color influence 0-1 (default 1)" },
+          shadow_only: { type: "boolean", description: "Render only shadow (no source layer) (default false)" },
+          resize_layer: { type: "boolean", description: "Resize layer for shadow extent (default false)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.light_x !== undefined || args.light_y !== undefined) {
+          const lx = args.light_x ?? 0.25;
+          const ly = args.light_y ?? 0.25;
+          setLines.push(`if (n === "Light Source") prop.setValue([${lx}, ${ly}], true);`);
+        }
+        if (args.projection_distance !== undefined) setLines.push(`if (n === "Projection Distance") prop.setValue(${args.projection_distance}, true);`);
+        if (args.softness !== undefined) setLines.push(`if (n === "Softness") prop.setValue(${args.softness}, true);`);
+        if (args.render !== undefined) setLines.push(`if (n === "Render") prop.setValue(${Math.round(args.render)}, true);`);
+        if (args.color_influence !== undefined) setLines.push(`if (n === "Color Influence") prop.setValue(${args.color_influence}, true);`);
+        if (args.shadow_only !== undefined) setLines.push(`if (n === "Shadow Only") prop.setValue(${args.shadow_only ? "true" : "false"}, true);`);
+        if (args.resize_layer !== undefined) setLines.push(`if (n === "Resize Layer") prop.setValue(${args.resize_layer ? "true" : "false"}, true);`);
+        if (args.shadow_color && args.shadow_color.length >= 3) {
+          const [r, g, b] = args.shadow_color;
+          const a = args.shadow_color[3] ?? 255;
+          setLines.push(`if (n === "Shadow Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Radial Shadow is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Radial Shadow") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Radial Shadow");
+            if (!eff || !eff.name) return __error("Radial Shadow effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Radial Shadow") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_paint_bucket: {
+      description:
+        "Apply Paint Bucket effect — flood-fills a contiguous color region with a chosen color. Useful for animated color replacement on solid-color cartoon/UI elements.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          fill_x: { type: "number", description: "Fill seed point X 0.0-1.0 (default 0.5)" },
+          fill_y: { type: "number", description: "Fill seed point Y 0.0-1.0 (default 0.5)" },
+          fill_selector: { type: "number", description: "Fill mode enum (default 0=Color & Alpha). Other: 1=Straight Color, 2=Transparency, 3=Opacity, 4=Alpha Channel." },
+          tolerance: { type: "number", description: "Color match tolerance 0-255 (default 50). Higher = wider color range filled." },
+          stroke: { type: "number", description: "Stroke style enum (default 0=Antialias)" },
+          contextual_slider: { type: "number", description: "Stroke-specific value (default 3, meaning depends on stroke enum)" },
+          invert_fill: { type: "boolean", description: "Invert fill region (default false)" },
+          color: { type: "array", items: { type: "number" }, description: "Fill color [R,G,B] 0-255 (optional 4th alpha)" },
+          opacity: { type: "number", description: "Fill opacity 0-100 (default 100)" },
+          blending_mode: { type: "number", description: "Blend mode int (default 1)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.fill_x !== undefined || args.fill_y !== undefined) {
+          const fx = args.fill_x ?? 0.5;
+          const fy = args.fill_y ?? 0.5;
+          setLines.push(`if (n === "Fill Point") prop.setValue([${fx}, ${fy}], true);`);
+        }
+        if (args.fill_selector !== undefined) setLines.push(`if (n === "Fill Selector") prop.setValue(${Math.round(args.fill_selector)}, true);`);
+        if (args.tolerance !== undefined) setLines.push(`if (n === "Tolerance") prop.setValue(${args.tolerance}, true);`);
+        if (args.stroke !== undefined) setLines.push(`if (n === "Stroke") prop.setValue(${Math.round(args.stroke)}, true);`);
+        if (args.contextual_slider !== undefined) setLines.push(`if (n === "Contextual Slider") prop.setValue(${args.contextual_slider}, true);`);
+        if (args.invert_fill !== undefined) setLines.push(`if (n === "Invert Fill") prop.setValue(${args.invert_fill ? "true" : "false"}, true);`);
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.blending_mode !== undefined) setLines.push(`if (n === "Blending Mode") prop.setValue(${Math.round(args.blending_mode)}, true);`);
+        if (args.color && args.color.length >= 3) {
+          const [r, g, b] = args.color;
+          const a = args.color[3] ?? 255;
+          setLines.push(`if (n === "Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Paint Bucket is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Paint Bucket") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Paint Bucket");
+            if (!eff || !eff.name) return __error("Paint Bucket effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Paint Bucket") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_lightning: {
       description:
         "Apply Lightning effect — animated lightning generator with branching, jaggedness, and width. Common for sci-fi/storm scenes. 25 properties — wrapper exposes the most useful subset (start/end points, branching, color, width, speed, random_seed).",
