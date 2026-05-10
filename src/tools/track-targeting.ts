@@ -921,7 +921,7 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
 
-          ${clearIn ? `seq.setInPoint(seq.zeroPoint.ticks);` : ""}
+          ${clearIn ? `seq.setInPoint("0");` : ""}
           ${clearOut ? `seq.setOutPoint(seq.end);` : ""}
 
           return __result({ clearedIn: ${clearIn}, clearedOut: ${clearOut} });

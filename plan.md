@@ -22,6 +22,7 @@
 | `9e89be0` | **Phase 4 runtime verification** — 18 tool wrappers + 1 architectural verified, 4 prop-name bugs fixed (Basic 3D, Levels × 4, Levels gamma, Invert channel enum) | **340** | net 0 (fix-only) |
 | (next) | **Phase 3.8 Render & Replace** — 3 tools (render_clip_in_place, render_sequence_range, replace_clip_with_file) | **343** | +3 (logic dry-run verified, real AME e2e pending) |
 | (next) | **Phase 3.5 VR/360** — 3 tools (get_sequence_vr_settings, set_sequence_vr_settings, list_vr_effects_and_transitions) | **346** | +3 (round-trip verified). 3.6 Surround pan: NOT FEASIBLE (track has no pan API). |
+| (next) | **Phase 4 batch 5 + clear_sequence_in_out fix** — 8 effect wrappers (Tint, Alpha Glow, Posterize, Threshold, Find Edges, Mirror, Sharpen, ProcAmp) + latent bug fix | **354** | +8 (runtime verified) |
 
 ### 📌 Session continuation note (post-compact, 2026-05-10)
 
@@ -51,6 +52,31 @@
 - Mask bezier path, speed-ramp keyframes, color wheels/curves, scopes reading, section enable booleans, app.undo
 
 **Resume strategy:** Spike 3.8 render queue async behavior trước (1 ph) → quyết định approach → implement nếu khả thi.
+
+### 📌 Session post-compact progress (2026-05-10 batch 2)
+
+**Đã hoàn thành sau compact:**
+1. ✅ **Phase 3.8 Render & Replace** (commit `0522493`, 340→343):
+   - 3 tools: `render_clip_in_place`, `render_sequence_range`, `replace_clip_with_file`
+   - Spike `app.encoder` API: encodeSequence/encodeProjectItem/encodeFile/startBatch/launchEncoder all functions
+   - `app.encoder.bind()` accepts ANY event name silently (cannot reliably observe completion)
+   - Discovered NEW regression: `seq.getInPoint()/getOutPoint()` return seconds-string (not Time obj); `clearInPoint/clearOutPoint` undefined; `seq.zeroPoint.ticks` is Number (Illegal Parameter type)
+
+2. ✅ **Phase 3.5 VR/360** (commit `badc1dc`, 343→346):
+   - 3 tools: `get_sequence_vr_settings`, `set_sequence_vr_settings`, `list_vr_effects_and_transitions`
+   - Spike: 4 VR settings fields, 8 VR effects + 4 VR transitions
+   - Round-trip verified
+
+3. ❌ **Phase 3.6 Surround pan**: NOT FEASIBLE
+   - Track-level pan API missing trong 25.4 (audio track chỉ có setMute/isMuted)
+   - Per-clip pan đã sẵn qua existing `set_clip_pan`
+
+**Pending (theo ROI giảm dần):**
+1. Latent bug fix: `clear_sequence_in_out` (track-targeting.ts:902) dùng `seq.zeroPoint.ticks` (Number) → "Illegal Parameter type" trong 25.4. Replace bằng `setInPoint("0")`.
+2. More Phase 4 batch — auto_color, alpha_glow, color_balance_hls, tint, etc.
+3. Workspace tools — save_workspace_layout, auto_save_settings, create_project_from_template
+4. Phase 3.1 Dynamic Link AE (research-heavy, defer)
+5. v1.1.3 bump sau khi xong Phase 3 hoàn chỉnh
 
 ### Key discoveries — Premiere 25.4 ExtendScript regressions & limitations
 
@@ -313,6 +339,56 @@
   - Set new in/out via clipStart.ticks (string) ✓
   - Restore via `__secondsToTicks(prevSec).toString()` ✓
 - ⏸️ Real AME e2e (start AME + render + replace) — deferred to user-driven test (tốn CPU + thời gian)
+
+---
+
+## ✅ Phase 4 batch 5 + latent bug fix — DONE (2026-05-10, post-compact)
+
+**Tool count sau Phase 4 batch 5:** **354** (346 + 8)
+
+### Latent bug fix: `clear_sequence_in_out` (track-targeting.ts:902)
+
+Phase 3.8 spike phát hiện `seq.zeroPoint.ticks` trả về **Number** trong 25.4 (không phải string), nên `seq.setInPoint(seq.zeroPoint.ticks)` throw "Illegal Parameter type". Replace bằng `seq.setInPoint("0")` (verified working — string "0" accepted).
+
+`seq.setOutPoint(seq.end)` vẫn OK (seq.end là Time object, accepted by setOutPoint).
+
+**Verified end-to-end:** Set in/out tới (58s, 60s) → call clear → in=0, out=298s (full sequence end). ✅
+
+### Tools added (effects.ts) — 8 effect wrappers
+
+| # | Tool | matchName | Properties exposed |
+|---|---|---|---|
+| 1 | `apply_tint` | `AE.ADBE Tint` | Amount to Tint (0-100) |
+| 2 | `apply_alpha_glow` | `AE.ADBE Alpha Glow` | Glow (radius), Brightness (0-255) |
+| 3 | `apply_posterize` | `AE.ADBE Posterize` | Level (color quantization, default 7) |
+| 4 | `apply_threshold` | `AE.ADBE Threshold2` | Level (luminance cutoff 0-1, default 0.5) |
+| 5 | `apply_find_edges` | `AE.ADBE Find Edges` | Invert (bool), Blend With Original (**0-1 normalized**, không phải 0-100 percent) |
+| 6 | `apply_mirror` | `AE.ADBE Mirror` | Reflection Center [x,y] normalized 0-1, Reflection Angle (degrees) |
+| 7 | `apply_sharpen` | `AE.ADBE Sharpen` | Sharpen Amount (0-100) — simple alternative to Unsharp Mask |
+| 8 | `apply_proc_amp` | `AE.ADBE ProcAmp` | Brightness, Contrast (default 100), Hue (degrees), Saturation (default 100), Split Screen (bool), Split Percent (0-100) |
+
+### Effects catalog probe results (21 effects available)
+
+Các effects còn nhận được ngoài batch 5:
+- Echo, Solarize, Replicate, Spherize, Twirl, Wave Warp, Median (Legacy), Roughen Edges, Bevel Alpha, Bevel Edges, Reduce Interlace Flicker, Noise, Dust & Scratches
+
+**KHÔNG tìm thấy** (UI menu commands hoặc legacy renamed):
+- Auto Color, Auto Levels, Auto Contrast (UI menu only — không có effect entries)
+- Color Balance (HLS/RGB) — name không match. Có thể đã renamed trong 25.4
+- Channel Mixer, Stylize, Edge Behavior — missing
+- Match Grain, Add Grain, Remove Grain — missing trong base install
+
+### Runtime verification
+
+- ✅ TypeScript build zero errors
+- ✅ Replicate handler logic on C7984.MP4 — all 8 effects applied successfully, all properties set correctly except Find Edges blend (clamped 30→1, fixed by clarifying description as 0-1 normalized)
+- ✅ Cleanup: test clip còn 2 components (Opacity + Motion intrinsic)
+
+### Discovery: Find Edges blend property unit
+
+`Blend With Original` trên Find Edges là **0-1 normalized** (clamped), không phải 0-100 percent như Premiere UI hiển thị. Khi user pass 30, Premiere clamp xuống 1 (max). Tool description đã clarify rõ.
+
+**Pattern lesson:** Premiere UI thường hiển thị 0-100% cho percentage props nhưng API có thể store 0-1 hoặc 0-100 tùy effect. Luôn probe `prop.getValue()` sau setValue để verify scale.
 
 ---
 

@@ -2093,5 +2093,484 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
         return sendCommand(script, bridgeOptions);
       },
     },
+
+    apply_tint: {
+      description:
+        "Apply Tint effect to remap shadows + highlights to two colors. " +
+        "amount_to_tint 0-100 controls how much of the tint is applied (default 100 = full).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          amount_to_tint: { type: "number", description: "Tint intensity 0-100 (default Premiere 100)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; amount_to_tint?: number }) => {
+        const setLines: string[] = [];
+        if (args.amount_to_tint !== undefined) setLines.push(`if (n === "Amount to Tint") prop.setValue(${args.amount_to_tint}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Tint is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Tint") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Tint");
+            if (!eff || !eff.name) return __error("Tint effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Tint") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_alpha_glow: {
+      description:
+        "Apply Alpha Glow effect — adds a colored glow around alpha edges. " +
+        "Common for titles, logos, and stylized text.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          glow: { type: "number", description: "Glow radius/spread (default Premiere 25)" },
+          brightness: { type: "number", description: "Glow brightness 0-255 (default 255)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; glow?: number; brightness?: number }) => {
+        const setLines: string[] = [];
+        if (args.glow !== undefined) setLines.push(`if (n === "Glow") prop.setValue(${args.glow}, true);`);
+        if (args.brightness !== undefined) setLines.push(`if (n === "Brightness") prop.setValue(${args.brightness}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Alpha Glow is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Alpha Glow") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Alpha Glow");
+            if (!eff || !eff.name) return __error("Alpha Glow effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Alpha Glow") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_posterize: {
+      description:
+        "Apply Posterize effect to quantize colors into discrete levels. " +
+        "Lower level (e.g. 2-4) gives strong stylized look; higher (10+) is subtle.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          level: { type: "number", description: "Number of color levels per channel (default Premiere 7, range 2-200)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; level?: number }) => {
+        const setLines: string[] = [];
+        if (args.level !== undefined) setLines.push(`if (n === "Level") prop.setValue(${args.level}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Posterize is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Posterize") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Posterize");
+            if (!eff || !eff.name) return __error("Posterize effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Posterize") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_threshold: {
+      description:
+        "Apply Threshold effect to convert image to high-contrast black/white based on luminance cutoff. " +
+        "Level 0-1 (default 0.5) — pixels brighter than level become white, darker become black.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          level: { type: "number", description: "Luminance cutoff 0.0-1.0 (default 0.5)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; level?: number }) => {
+        const setLines: string[] = [];
+        if (args.level !== undefined) setLines.push(`if (n === "Level") prop.setValue(${args.level}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Threshold is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Threshold") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Threshold");
+            if (!eff || !eff.name) return __error("Threshold effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Threshold") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_find_edges: {
+      description:
+        "Apply Find Edges effect — detects and highlights edges in the image (sketch-like look). " +
+        "Optional invert + blend with original.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          invert: { type: "boolean", description: "Invert edges (white-on-black vs black-on-white)" },
+          blend_with_original: { type: "number", description: "Blend with original 0.0-1.0 (default 0 = pure edges, 1 = no effect). Note: normalized — not percent." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; invert?: boolean; blend_with_original?: number }) => {
+        const setLines: string[] = [];
+        if (args.invert !== undefined) setLines.push(`if (n === "Invert") prop.setValue(${args.invert ? "true" : "false"}, true);`);
+        if (args.blend_with_original !== undefined) setLines.push(`if (n === "Blend With Original") prop.setValue(${args.blend_with_original}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Find Edges is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Find Edges") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Find Edges");
+            if (!eff || !eff.name) return __error("Find Edges effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Find Edges") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_mirror: {
+      description:
+        "Apply Mirror effect — reflects image around a configurable axis. " +
+        "reflection_center [x,y] normalized 0-1 (default [1, 0.5]); reflection_angle in degrees.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          center_x: { type: "number", description: "Reflection center X normalized 0-1 (default 1.0)" },
+          center_y: { type: "number", description: "Reflection center Y normalized 0-1 (default 0.5)" },
+          reflection_angle: { type: "number", description: "Reflection axis angle in degrees (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; center_x?: number; center_y?: number; reflection_angle?: number }) => {
+        const setLines: string[] = [];
+        if (args.center_x !== undefined || args.center_y !== undefined) {
+          // Mirror's "Reflection Center" is [x, y] array; need to read current then set both
+          const cx = args.center_x !== undefined ? args.center_x : `prop.getValue()[0]`;
+          const cy = args.center_y !== undefined ? args.center_y : `prop.getValue()[1]`;
+          setLines.push(`if (n === "Reflection Center") prop.setValue([${cx}, ${cy}], true);`);
+        }
+        if (args.reflection_angle !== undefined) setLines.push(`if (n === "Reflection Angle") prop.setValue(${args.reflection_angle}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Mirror is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Mirror") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Mirror");
+            if (!eff || !eff.name) return __error("Mirror effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Mirror") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_sharpen: {
+      description:
+        "Apply Sharpen effect (simple sharpening — different from Unsharp Mask which has finer controls). " +
+        "Use Unsharp Mask for radius/threshold control. This one has just amount.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          sharpen_amount: { type: "number", description: "Sharpen intensity 0-100 (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; sharpen_amount?: number }) => {
+        const setLines: string[] = [];
+        if (args.sharpen_amount !== undefined) setLines.push(`if (n === "Sharpen Amount") prop.setValue(${args.sharpen_amount}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Sharpen is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Sharpen") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Sharpen");
+            if (!eff || !eff.name) return __error("Sharpen effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Sharpen") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_proc_amp: {
+      description:
+        "Apply ProcAmp effect — broadcast-style brightness/contrast/hue/saturation in one wrapper. " +
+        "Different from Lumetri (lighter, faster, broadcast convention). " +
+        "Brightness default 0, Contrast/Saturation default 100, Hue default 0 degrees.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          brightness: { type: "number", description: "Brightness offset (default 0)" },
+          contrast: { type: "number", description: "Contrast 0-200 (default 100)" },
+          hue: { type: "number", description: "Hue rotation in degrees (default 0)" },
+          saturation: { type: "number", description: "Saturation 0-200 (default 100)" },
+          split_screen: { type: "boolean", description: "Show split-screen comparison (before/after)" },
+          split_percent: { type: "number", description: "Split position percent 0-100 (default 50)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        brightness?: number;
+        contrast?: number;
+        hue?: number;
+        saturation?: number;
+        split_screen?: boolean;
+        split_percent?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.brightness !== undefined) setLines.push(`if (n === "Brightness") prop.setValue(${args.brightness}, true);`);
+        if (args.contrast !== undefined) setLines.push(`if (n === "Contrast") prop.setValue(${args.contrast}, true);`);
+        if (args.hue !== undefined) setLines.push(`if (n === "Hue") prop.setValue(${args.hue}, true);`);
+        if (args.saturation !== undefined) setLines.push(`if (n === "Saturation") prop.setValue(${args.saturation}, true);`);
+        if (args.split_screen !== undefined) setLines.push(`if (n === "Split Screen") prop.setValue(${args.split_screen ? "true" : "false"}, true);`);
+        if (args.split_percent !== undefined) setLines.push(`if (n === "Split Percent") prop.setValue(${args.split_percent}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("ProcAmp is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "ProcAmp") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("ProcAmp");
+            if (!eff || !eff.name) return __error("ProcAmp effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "ProcAmp") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
   };
 }
