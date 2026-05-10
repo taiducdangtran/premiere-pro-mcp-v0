@@ -532,6 +532,221 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_unsharp_mask: {
+      description:
+        "Apply Unsharp Mask sharpening to a clip. Higher amount = stronger edge enhancement; threshold prevents sharpening of flat areas (skin, sky). " +
+        "Sensible defaults for video: amount=50-100, radius=1.0-2.0, threshold=2-10.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          amount: { type: "number", description: "Sharpening strength 0-500% (default: leave Premiere default)" },
+          radius: { type: "number", description: "Pixel radius 0.1-300 (default: leave Premiere default)" },
+          threshold: { type: "number", description: "Threshold 0-100 (default: leave Premiere default)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; amount?: number; radius?: number; threshold?: number }) => {
+        const setLines: string[] = [];
+        if (args.amount !== undefined) setLines.push(`if (n === "Amount") prop.setValue(${args.amount}, true);`);
+        if (args.radius !== undefined) setLines.push(`if (n === "Radius") prop.setValue(${args.radius}, true);`);
+        if (args.threshold !== undefined) setLines.push(`if (n === "Threshold") prop.setValue(${args.threshold}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Unsharp Mask is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Unsharp Mask") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Unsharp Mask");
+            if (!eff || !eff.name) return __error("Unsharp Mask effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Unsharp Mask") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_brightness_contrast: {
+      description:
+        "Apply Brightness & Contrast effect for quick tonal adjustments. " +
+        "For finer color control, prefer Lumetri Color (color_correct or set_lumetri_creative). " +
+        "Both params optional; only set what's specified.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          brightness: { type: "number", description: "Brightness adjustment -100 to 100 (default 0)" },
+          contrast: { type: "number", description: "Contrast adjustment -100 to 100 (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; brightness?: number; contrast?: number }) => {
+        const setLines: string[] = [];
+        if (args.brightness !== undefined) setLines.push(`if (n === "Brightness") prop.setValue(${args.brightness}, true);`);
+        if (args.contrast !== undefined) setLines.push(`if (n === "Contrast") prop.setValue(${args.contrast}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Brightness & Contrast is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Brightness & Contrast") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Brightness & Contrast");
+            if (!eff || !eff.name) return __error("Brightness & Contrast effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Brightness & Contrast") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_camera_blur: {
+      description:
+        "Apply Camera Blur effect for depth-of-field / soft-focus look. percent_blur 0-100 (default 50). " +
+        "Use lower values (10-30) for subtle focus shift, higher (50+) for strong defocus.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          percent_blur: { type: "number", description: "Blur intensity 0-100 (default: leave Premiere default)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; percent_blur?: number }) => {
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Camera Blur is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Camera Blur") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Camera Blur");
+            if (!eff || !eff.name) return __error("Camera Blur effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          ${args.percent_blur !== undefined ? `
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Camera Blur") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                if (n === "Percent Blur" || n === "Blur Length" || n === "Blur") prop.setValue(${args.percent_blur}, true);
+              }
+              break;
+            }
+          }
+          ` : ""}
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    burn_in_metadata: {
+      description:
+        "Apply 'Metadata & Timecode Burn-in' effect — burns clip metadata (timecode, clip name, source TC, marker comments) onto the rendered video. " +
+        "More flexible than burn_in_timecode for QC workflows where you also want clip name / source TC visible. " +
+        "Configure detailed fields via set_effect_property after apply.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string }) => {
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Metadata burn-in is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Metadata & Timecode Burn-in") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Metadata & Timecode Burn-in");
+            if (!eff || !eff.name) return __error("Metadata & Timecode Burn-in effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_lut: {
       description: "Apply a LUT file to a clip via Lumetri Color",
       parameters: {

@@ -277,6 +277,50 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    edit_subclip_boundaries: {
+      description:
+        "Edit the in/out boundaries of an existing subclip project item. Use this to extend or trim a subclip's working range without recreating it. " +
+        "Both in_seconds and out_seconds are optional — only specified ones change. " +
+        "Note: in 25.4, soft-boundary subclips (default) can extend beyond original bounds; hard-boundary subclips cannot.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          subclip_id: { type: "string", description: "Node ID or name of the subclip project item" },
+          in_seconds: { type: "number", description: "New in-point in seconds (optional)" },
+          out_seconds: { type: "number", description: "New out-point in seconds (optional)" },
+          media_type: {
+            type: "string",
+            enum: ["video", "audio", "both"],
+            description: "Which stream to modify (default 'both' = mediaType 4)",
+          },
+        },
+        required: ["subclip_id"],
+      },
+      handler: async (args: { subclip_id: string; in_seconds?: number; out_seconds?: number; media_type?: string }) => {
+        const mediaTypeMap: Record<string, number> = { audio: 1, video: 2, both: 4 };
+        const mediaType = mediaTypeMap[args.media_type || "both"] ?? 4;
+        const script = buildToolScript(`
+          var item = __findProjectItem("${escapeForExtendScript(args.subclip_id)}");
+          if (!item) return __error("Subclip not found: ${escapeForExtendScript(args.subclip_id)}");
+
+          var changes = {};
+          ${args.in_seconds !== undefined ? `
+          var inT = new Time(); inT.seconds = ${args.in_seconds};
+          item.setInPoint(inT.ticks, ${mediaType});
+          changes.in_seconds = ${args.in_seconds};
+          ` : ""}
+          ${args.out_seconds !== undefined ? `
+          var outT = new Time(); outT.seconds = ${args.out_seconds};
+          item.setOutPoint(outT.ticks, ${mediaType});
+          changes.out_seconds = ${args.out_seconds};
+          ` : ""}
+
+          return __result({ subclip: item.name, changes: changes, mediaType: ${mediaType} });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     capture_frame: {
       description: "Capture the current frame and return it as inline image data for the LLM to see. This lets the AI visually inspect the current state of the timeline.",
       parameters: {

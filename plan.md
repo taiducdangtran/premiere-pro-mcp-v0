@@ -6,6 +6,68 @@
 
 ---
 
+## 🗂️ Consolidated Session Log (2026-05-10)
+
+### Commit progression
+
+| SHA | Phase | Tool count | Notes |
+|---|---|---|---|
+| (baseline) | Pre-session — merge Hetpatel-11/Antipaster (commit 3261b69) | **307** | starting point |
+| `cabf6fb` | **v1.1.2** — 25.4 regression fixes + Phase 1 VFX (6 tools) + Phase 2 (2 tools) + Phase 0.5 latent fix (21 sites) | **315** | +8 net |
+| `254d917` | Phase 3 partial — 3.7 (3-point/4-point edit) + 3.4 (HDR workflow 5 tools) | **322** | +7 |
+| `884c809` | Phase 4 batch (partial) — 4 effect wrapper tools | **326** | +4 (runtime test pending) |
+| (next) | Phase 4 expansion — 5 more wrappers + edit_subclip_boundaries | **331** | +5 (code-only, CEP hung) |
+
+### Key discoveries — Premiere 25.4 ExtendScript regressions & limitations
+
+> Pattern chung: API surface đã di chuyển từ DOM/track-level sang QE clip-level trong 25.4. Tools cũ tin tưởng DOM operations đều bị broken.
+
+**Đã FIX (Phase 0 + Phase 0.5):**
+
+| Regression | Path cũ (broken) | Path mới (working) | Files affected |
+|---|---|---|---|
+| Component remove | `clip.components[i].remove()` | `qeClip.getComponentAt(idx).remove()` | effects.ts, clipboard.ts |
+| Effect lookup | `qe.project.getVideoEffectList()` returning `{numItems, [i].name}` | `qe.project.getVideoEffectByName(name)` returning `{name}` (validate name !== "") | effects.ts (8), transitions.ts (4), audio.ts (1) |
+| Add transition | `qeTrack.addTransition(t, bool, ticks, durTicks, "0", false)` | `qeClip.addTransition(t, alignmentInt)` (0=clip start, 1=clip end, 2=invalid) | transitions.ts (4), audio.ts (1) |
+| Set speed | DOM `clip.setSpeed(n)` | `qeClip.setSpeed(percent, "1", maintainPitch, reversed, rippleEdit)` | timeline.ts (2) |
+| **DOM↔QE clipIndex mismatch** (latent) | `qeTrack.getItemAt(domClipIndex)` | `__getQEClip(result)` helper walks QE skipping Empty placeholders | 21 sites (advanced × 11, effects × 8, clipboard × 1, timeline × 1) |
+
+**KHÔNG khả thi qua ExtendScript trong 25.4 (documented, skip):**
+
+| Feature | Lý do |
+|---|---|
+| Mask bezier path / addMask / addBezierMask | Method không tồn tại ở mọi level (DOM, QE clip, QE sequence, qe.project) |
+| Master Clip Effects (apply effect at projectItem level) | `projectItem` chỉ có `children, getOverrideColorSpaceList, interpretedTimebase, name, nodeId, sourceTimebase, timeDisplayFormat, treePath, type` — không có components/addEffect/getMasterClip |
+| Speed-ramp keyframes (bezier speed curve) | Time Remapping component không expose qua DOM/QE; `qeClip.enableTimeRemapping/addSpeedKeyframe/setSpeedRamp` đều undefined |
+| Lumetri color wheels (Shadow/Midtone/Highlight RGB) | Properties stored as binary blobs — không có discrete RGB+Luma controls exposed |
+| Lumetri curves (RGB Master/R/G/B + HSL curves) | Binary blob format (`` / `` placeholders); chỉ enable/disable section được |
+| Lumetri scopes reading (Vectorscope/Waveform values) | Cần render frame; không có ExtendScript API |
+| Section enable booleans (Lumetri Active toggles, Ultra Key Matte Generation/Cleanup/Spill/Color Correction) | `setValue(true/false)` silent no-op — UI-only state. Numeric props bên trong vẫn có hiệu lực không phụ thuộc toggle. |
+| Audio AI features (Speech Enhancement, Auto-Ducking, Remix) | UI-driven cloud features, không expose qua ExtendScript |
+| `clip.components[i].enabled` setter | Property không tồn tại trên DOM component object trong 25.4 |
+| `app.undo()`, `app.executeCommand`, `app.findMenuCommandId` | Tất cả undefined — chỉ Cmd+Z UI hoặc QE remove path mới revert được |
+
+**Hữu dụng phát hiện được (đã exposed qua tool):**
+
+| API | Tool exposing | Notes |
+|---|---|---|
+| `seq.getSettings().workingColorSpaceList` (4 entries) | `list_sequence_color_spaces`, `set_sequence_color_space` | Rec.709, Rec.2100 HLG, Rec.2100 PQ, ACEScct |
+| `projectItem.getOverrideColorSpaceList` (32 entries — property, not function) | `list_clip_color_space_overrides`, `set_clip_color_space_override` | Apple Log, ARRI LogC3/4, Sony S-Log/S-Log2/S-Log3, Canon Log/Log2/Log3, Fuji F-Log/F-Log2, Nikon N-Log, Panasonic V-Log, RED Log3G10, DJI D-Log, Leica L-Log, DCDM X'Y'Z', Rec.601 NTSC/PAL, P3-D65 HLG/PQ, sRGB, etc. |
+| `seq.getSettings().autoToneMapEnabled` / `autoInputGamutCompressionEnabled` / `compositeLinearColor` | `set_sequence_hdr_options` | HDR pipeline controls |
+| `qeClip.setColorValue(R, G, B, A)` (NOT `setValue([...])`) | `apply_ultra_key` | Accepts 0-255 ints OR 0-1 floats; `getColorValue()` returns `[R, G, B, A]` array |
+| `qeComp.remove()` (function) | `remove_effect`, `remove_effect_by_name` | THẬT SỰ xóa component khỏi DOM (không phải disable) — initial spike đã miss vì `for...in` không enumerate non-DOM props |
+| `qeClip.setTimeInterpolationType(int)` | `set_clip_time_interpolation` | 0=Frame Sample, 1=Frame Blend, 2=Optical Flow |
+| Warp Stabilizer `AnalysisStatusCounter` (idx 31) | `configure_warp_stabilizer` | Increments while background analysis runs — pollable for progress |
+
+### Caveats document trong tool API
+
+- `add_transition_to_clip` `duration_seconds` bị bỏ qua trong 25.4 (signature mới 2-arg không nhận)
+- "Center at Cut" alignment cũ không expose qua API mới
+- Lumetri Vignette `Amount` Premiere clamp ~`-5..5` (không phải `-100..100`)
+- Lumetri có duplicate property names across sections (3× "Saturation" tại idx 16/43/105) → tools dùng index-based addressing thay vì name-based
+
+---
+
 ## 📊 Progress Log
 
 ### Session 2026-05-10 (current)
@@ -176,6 +238,18 @@ CEP bridge bị hang sau big probe script → end session với code commit. 4 t
 | 4 | `apply_basic_3d` | effects.ts | ✅ Built — Basic 3D với swivel/tilt/distance/specular. Test pending. |
 
 **Tổng tool sau Phase 4 partial:** **326** (322 + 4)
+
+### Phase 4 expansion (cùng session, code-only)
+
+| # | Tool | File | Notes |
+|---|---|---|---|
+| 5 | `apply_unsharp_mask` | effects.ts | Sharpening với amount/radius/threshold optional |
+| 6 | `apply_brightness_contrast` | effects.ts | Quick tonal adjust — defer to Lumetri cho fine work |
+| 7 | `apply_camera_blur` | effects.ts | Soft focus / depth-of-field |
+| 8 | `burn_in_metadata` | effects.ts | "Metadata & Timecode Burn-in" — fuller QC info than burn_in_timecode |
+| 9 | `edit_subclip_boundaries` | export.ts | Modify subclip in/out via setInPoint/setOutPoint với mediaType enum |
+
+**Tổng sau expansion:** **331** (326 + 5). Tất cả code-only, chưa test runtime.
 
 **Pattern:** Mỗi tool wraps `apply_effect` với matchName cụ thể + optional property setters cho sensible defaults. Reuse `__getQEClip(result)` helper từ Phase 0.5 để correct DOM↔QE indexing.
 
