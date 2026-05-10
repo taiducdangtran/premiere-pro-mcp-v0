@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.18] - 2026-05-10
+
+### Added — 5 new tools (432 → 437)
+
+#### Phase 4 batch 21 — VR group A: projection/rotation/seamless blur-sharpen-glow (5 tools, `src/tools/effects.ts`)
+
+- **`apply_vr_plane_to_sphere`** — projects flat content into 360° equirectangular VR (logos, text, graphics). Configure FoV, scale, source orientation (tilt/pan/roll) and projection orientation. 16 props.
+- **`apply_vr_rotate_sphere`** — rotates entire 360° sphere (tilt/pan/roll) for horizon adjustment or animated head-turn.
+- **`apply_vr_blur`** — seamless 360° blur respecting spherical wraparound (no edge artifacts).
+- **`apply_vr_sharpen`** — seamless 360° sharpening.
+- **`apply_vr_glow`** — seamless 360° bloom/glow with luma threshold + radius + brightness/saturation + tint color.
+
+### Changed
+
+- Tool count: 432 → 437
+- Updated `package.json` description
+
+### Verified
+
+- 10 properties round-trip verified.
+- All 5 VR effects share standard VR header props: Frame Layout (mono/stereo), Horizontal/Vertical Field of View — exposed consistently across wrappers.
+
 ## [1.1.17] - 2026-05-10
 
 ### Added — 5 new tools (427 → 432)

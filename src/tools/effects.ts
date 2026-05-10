@@ -3305,6 +3305,343 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_vr_plane_to_sphere: {
+      description:
+        "Apply VR Plane to Sphere — projects flat content (logos, text, graphics) into 360° equirectangular VR sequences. Configure FoV, scale, source orientation (tilt/pan/roll) and projection orientation. Use list_vr_effects_and_transitions to discover related VR effects.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          frame_layout: { type: "number", description: "0=Monoscopic (default), 1=Stereo Side-By-Side, 2=Stereo Over-Under" },
+          horizontal_fov: { type: "number", description: "Horizontal field of view in degrees (default 360)" },
+          vertical_fov: { type: "number", description: "Vertical field of view in degrees (default 180)" },
+          scale_degrees: { type: "number", description: "Plane scale in degrees (default 60)" },
+          stereo_disparity_degrees: { type: "number", description: "Stereo disparity (default 0). Used for stereoscopic." },
+          feather: { type: "number", description: "Edge feather (default 10)" },
+          source_tilt: { type: "number", description: "Source tilt X-axis degrees (default 0)" },
+          source_pan: { type: "number", description: "Source pan Y-axis degrees (default 0)" },
+          source_roll: { type: "number", description: "Source roll Z-axis degrees (default 0)" },
+          projection_tilt: { type: "number", description: "Projection tilt X (default 0)" },
+          projection_pan: { type: "number", description: "Projection pan Y (default 0)" },
+          projection_roll: { type: "number", description: "Projection roll Z (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.frame_layout !== undefined) setLines.push(`if (n === "Frame Layout") prop.setValue(${Math.round(args.frame_layout)}, true);`);
+        if (args.horizontal_fov !== undefined) setLines.push(`if (n === "Horizontal Field of View") prop.setValue(${args.horizontal_fov}, true);`);
+        if (args.vertical_fov !== undefined) setLines.push(`if (n === "Vertical Field of View") prop.setValue(${args.vertical_fov}, true);`);
+        if (args.scale_degrees !== undefined) setLines.push(`if (n === "Scale (Degrees)") prop.setValue(${args.scale_degrees}, true);`);
+        if (args.stereo_disparity_degrees !== undefined) setLines.push(`if (n === "Stereo Disparity (Degrees)") prop.setValue(${args.stereo_disparity_degrees}, true);`);
+        if (args.feather !== undefined) setLines.push(`if (n === "Feather") prop.setValue(${args.feather}, true);`);
+        if (args.source_tilt !== undefined) setLines.push(`if (n === "Source Tilt (X axis)") prop.setValue(${args.source_tilt}, true);`);
+        if (args.source_pan !== undefined) setLines.push(`if (n === "Source Pan (Y axis)") prop.setValue(${args.source_pan}, true);`);
+        if (args.source_roll !== undefined) setLines.push(`if (n === "Source Roll (Z axis)") prop.setValue(${args.source_roll}, true);`);
+        if (args.projection_tilt !== undefined) setLines.push(`if (n === "Projection Tilt (X axis)") prop.setValue(${args.projection_tilt}, true);`);
+        if (args.projection_pan !== undefined) setLines.push(`if (n === "Projection Pan (Y axis)") prop.setValue(${args.projection_pan}, true);`);
+        if (args.projection_roll !== undefined) setLines.push(`if (n === "Projection Roll (Z axis)") prop.setValue(${args.projection_roll}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("VR Plane to Sphere is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "VR Plane to Sphere") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("VR Plane to Sphere");
+            if (!eff || !eff.name) return __error("VR Plane to Sphere effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "VR Plane to Sphere") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_vr_rotate_sphere: {
+      description:
+        "Apply VR Rotate Sphere — rotates the entire 360° sphere (tilt/pan/roll). Use to reorient the horizon, change initial viewing angle, or animate a slow head-turn for a static 360 shot.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          frame_layout: { type: "number", description: "0=Monoscopic (default), 1=Stereo Side-By-Side, 2=Stereo Over-Under" },
+          horizontal_fov: { type: "number", description: "Horizontal FoV in degrees (default 360)" },
+          vertical_fov: { type: "number", description: "Vertical FoV in degrees (default 180)" },
+          tilt: { type: "number", description: "Tilt X-axis degrees (default 0)" },
+          pan: { type: "number", description: "Pan Y-axis degrees (default 0)" },
+          roll: { type: "number", description: "Roll Z-axis degrees (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.frame_layout !== undefined) setLines.push(`if (n === "Frame Layout") prop.setValue(${Math.round(args.frame_layout)}, true);`);
+        if (args.horizontal_fov !== undefined) setLines.push(`if (n === "Horizontal Field of View") prop.setValue(${args.horizontal_fov}, true);`);
+        if (args.vertical_fov !== undefined) setLines.push(`if (n === "Vertical Field of View") prop.setValue(${args.vertical_fov}, true);`);
+        if (args.tilt !== undefined) setLines.push(`if (n === "Tilt (X axis)") prop.setValue(${args.tilt}, true);`);
+        if (args.pan !== undefined) setLines.push(`if (n === "Pan (Y axis)") prop.setValue(${args.pan}, true);`);
+        if (args.roll !== undefined) setLines.push(`if (n === "Roll (Z axis)") prop.setValue(${args.roll}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("VR Rotate Sphere is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "VR Rotate Sphere") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("VR Rotate Sphere");
+            if (!eff || !eff.name) return __error("VR Rotate Sphere effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "VR Rotate Sphere") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_vr_blur: {
+      description:
+        "Apply VR Blur — seamless 360° blur respecting the spherical wraparound (no edge artifacts at the seam between left/right edges of equirectangular projection).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          frame_layout: { type: "number", description: "0=Monoscopic (default), 1=Stereo Side-By-Side, 2=Stereo Over-Under" },
+          horizontal_fov: { type: "number", description: "Horizontal FoV in degrees (default 360)" },
+          vertical_fov: { type: "number", description: "Vertical FoV in degrees (default 180)" },
+          blurriness: { type: "number", description: "Blur radius (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.frame_layout !== undefined) setLines.push(`if (n === "Frame Layout") prop.setValue(${Math.round(args.frame_layout)}, true);`);
+        if (args.horizontal_fov !== undefined) setLines.push(`if (n === "Horizontal Field of View") prop.setValue(${args.horizontal_fov}, true);`);
+        if (args.vertical_fov !== undefined) setLines.push(`if (n === "Vertical Field of View") prop.setValue(${args.vertical_fov}, true);`);
+        if (args.blurriness !== undefined) setLines.push(`if (n === "Blurriness") prop.setValue(${args.blurriness}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("VR Blur is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "VR Blur") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("VR Blur");
+            if (!eff || !eff.name) return __error("VR Blur effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "VR Blur") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_vr_sharpen: {
+      description:
+        "Apply VR Sharpen — seamless 360° sharpening respecting the spherical wraparound.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          frame_layout: { type: "number", description: "0=Monoscopic (default), 1=Stereo Side-By-Side, 2=Stereo Over-Under" },
+          horizontal_fov: { type: "number", description: "Horizontal FoV degrees (default 360)" },
+          vertical_fov: { type: "number", description: "Vertical FoV degrees (default 180)" },
+          sharpen_amount: { type: "number", description: "Sharpen amount (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.frame_layout !== undefined) setLines.push(`if (n === "Frame Layout") prop.setValue(${Math.round(args.frame_layout)}, true);`);
+        if (args.horizontal_fov !== undefined) setLines.push(`if (n === "Horizontal Field of View") prop.setValue(${args.horizontal_fov}, true);`);
+        if (args.vertical_fov !== undefined) setLines.push(`if (n === "Vertical Field of View") prop.setValue(${args.vertical_fov}, true);`);
+        if (args.sharpen_amount !== undefined) setLines.push(`if (n === "Sharpen Amount") prop.setValue(${args.sharpen_amount}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("VR Sharpen is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "VR Sharpen") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("VR Sharpen");
+            if (!eff || !eff.name) return __error("VR Sharpen effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "VR Sharpen") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_vr_glow: {
+      description:
+        "Apply VR Glow — seamless 360° bloom/glow effect respecting the spherical wraparound. Configure luma threshold, radius, brightness, saturation, and tint color.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          frame_layout: { type: "number", description: "0=Monoscopic (default), 1=Stereo Side-By-Side, 2=Stereo Over-Under" },
+          horizontal_fov: { type: "number", description: "Horizontal FoV degrees (default 360)" },
+          vertical_fov: { type: "number", description: "Vertical FoV degrees (default 180)" },
+          luma_threshold: { type: "number", description: "Luma threshold 0-1 (default 0.9). Pixels above glow." },
+          glow_radius: { type: "number", description: "Glow radius (default 100)" },
+          glow_brightness: { type: "number", description: "Glow brightness (default 1)" },
+          glow_saturation: { type: "number", description: "Glow saturation (default 1)" },
+          tint_color: { type: "array", items: { type: "number" }, description: "Tint color [R,G,B] 0-255 (default white)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.frame_layout !== undefined) setLines.push(`if (n === "Frame Layout") prop.setValue(${Math.round(args.frame_layout)}, true);`);
+        if (args.horizontal_fov !== undefined) setLines.push(`if (n === "Horizontal Field of View") prop.setValue(${args.horizontal_fov}, true);`);
+        if (args.vertical_fov !== undefined) setLines.push(`if (n === "Vertical Field of View") prop.setValue(${args.vertical_fov}, true);`);
+        if (args.luma_threshold !== undefined) setLines.push(`if (n === "Luma Threshold") prop.setValue(${args.luma_threshold}, true);`);
+        if (args.glow_radius !== undefined) setLines.push(`if (n === "Glow Radius") prop.setValue(${args.glow_radius}, true);`);
+        if (args.glow_brightness !== undefined) setLines.push(`if (n === "Glow Brightness") prop.setValue(${args.glow_brightness}, true);`);
+        if (args.glow_saturation !== undefined) setLines.push(`if (n === "Glow Saturation") prop.setValue(${args.glow_saturation}, true);`);
+        if (args.tint_color && args.tint_color.length >= 3) {
+          const [r, g, b] = args.tint_color;
+          const a = args.tint_color[3] ?? 255;
+          setLines.push(`if (n === "Tint Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("VR Glow is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "VR Glow") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("VR Glow");
+            if (!eff || !eff.name) return __error("VR Glow effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "VR Glow") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_sdr_conform: {
       description:
         "Apply SDR Conform effect — quick brightness/contrast/soft-knee adjustments for HDR→SDR conversion or general tone-mapping. Lightweight alternative to Lumetri Color for simple SDR delivery.",
