@@ -964,5 +964,277 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
         return sendCommand(script, bridgeOptions);
       },
     },
+
+    render_clip_in_place: {
+      description: "Render a single timeline clip's range to a media file via Adobe Media Encoder, baking effects/transforms. Fire-and-forget — AME runs in background. After AME finishes, call replace_clip_with_file to swap the clip's source. Restores sequence in/out points after kicking off the job.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          clip_node_id: {
+            type: "string",
+            description: "Node ID of the timeline clip to render",
+          },
+          output_path: {
+            type: "string",
+            description: "Full output file path (e.g., '/Users/me/baked-clip.mp4'). Parent directory must exist.",
+          },
+          preset_path: {
+            type: "string",
+            description: "Path to an AME preset file (.epr). Uses sequence-match settings if omitted.",
+          },
+          remove_on_completion: {
+            type: "boolean",
+            description: "Remove the job from AME queue after completion (default: true)",
+          },
+        },
+        required: ["clip_node_id", "output_path"],
+      },
+      handler: async (args: {
+        clip_node_id: string;
+        output_path: string;
+        preset_path?: string;
+        remove_on_completion?: boolean;
+      }) => {
+        const removeOnDone = args.remove_on_completion === false ? "0" : "1";
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+
+          var found = __findClip("${escapeForExtendScript(args.clip_node_id)}");
+          if (!found) return __error("Clip not found: ${escapeForExtendScript(args.clip_node_id)}");
+
+          var clip = found.clip;
+          var clipStart = clip.start;
+          var clipEnd = clip.end;
+          if (!clipStart || !clipEnd) return __error("Clip has no start/end time");
+
+          // getInPoint/getOutPoint return seconds as a string in 25.4
+          var prevInSec = parseFloat(seq.getInPoint());
+          var prevOutSec = parseFloat(seq.getOutPoint());
+
+          seq.setInPoint(clipStart.ticks);
+          seq.setOutPoint(clipEnd.ticks);
+
+          var enc = app.encoder;
+          if (!enc) return __error("Adobe Media Encoder not available");
+          enc.launchEncoder();
+
+          var outputPath = "${escapeForExtendScript(args.output_path)}";
+          var presetPath = ${args.preset_path
+            ? `"${escapeForExtendScript(args.preset_path)}"`
+            : `""`
+          };
+
+          var queued = enc.encodeSequence(
+            seq,
+            outputPath,
+            presetPath,
+            enc.ENCODE_IN_TO_OUT,
+            ${removeOnDone}
+          );
+          enc.startBatch();
+
+          // Restore sequence in/out — 25.4 has no clearInPoint/clearOutPoint
+          // so we always set back via __secondsToTicks
+          if (!isNaN(prevInSec)) seq.setInPoint(__secondsToTicks(prevInSec).toString());
+          if (!isNaN(prevOutSec)) seq.setOutPoint(__secondsToTicks(prevOutSec).toString());
+
+          var durSec = (clipEnd.seconds - clipStart.seconds);
+          return __result({
+            queued: true,
+            clipNodeId: "${escapeForExtendScript(args.clip_node_id)}",
+            clipName: clip.name,
+            outputPath: outputPath,
+            startSeconds: clipStart.seconds,
+            endSeconds: clipEnd.seconds,
+            durationSeconds: durSec,
+            note: "AME running in background. Poll output file existence, then call replace_clip_with_file to swap."
+          });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    render_sequence_range: {
+      description: "Render a custom in/out range of the active sequence to a media file via Adobe Media Encoder. Fire-and-forget. Use range_type='in_to_out' to use existing seq in/out, or pass explicit in/out seconds to override.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          output_path: {
+            type: "string",
+            description: "Full output file path",
+          },
+          preset_path: {
+            type: "string",
+            description: "Path to an AME preset file (.epr). Uses sequence-match settings if omitted.",
+          },
+          range_type: {
+            type: "string",
+            enum: ["entire", "in_to_out", "work_area"],
+            description: "Which range to render (default: 'in_to_out')",
+          },
+          in_seconds: {
+            type: "number",
+            description: "Override in-point in seconds. Only honored when range_type is 'in_to_out'.",
+          },
+          out_seconds: {
+            type: "number",
+            description: "Override out-point in seconds. Only honored when range_type is 'in_to_out'.",
+          },
+          remove_on_completion: {
+            type: "boolean",
+            description: "Remove job from AME queue after completion (default: true)",
+          },
+        },
+        required: ["output_path"],
+      },
+      handler: async (args: {
+        output_path: string;
+        preset_path?: string;
+        range_type?: "entire" | "in_to_out" | "work_area";
+        in_seconds?: number;
+        out_seconds?: number;
+        remove_on_completion?: boolean;
+      }) => {
+        const rangeType = args.range_type || "in_to_out";
+        const rangeConst =
+          rangeType === "entire" ? "ENCODE_ENTIRE" :
+          rangeType === "work_area" ? "ENCODE_WORKAREA" :
+          "ENCODE_IN_TO_OUT";
+        const removeOnDone = args.remove_on_completion === false ? "0" : "1";
+        const overrideIn = args.in_seconds !== undefined && rangeType === "in_to_out";
+        const overrideOut = args.out_seconds !== undefined && rangeType === "in_to_out";
+
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+
+          var prevInSec = NaN, prevOutSec = NaN;
+          ${overrideIn || overrideOut ? `
+            prevInSec = parseFloat(seq.getInPoint());
+            prevOutSec = parseFloat(seq.getOutPoint());
+          ` : ""}
+          ${overrideIn ? `seq.setInPoint(__secondsToTicks(${args.in_seconds}).toString());` : ""}
+          ${overrideOut ? `seq.setOutPoint(__secondsToTicks(${args.out_seconds}).toString());` : ""}
+
+          var enc = app.encoder;
+          if (!enc) return __error("Adobe Media Encoder not available");
+          enc.launchEncoder();
+
+          var outputPath = "${escapeForExtendScript(args.output_path)}";
+          var presetPath = ${args.preset_path
+            ? `"${escapeForExtendScript(args.preset_path)}"`
+            : `""`
+          };
+
+          enc.encodeSequence(
+            seq,
+            outputPath,
+            presetPath,
+            enc.${rangeConst},
+            ${removeOnDone}
+          );
+          enc.startBatch();
+
+          ${overrideIn || overrideOut ? `
+            if (!isNaN(prevInSec)) seq.setInPoint(__secondsToTicks(prevInSec).toString());
+            if (!isNaN(prevOutSec)) seq.setOutPoint(__secondsToTicks(prevOutSec).toString());
+          ` : ""}
+
+          return __result({
+            queued: true,
+            outputPath: outputPath,
+            rangeType: "${rangeType}",
+            note: "AME running in background. Job will appear in Adobe Media Encoder queue."
+          });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    replace_clip_with_file: {
+      description: "Import a media file into the project and replace a timeline clip's source media with it. Keeps clip position and duration. Useful as the second step after render_clip_in_place once AME finishes.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          clip_node_id: {
+            type: "string",
+            description: "Node ID of the timeline clip to replace media on",
+          },
+          file_path: {
+            type: "string",
+            description: "Path to the media file to import and use as new source",
+          },
+          target_bin: {
+            type: "string",
+            description: "Optional bin name or node ID to import into. Imports to root if omitted.",
+          },
+        },
+        required: ["clip_node_id", "file_path"],
+      },
+      handler: async (args: {
+        clip_node_id: string;
+        file_path: string;
+        target_bin?: string;
+      }) => {
+        const binLookup = args.target_bin
+          ? `var targetBin = __findProjectItem("${escapeForExtendScript(args.target_bin)}");
+             if (!targetBin) return __error("Bin not found: ${escapeForExtendScript(args.target_bin)}");`
+          : `var targetBin = app.project.rootItem;`;
+
+        const script = buildToolScript(`
+          var filePath = "${escapeForExtendScript(args.file_path)}";
+          var f = new File(filePath);
+          if (!f.exists) return __error("File does not exist: " + filePath);
+
+          var clipResult = __findClip("${escapeForExtendScript(args.clip_node_id)}");
+          if (!clipResult) return __error("Clip not found: ${escapeForExtendScript(args.clip_node_id)}");
+
+          ${binLookup}
+
+          // Snapshot bin children before import to identify the new item
+          var beforeIds = {};
+          var binChildren = targetBin.children;
+          for (var i = 0; i < binChildren.numItems; i++) {
+            beforeIds[binChildren[i].nodeId] = true;
+          }
+
+          var importOk = app.project.importFiles([filePath], true, targetBin, false);
+          if (!importOk) return __error("Import failed");
+
+          // Find the newly imported item by diffing children
+          var newItem = null;
+          binChildren = targetBin.children;
+          for (var j = 0; j < binChildren.numItems; j++) {
+            if (!beforeIds[binChildren[j].nodeId]) {
+              newItem = binChildren[j];
+              break;
+            }
+          }
+          if (!newItem) return __error("Could not locate imported item");
+
+          var clip = clipResult.clip;
+          var seq = app.project.activeSequence;
+          var startTicks = clip.start.ticks;
+          var trackType = clipResult.trackType;
+          var trackIndex = clipResult.trackIndex;
+
+          if (trackType === "video") {
+            seq.overwriteClip(newItem, startTicks, trackIndex, -1);
+          } else {
+            seq.overwriteClip(newItem, startTicks, -1, trackIndex);
+          }
+
+          return __result({
+            replaced: true,
+            clipName: clip.name,
+            newSource: newItem.name,
+            newItemNodeId: newItem.nodeId,
+            filePath: filePath
+          });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
   };
 }

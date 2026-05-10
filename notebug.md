@@ -299,3 +299,72 @@ Test toàn diện: không có method `addMask`, `addEllipseMask`, `addRectangleM
 ### Phụ lục: kết quả spike Lumetri/Ultra Key/Warp Stabilizer
 
 Đã dump full property maps. Lumetri có 130 props, Ultra Key 27 props (matchName `AE.ADBE Ultra Key`), Warp Stabilizer 32 props (matchName `AE.ADBE SubspaceStabilizer`, có `AnalysisStatusCounter` để monitor analysis progress). Chi tiết trong [plan.md](plan.md#L341).
+
+---
+
+## Bug 4: Sequence in/out point manipulation — multiple regressions in 25.4 (2026-05-10, Phase 3.8 spike)
+
+**Triệu chứng:** Khi implement `render_clip_in_place`, dry-run logic bị "Illegal Parameter type" trên `seq.setInPoint(seq.zeroPoint.ticks)`.
+
+**Phát hiện qua probe trực tiếp:**
+
+| API | Behavior 25.4 | Status |
+|---|---|---|
+| `seq.getInPoint()` / `seq.getOutPoint()` | Returns **string of seconds** (vd `"58.007937499999997"`). Sentinel `-400000` = "no point set". | Changed return type — không còn Time object |
+| `seq.setInPoint(value)` | Accepts **string of ticks** (vd `"14735232000000"`). Number bị scale sai. | OK với string ticks |
+| `seq.clearInPoint()` / `seq.clearOutPoint()` | ❌ undefined | Removed |
+| `seq.zeroPoint.ticks` | Returns **Number** (not string) | `setInPoint(seq.zeroPoint.ticks)` throws "Illegal Parameter type" |
+| `seq.end` | Returns **Time obj** với .ticks, accepts directly via `setOutPoint(seq.end)` | OK |
+| `clip.start.ticks` / `clip.end.ticks` | Returns **string** of ticks | OK pass to setInPoint/setOutPoint |
+
+**Workaround pattern (verified):**
+
+```javascript
+// Save prev as seconds-string (parse to float)
+var prevInSec = parseFloat(seq.getInPoint());
+var prevOutSec = parseFloat(seq.getOutPoint());
+
+// Set new in/out using clip.start.ticks (string) — works
+seq.setInPoint(clip.start.ticks);
+seq.setOutPoint(clip.end.ticks);
+
+// ... encode ...
+
+// Restore via __secondsToTicks(seconds).toString()
+if (!isNaN(prevInSec)) seq.setInPoint(__secondsToTicks(prevInSec).toString());
+if (!isNaN(prevOutSec)) seq.setOutPoint(__secondsToTicks(prevOutSec).toString());
+```
+
+**Latent bug discovered:** `clear_sequence_in_out` tool (`src/tools/track-targeting.ts:902`) uses `seq.setInPoint(seq.zeroPoint.ticks)` — broken in 25.4 (Illegal Parameter type). Add to backlog.
+
+**Verified working pattern in 25.4:** `setInPoint("0")` and `setOutPoint(seq.end)` both work. Probably the cleanest replacement for clear is `setInPoint("0")` + `setOutPoint(seq.end)`.
+
+**Files affected:**
+- `src/tools/advanced.ts` — Phase 3.8 tools `render_clip_in_place`, `render_sequence_range` use the new pattern correctly
+- `src/tools/track-targeting.ts:902` — `clear_sequence_in_out` needs fix (pending)
+
+---
+
+## Bug 5: `app.encoder.bind()` accepts ANY event name silently (2026-05-10, Phase 3.8 spike)
+
+**Triệu chứng:** Probe encoder events — passing any string to `enc.bind(eventName, callback)` reports "bound OK" without any validation:
+
+```
+onEncoderJobComplete: bound OK
+onEncoderJobError: bound OK
+onItemEncodingProgress: bound OK
+onMadeUpEvent12345: bound OK   ← would also bind silently
+```
+
+**Tác động:** Cannot reliably observe AME completion/progress from ExtendScript via bind. Fire-and-forget render is the only reliable pattern.
+
+**Workaround:** External polling of output file existence via `File(path).exists`. Or rely on AME UI for visual feedback.
+
+**Other encoder API findings:**
+- `app.encoder.isRunning` — undefined (existing `get_render_queue_status` tool calls it and returns "unknown")
+- `app.encoder.stopBatch` — undefined
+- `app.encoder.quitEncoder` — undefined
+- `app.encoder.EVENT_BATCH_DONE/EVENT_ITEM_DONE/EVENT_ITEM_PROGRESS` — undefined (use string event names if needed)
+- `app.encoder.encodeSequence/encodeProjectItem/encodeFile` — all functions, working
+- `ENCODE_ENTIRE=0`, `ENCODE_IN_TO_OUT=1`, `ENCODE_WORKAREA=2` — verified constants
+- `getExporters()` returns array of 24 native exporters (H.264, HEVC, ProRes, DNxHR, etc.)

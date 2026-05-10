@@ -19,6 +19,37 @@
 | (next) | Phase 4 expansion — 5 more wrappers + edit_subclip_boundaries | **331** | +5 (code-only, CEP hung) |
 | (next) | Phase 4 batch 3 — 5 more wrappers (Gaussian Blur, Mosaic, Lens Flare, Skin Tone, Levels) | **336** | +5 (code-only) |
 | (next) | Phase 4 batch 4 — apply_effect_with_properties (architectural) + 3 wrappers (Directional Blur, B&W, Invert) | **340** | +4 (code-only) |
+| `9e89be0` | **Phase 4 runtime verification** — 18 tool wrappers + 1 architectural verified, 4 prop-name bugs fixed (Basic 3D, Levels × 4, Levels gamma, Invert channel enum) | **340** | net 0 (fix-only) |
+| (next) | **Phase 3.8 Render & Replace** — 3 tools (render_clip_in_place, render_sequence_range, replace_clip_with_file) | **343** | +3 (logic dry-run verified, real AME e2e pending) |
+
+### 📌 Session continuation note (post-compact, 2026-05-10)
+
+> Conversation đã rollover qua compact tại commit `9e89be0`. Compact summary lưu trong `.claude/projects/...jsonl`. Trạng thái hiện tại được phục hồi từ summary:
+
+**Đã hoàn thành trong session trước (pre-compact):**
+- 7 commits, tool count 307 → 340 (+33 net)
+- Phase 0 + 0.5: regression fixes (DOM↔QE clipIndex, qeTrack→qeClip pattern, 21 sites)
+- Phase 1: 6 VFX tools (Warp Stabilizer, Ultra Key × 2, Crop mask, Lumetri creative/vignette)
+- Phase 2: 2 tools (set_clip_time_interpolation, set_lumetri_hsl_secondary)
+- Phase 3 partial: 7 tools (3-point/4-point edit, HDR workflow × 5)
+- Phase 4: 18 effect wrappers + 1 architectural (apply_effect_with_properties) + edit_subclip_boundaries — toàn bộ runtime-verified
+- Test clip C7984.MP4 cleaned up (chỉ Opacity + Motion intrinsic còn lại)
+- plan.md + notebug.md updated
+
+**Pending sau compact (theo thứ tự ROI):**
+1. **Phase 3.8 Render & Replace** — async render queue spike (`app.encoder.encodeSequence` polling) — đề xuất làm tiếp
+2. **Phase 3.6 Surround pan** — 5.1/7.1 panner position, downmix
+3. **Phase 3.5 VR/360** — convert_to_vr_sequence, apply_vr_transition, set_vr_view_orientation
+4. **Phase 3.1 Dynamic Link AE** — replace_with_ae_comp (research-heavy, cần AE chạy)
+5. **Phase 4 batch tiếp** — auto_color, alpha_glow, color_balance_hls, tint, ...
+6. **Workspace tools** — save_workspace_layout, auto_save_settings, create_project_from_template
+7. **v1.1.3 bump** — sau khi xong Phase 3 hoàn chỉnh
+
+**Không khả thi (đã document, skip):**
+- 3.9 Master Clip Effects (projectItem không expose components/addEffect/getMasterClip ở DOM/QE)
+- Mask bezier path, speed-ramp keyframes, color wheels/curves, scopes reading, section enable booleans, app.undo
+
+**Resume strategy:** Spike 3.8 render queue async behavior trước (1 ph) → quyết định approach → implement nếu khả thi.
 
 ### Key discoveries — Premiere 25.4 ExtendScript regressions & limitations
 
@@ -175,7 +206,7 @@
 | 3.7 | 3-point/4-point edit | `three_point_edit`, `four_point_edit` | ✅ Done — 2 tool, e2e logic verified (insert C8021/C8022 vào V3, fit-to-fill speed change) |
 | 3.4 | HDR workflow | `list_sequence_color_spaces`, `set_sequence_color_space`, `set_sequence_hdr_options`, `list_clip_color_space_overrides`, `set_clip_color_space_override` | ✅ Done — 5 tool. Verified: switch Rec.709 ↔ Rec.2100 HLG ↔ ACEScct trên active sequence |
 | 3.9 | Master Clip Effects | (planned: `apply_master_clip_effect`, `list_master_vs_instance_effects`) | ❌ **NOT FEASIBLE** — Premiere 25.4 ExtendScript projectItem không expose components/addEffect/getMasterClip; QE project cũng không có |
-| 3.8 | Render & Replace | (planned: `render_and_replace`, `make_subsequence`) | ⏸️ Next — cần spike render queue + replace clip workflow |
+| 3.8 | Render & Replace | `render_clip_in_place`, `render_sequence_range`, `replace_clip_with_file` | ✅ Done (logic dry-run verified) — 3 tool. Real AME e2e test deferred (tốn CPU + thời gian render). |
 | 3.6 | Surround pan | (planned: `set_surround_pan`, `downmix_to_stereo`) | ⏸️ Pending |
 | 3.1 | Dynamic Link AE | (planned: `replace_with_ae_comp`, `import_ae_project_dynamically`) | ⏸️ Research-heavy (cần AE chạy) |
 | 3.5 | VR/360 | (planned: `convert_to_vr_sequence`, `apply_vr_transition`, `set_vr_view_orientation`) | ⏸️ Pending |
@@ -225,6 +256,62 @@
 - Cuối session: update plan + commit + bump v1.1.3 nếu xong nhiều
 
 **Risk note:** Render queue async behavior chưa verify. Có thể cần callback hoặc polling status (`get_render_queue_status` đã có) → render_and_replace có thể là 2-step async tool (start render → poll until done → replace). Spike trước để biết.
+
+---
+
+## ✅ Phase 3.8 Render & Replace — DONE (2026-05-10, post-compact)
+
+**Tool count sau Phase 3.8:** **343** (340 + 3)
+
+### Spike findings (`app.encoder` API trên 25.4)
+
+| API | Status | Notes |
+|---|---|---|
+| `app.encoder.encodeSequence(seq, outputPath, presetPath, range, removeOnDone)` | ✅ function | Range constants: `ENCODE_ENTIRE=0`, `ENCODE_IN_TO_OUT=1`, `ENCODE_WORKAREA=2` |
+| `app.encoder.encodeProjectItem(...)` | ✅ function | For rendering project items directly |
+| `app.encoder.encodeFile(...)` | ✅ function | Transcoding |
+| `app.encoder.startBatch()` | ✅ function | Kicks off queued jobs |
+| `app.encoder.launchEncoder()` | ✅ function | Starts AME process |
+| `app.encoder.bind(eventName, callback)` | ⚠️ accepts ANY event name without validation | Cannot reliably observe completion |
+| `app.encoder.isRunning()` | ❌ undefined (existing `get_render_queue_status` tool returns "unknown" because of this) | |
+| `app.encoder.stopBatch()` | ❌ undefined | |
+| `app.encoder.quitEncoder()` | ❌ undefined | |
+| `app.encoder.EVENT_*` constants | ❌ undefined | Use string event names directly |
+
+**24 native exporters** discovered via `getExporters()` — H.264, HEVC, ProRes, DNxHR, MPEG2, JPEG2000, etc.
+
+### Sequence in/out manipulation regression (NEW finding)
+
+| API | Behavior 25.4 |
+|---|---|
+| `seq.getInPoint()` / `seq.getOutPoint()` | Return **string of seconds** (not Time object). Sentinel `-400000` = "no out point set". |
+| `seq.setInPoint(value)` | Accepts **string of ticks**. Number is interpreted incorrectly (treats as seconds with weird scaling). |
+| `seq.clearInPoint()` / `seq.clearOutPoint()` | ❌ undefined in 25.4 (workaround: setInPoint/setOutPoint with sentinel value) |
+| `seq.zeroPoint.ticks` | Returns **Number** (not string) — `setInPoint(seq.zeroPoint.ticks)` throws "Illegal Parameter type" |
+
+**⚠️ Latent bug discovered:** `clear_sequence_in_out` tool (track-targeting.ts:902) passes `seq.zeroPoint.ticks` to setInPoint — broken in 25.4. Add to backlog for future fix.
+
+### Tools added
+
+| # | Tool | Purpose |
+|---|---|---|
+| 1 | `render_clip_in_place` | Render a single timeline clip's range to a baked file via AME. Set seq in/out → encodeSequence(ENCODE_IN_TO_OUT) → restore in/out. Fire-and-forget. |
+| 2 | `render_sequence_range` | General-purpose render of seq range (entire/in_to_out/work_area) with optional in/out override. |
+| 3 | `replace_clip_with_file` | Import file + overwriteClip at clip's start position. Diffs bin children to locate newly imported item. |
+
+**Workflow render & replace:**
+1. `render_clip_in_place(clip_node_id, output_path)` → kicks off AME render of clip's range
+2. User waits for AME (poll output file existence externally — no synchronous wait API)
+3. `replace_clip_with_file(clip_node_id, output_path)` → imports + overwrites clip with baked version
+
+### Verification
+
+- ✅ TypeScript build zero errors
+- ✅ Dry-run logic verified on clip C8007.MP4 (V3, 58.008-59.993s):
+  - Save prev in/out as seconds-string ✓
+  - Set new in/out via clipStart.ticks (string) ✓
+  - Restore via `__secondsToTicks(prevSec).toString()` ✓
+- ⏸️ Real AME e2e (start AME + render + replace) — deferred to user-driven test (tốn CPU + thời gian)
 
 ---
 
