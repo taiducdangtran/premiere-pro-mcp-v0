@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.6] - 2026-05-10
+
+### Added — 5 new tools (372 → 377)
+
+#### Phase 4 batch 9 — Distortion/Time/Vignette wrappers (5 tools, `src/tools/effects.ts`)
+
+- **`apply_lens_distortion`** — barrel/pincushion + decentering + chromatic prism (different from existing `apply_lens_distortion_correction`). Params: curvature -100..100, vertical/horizontal_decentering, vertical/horizontal_prism_fx, fill_alpha bool, fill_color [R,G,B,A].
+- **`apply_posterize_time`** — frame-rate hold (stop-motion / anime stutter). Param: frame_rate fps.
+- **`apply_edge_feather`** — soft fade frame edges to transparent. Param: amount (pixels).
+- **`apply_magnify`** — circular/rectangular magnifying-glass overlay zoom. Params: shape, center_x/y (0-1 normalized), magnification %, link mode, size, feather, opacity, scaling, resize_layer.
+- **`apply_compound_blur`** — variable blur via luminance map (own layer). Params: maximum_blur, stretch_map_to_fit, invert_blur. Note: `Blur Layer` external-layer reference NOT settable from API in 25.4.
+
+### Changed
+
+- Tool count: 372 → 377
+- Updated `package.json` description
+
+### Verified
+
+- All 16 properties + 1 setColorValue round-trip verified.
+- Magnify Center is a 2D vector `[x, y]` 0-1 normalized — wrapper takes individual `center_x`/`center_y` and packs them.
+
 ## [1.1.5] - 2026-05-10
 
 ### Added — 5 new tools (367 → 372)

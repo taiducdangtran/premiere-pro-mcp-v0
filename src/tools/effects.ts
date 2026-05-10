@@ -3305,6 +3305,352 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_lens_distortion: {
+      description:
+        "Apply Lens Distortion effect — simulate or correct lens curvature/decentering/prism aberration. Different from existing apply_lens_distortion_correction (which uses Lens Correction effect).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          curvature: { type: "number", description: "Barrel/pincushion -100 to 100 (default 0). Negative = pincushion, positive = barrel." },
+          vertical_decentering: { type: "number", description: "Vertical lens shift (default 0)" },
+          horizontal_decentering: { type: "number", description: "Horizontal lens shift (default 0)" },
+          vertical_prism_fx: { type: "number", description: "Vertical chromatic prism (default 0)" },
+          horizontal_prism_fx: { type: "number", description: "Horizontal chromatic prism (default 0)" },
+          fill_alpha: { type: "boolean", description: "Fill empty edges with alpha transparency (default true). False = use fill_color." },
+          fill_color: {
+            type: "array",
+            items: { type: "number" },
+            description: "Edge fill color [R, G, B] each 0-255 (optional 4th alpha) — only used when fill_alpha=false. Default white.",
+          },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        curvature?: number;
+        vertical_decentering?: number;
+        horizontal_decentering?: number;
+        vertical_prism_fx?: number;
+        horizontal_prism_fx?: number;
+        fill_alpha?: boolean;
+        fill_color?: number[];
+      }) => {
+        const setLines: string[] = [];
+        if (args.curvature !== undefined) setLines.push(`if (n === "Curvature") prop.setValue(${args.curvature}, true);`);
+        if (args.vertical_decentering !== undefined) setLines.push(`if (n === "Vertical Decentering") prop.setValue(${args.vertical_decentering}, true);`);
+        if (args.horizontal_decentering !== undefined) setLines.push(`if (n === "Horizontal Decentering") prop.setValue(${args.horizontal_decentering}, true);`);
+        if (args.vertical_prism_fx !== undefined) setLines.push(`if (n === "Vertical Prism FX") prop.setValue(${args.vertical_prism_fx}, true);`);
+        if (args.horizontal_prism_fx !== undefined) setLines.push(`if (n === "Horizontal Prism FX") prop.setValue(${args.horizontal_prism_fx}, true);`);
+        if (args.fill_alpha !== undefined) setLines.push(`if (n === "Fill Alpha") prop.setValue(${args.fill_alpha ? "true" : "false"}, true);`);
+        if (args.fill_color && args.fill_color.length >= 3) {
+          const [r, g, b] = args.fill_color;
+          const a = args.fill_color[3] ?? 255;
+          setLines.push(`if (n === "Fill Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Lens Distortion is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Lens Distortion") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Lens Distortion");
+            if (!eff || !eff.name) return __error("Lens Distortion effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Lens Distortion") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_posterize_time: {
+      description:
+        "Apply Posterize Time effect — locks playback to a fixed frame rate, freezing N frames into 1 (creates stop-motion / stutter look). Common for music-video / animation styles.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          frame_rate: { type: "number", description: "Posterized frame rate fps (default 24). Lower = more pronounced stutter (e.g. 12 = anime, 8 = strong stop-motion)." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; frame_rate?: number }) => {
+        const setLines: string[] = [];
+        if (args.frame_rate !== undefined) setLines.push(`if (n === "Frame Rate") prop.setValue(${args.frame_rate}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Posterize Time is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Posterize Time") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Posterize Time");
+            if (!eff || !eff.name) return __error("Posterize Time effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Posterize Time") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_edge_feather: {
+      description:
+        "Apply Edge Feather effect — softly fades the rectangular frame edges to transparent. Single Amount parameter (pixels).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          amount: { type: "number", description: "Feather amount in pixels (default 4). 0 = no feather, higher = wider soft edge." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; amount?: number }) => {
+        const setLines: string[] = [];
+        if (args.amount !== undefined) setLines.push(`if (n === "Amount") prop.setValue(${args.amount}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Edge Feather is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Edge Feather") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Edge Feather");
+            if (!eff || !eff.name) return __error("Edge Feather effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Edge Feather") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_magnify: {
+      description:
+        "Apply Magnify effect — circular/rectangular magnifying-glass overlay zooming a region. Useful for emphasizing UI elements, text, or details.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          shape: { type: "number", description: "0=Circle (default), 1=Square" },
+          center_x: { type: "number", description: "Center X 0.0-1.0 normalized (default 0.5)" },
+          center_y: { type: "number", description: "Center Y 0.0-1.0 normalized (default 0.5)" },
+          magnification: { type: "number", description: "Zoom percent (default 150). 100 = no zoom, 200 = 2x." },
+          link: { type: "number", description: "Link mode: 0=None (default), 1=Size to Magnification, 2=Size & Feather to Magnification" },
+          size: { type: "number", description: "Magnifier size in pixels (default 100). Ignored if link != 0." },
+          feather: { type: "number", description: "Edge softness in pixels (default 0)" },
+          opacity: { type: "number", description: "Magnifier opacity 0-100 (default 100)" },
+          scaling: { type: "number", description: "0=Standard (default), 1=Soft, 2=Scatter" },
+          resize_layer: { type: "boolean", description: "Resize layer (default false)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        shape?: number;
+        center_x?: number;
+        center_y?: number;
+        magnification?: number;
+        link?: number;
+        size?: number;
+        feather?: number;
+        opacity?: number;
+        scaling?: number;
+        resize_layer?: boolean;
+      }) => {
+        const setLines: string[] = [];
+        if (args.shape !== undefined) setLines.push(`if (n === "Shape") prop.setValue(${Math.round(args.shape)}, true);`);
+        if (args.center_x !== undefined || args.center_y !== undefined) {
+          const cx = args.center_x ?? 0.5;
+          const cy = args.center_y ?? 0.5;
+          setLines.push(`if (n === "Center") prop.setValue([${cx}, ${cy}], true);`);
+        }
+        if (args.magnification !== undefined) setLines.push(`if (n === "Magnification") prop.setValue(${args.magnification}, true);`);
+        if (args.link !== undefined) setLines.push(`if (n === "Link") prop.setValue(${Math.round(args.link)}, true);`);
+        if (args.size !== undefined) setLines.push(`if (n === "Size") prop.setValue(${args.size}, true);`);
+        if (args.feather !== undefined) setLines.push(`if (n === "Feather") prop.setValue(${args.feather}, true);`);
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.scaling !== undefined) setLines.push(`if (n === "Scaling") prop.setValue(${Math.round(args.scaling)}, true);`);
+        if (args.resize_layer !== undefined) setLines.push(`if (n === "Resize Layer") prop.setValue(${args.resize_layer ? "true" : "false"}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Magnify is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Magnify") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Magnify");
+            if (!eff || !eff.name) return __error("Magnify effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Magnify") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_compound_blur: {
+      description:
+        "Apply Compound Blur effect — variable blur amount based on luminance map (the layer's own luminance acts as the map). Bright pixels = strong blur, dark = sharp. Note: 'Blur Layer' parameter selects external layer reference and is not settable from API in 25.4.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          maximum_blur: { type: "number", description: "Maximum blur radius at brightest map pixels (default 20)" },
+          stretch_map_to_fit: { type: "boolean", description: "Stretch luminance map to fit layer bounds (default true)" },
+          invert_blur: { type: "boolean", description: "Invert: dark=blur, bright=sharp (default false)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        maximum_blur?: number;
+        stretch_map_to_fit?: boolean;
+        invert_blur?: boolean;
+      }) => {
+        const setLines: string[] = [];
+        if (args.maximum_blur !== undefined) setLines.push(`if (n === "Maximum Blur") prop.setValue(${args.maximum_blur}, true);`);
+        if (args.stretch_map_to_fit !== undefined) setLines.push(`if (n === "Stretch Map to Fit") prop.setValue(${args.stretch_map_to_fit ? "true" : "false"}, true);`);
+        if (args.invert_blur !== undefined) setLines.push(`if (n === "Invert Blur") prop.setValue(${args.invert_blur ? "true" : "false"}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Compound Blur is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Compound Blur") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Compound Blur");
+            if (!eff || !eff.name) return __error("Compound Blur effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Compound Blur") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_color_replace: {
       description:
         "Apply Color Replace effect — swaps a target color with a replacement color. Useful for changing the color of an object/wall/garment without rotoscoping.",

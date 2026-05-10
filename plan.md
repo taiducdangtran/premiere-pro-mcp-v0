@@ -28,6 +28,7 @@
 | (next) | **Phase 4 batch 7** — 5 effect wrappers (Replicate, Roughen Edges, Bevel Edges, Reduce Interlace Flicker, Median Legacy) | **367** | +5 (runtime verified) |
 | (next) | **v1.1.4 release** — package.json 1.1.3→1.1.4, CHANGELOG entry | **367** | net 0 (release) |
 | (next) | **Phase 4 batch 8 + v1.1.5** — 5 effect wrappers (Color Replace, Color Pass, Gamma Correction, Channel Blur, Strobe Light) | **372** | +5 (runtime verified) |
+| (next) | **Phase 4 batch 9 + v1.1.6** — 5 effect wrappers (Lens Distortion, Posterize Time, Edge Feather, Magnify, Compound Blur) | **377** | +5 (runtime verified) |
 
 ### 📌 Session continuation note (post-compact, 2026-05-10)
 
@@ -164,6 +165,34 @@
 2. **Generator effects** — Cell Pattern, Lightning, Ramp, Grid, Checkerboard, Cell Pattern (procedural)
 3. **Phase 3.1 Dynamic Link AE** (research-heavy)
 4. Push to origin (15 commits ahead)
+
+### 📌 Session post-compact progress (2026-05-10 batch 6) — v1.1.6 release
+
+**Đã hoàn thành (372 → 377):**
+
+1. ✅ **Phase 4 batch 9** (372 → 377):
+   - 5 effect wrappers: `apply_lens_distortion`, `apply_posterize_time`, `apply_edge_feather`, `apply_magnify`, `apply_compound_blur`
+   - 16 properties + 1 setColorValue round-trip verified
+   - Discoveries:
+     - Magnify "Center" là 2D vector `[x, y]` 0-1 normalized — wrapper split thành `center_x`/`center_y` cho ergonomic
+     - Compound Blur "Blur Layer" prop là layer reference (default 4294967294 placeholder) — NOT settable từ API trong 25.4. Wrapper bỏ qua tham số đó.
+     - Lens Distortion là effect KHÁC với "Lens Correction" (đã wrap qua `apply_lens_distortion_correction`). Lens Distortion cho creative aberration; Lens Correction cho corrective workflow.
+
+2. ✅ **v1.1.6 release**:
+   - `package.json` 1.1.5 → 1.1.6, "372 tools" → "377 tools"
+   - `CHANGELOG.md` thêm entry [1.1.6]
+
+**Cumulative this multi-batch session (post-compact):**
+- v1.1.2 → v1.1.6 (5 minor bumps)
+- 307 → 377 tools (+70 net)
+- 16 commits ahead of origin
+- Test clip C7984.MP4 cleaned up across all batches (chỉ còn intrinsic Opacity + Motion)
+
+**Pending sau v1.1.6 (theo ROI giảm dần):**
+1. **More Phase 4 batches** — vẫn còn nhiều effect chưa wrap (Brush Strokes, Color Emboss/Emboss, Texturize, Lightning, Cell Pattern, Compound Arithmetic, Convolution Kernel, Calculations, etc.)
+2. **Generator effects** — Cell Pattern, Lightning, Ramp, Grid, Checkerboard (procedural sources)
+3. **Phase 3.1 Dynamic Link AE** (research-heavy, cần AE)
+4. Push to origin (16 commits ahead)
 
 ### Key discoveries — Premiere 25.4 ExtendScript regressions & limitations
 
