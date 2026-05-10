@@ -290,6 +290,248 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_lens_distortion_correction: {
+      description:
+        "Apply Lens Distortion effect to correct fisheye/wide-angle camera distortion (GoPro, action cam, fisheye lenses). " +
+        "Uses Premiere's 'Lens Distortion' effect. Tune curvature/decentering via set_effect_property after apply.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          curvature: { type: "number", description: "Lens curvature -100 to 100. Positive = correct barrel distortion (fisheye), negative = pincushion. Default: -50 for typical GoPro." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; curvature?: number }) => {
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Lens Distortion is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Lens Distortion") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Lens Distortion");
+            if (!eff || !eff.name) return __error("Lens Distortion effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          ${args.curvature !== undefined ? `
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Lens Distortion") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                if (comp.properties[p].displayName === "Curvature") {
+                  comp.properties[p].setValue(${args.curvature}, true);
+                  break;
+                }
+              }
+              break;
+            }
+          }
+          ` : ""}
+
+          return __result({ applied: !already, clipName: clip.name, curvature: ${args.curvature !== undefined ? args.curvature : "null"} });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_drop_shadow: {
+      description:
+        "Apply Drop Shadow effect to a clip with sensible defaults (45° angle, 50% opacity, 5px distance, soft edge). " +
+        "Useful for making titles/graphics pop on busy backgrounds. All visual params optional.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          opacity: { type: "number", description: "Shadow opacity 0-100 (default 50)" },
+          direction: { type: "number", description: "Shadow angle in degrees 0-360 (default 135 = down-right)" },
+          distance: { type: "number", description: "Shadow distance in pixels (default 5)" },
+          softness: { type: "number", description: "Edge softness 0-100 (default 10)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; opacity?: number; direction?: number; distance?: number; softness?: number }) => {
+        const setLines: string[] = [];
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.direction !== undefined) setLines.push(`if (n === "Direction") prop.setValue(${args.direction}, true);`);
+        if (args.distance !== undefined) setLines.push(`if (n === "Distance") prop.setValue(${args.distance}, true);`);
+        if (args.softness !== undefined) setLines.push(`if (n === "Softness") prop.setValue(${args.softness}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Drop Shadow is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Drop Shadow") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Drop Shadow");
+            if (!eff || !eff.name) return __error("Drop Shadow effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Drop Shadow") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    burn_in_timecode: {
+      description:
+        "Apply the 'Timecode' effect to burn the timecode into the rendered video — useful for dailies, QC reviews, " +
+        "and reference cuts. Adds the effect with default settings; use set_effect_property to tune position/opacity/size.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          opacity: { type: "number", description: "Burn-in opacity 0-100 (default: leave Premiere default)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; opacity?: number }) => {
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Timecode is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Timecode") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Timecode");
+            if (!eff || !eff.name) return __error("Timecode effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          ${args.opacity !== undefined ? `
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Timecode") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                if (comp.properties[p].displayName === "Opacity") {
+                  comp.properties[p].setValue(${args.opacity}, true);
+                  break;
+                }
+              }
+              break;
+            }
+          }
+          ` : ""}
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_basic_3d: {
+      description:
+        "Apply Basic 3D effect (swivel/tilt/distance/specular highlight). " +
+        "Useful for tilting titles/clips for stylistic 3D look. All transform params optional.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          swivel: { type: "number", description: "Horizontal rotation in degrees -180 to 180 (default 0)" },
+          tilt: { type: "number", description: "Vertical rotation in degrees -180 to 180 (default 0)" },
+          distance_to_image: { type: "number", description: "Distance to image (perspective) -1000 to 1000 (default 0)" },
+          specular_highlight: { type: "boolean", description: "Show specular highlight (default false)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        swivel?: number;
+        tilt?: number;
+        distance_to_image?: number;
+        specular_highlight?: boolean;
+      }) => {
+        const setLines: string[] = [];
+        if (args.swivel !== undefined) setLines.push(`if (n === "Swivel") prop.setValue(${args.swivel}, true);`);
+        if (args.tilt !== undefined) setLines.push(`if (n === "Tilt") prop.setValue(${args.tilt}, true);`);
+        if (args.distance_to_image !== undefined) setLines.push(`if (n === "Distance to Image") prop.setValue(${args.distance_to_image}, true);`);
+        if (args.specular_highlight !== undefined) setLines.push(`if (n === "Specular Highlight") prop.setValue(${args.specular_highlight}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Basic 3D is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Basic 3D") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Basic 3D");
+            if (!eff || !eff.name) return __error("Basic 3D effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Basic 3D") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_lut: {
       description: "Apply a LUT file to a clip via Lumetri Color",
       parameters: {

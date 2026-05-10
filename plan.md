@@ -111,12 +111,86 @@
 | 3.7 | 3-point/4-point edit | `three_point_edit`, `four_point_edit` | ✅ Done — 2 tool, e2e logic verified (insert C8021/C8022 vào V3, fit-to-fill speed change) |
 | 3.4 | HDR workflow | `list_sequence_color_spaces`, `set_sequence_color_space`, `set_sequence_hdr_options`, `list_clip_color_space_overrides`, `set_clip_color_space_override` | ✅ Done — 5 tool. Verified: switch Rec.709 ↔ Rec.2100 HLG ↔ ACEScct trên active sequence |
 | 3.9 | Master Clip Effects | (planned: `apply_master_clip_effect`, `list_master_vs_instance_effects`) | ❌ **NOT FEASIBLE** — Premiere 25.4 ExtendScript projectItem không expose components/addEffect/getMasterClip; QE project cũng không có |
-| 3.8 | Render & Replace | (planned) | ⏸️ Pending |
-| 3.6 | Surround pan | (planned) | ⏸️ Pending |
-| 3.1 | Dynamic Link AE | (planned) | ⏸️ Research-heavy |
-| 3.5 | VR/360 | (planned) | ⏸️ Pending |
+| 3.8 | Render & Replace | (planned: `render_and_replace`, `make_subsequence`) | ⏸️ Next — cần spike render queue + replace clip workflow |
+| 3.6 | Surround pan | (planned: `set_surround_pan`, `downmix_to_stereo`) | ⏸️ Pending |
+| 3.1 | Dynamic Link AE | (planned: `replace_with_ae_comp`, `import_ae_project_dynamically`) | ⏸️ Research-heavy (cần AE chạy) |
+| 3.5 | VR/360 | (planned: `convert_to_vr_sequence`, `apply_vr_transition`, `set_vr_view_orientation`) | ⏸️ Pending |
 | 3.2 | Productions | research-only | ❌ Defer |
 | 3.3 | Frame.io | needs API key + auth flow | ❌ Defer |
+
+### 📋 Next session checklist — Phase 3 remainder + Phase 4
+
+**Đề xuất thứ tự (theo ROI / risk):**
+
+1. **3.8 Render & Replace** (rủi ro trung bình, ROI cao)
+   - Spike: `app.encoder.encodeSequence(...)`, `app.encoder.encodeProjectItem(...)` đã có chưa? Render queue API qua `app.encoder`?
+   - Đã có `add_to_render_queue`, `start_batch_encode`, `get_render_queue_status` — base building block sẵn rồi
+   - Tools planned:
+     - `render_and_replace` — bake effects/transforms thành media file mới, replace in-place trên timeline (giữ position + duration)
+     - `make_subsequence` — convert clip range thành subsequence (đã có `create_subsequence` ở section 1.5? cần check)
+   - Flow: render selected clip → wait for render done → import rendered file → replace_clip với rendered file
+   - Cần verify: render API có async callback / polling status không
+
+2. **Phase 4 P3 utilities — batch quick wins** (rủi ro thấp, mỗi tool ~5-10 phút)
+   - `apply_lens_distortion_correction` — wrap apply_effect("Lens Distortion") + sensible defaults
+   - `apply_auto_color` / `apply_auto_contrast` — wrap auto-color hidden effect (nếu Premiere có)
+   - `apply_skin_tone_smoothing` — wrap "Median (Legacy)" hoặc "Camera Blur" với mask
+   - `burn_in_timecode` — wrap apply_effect("Timecode" hoặc "Metadata & Timecode Burn-in")
+   - `burn_in_captions` — render hardcoded captions
+   - `create_smart_bin_advanced` — extend create_smart_bin với metadata+rating+label query
+   - `edit_subclip_boundaries` — sửa in/out của subclip đã tạo
+
+3. **3.6 Surround pan** (niche, low priority)
+   - `set_surround_pan` — 5.1/7.1 panner position
+   - `downmix_to_stereo` — downmix coefficients custom
+   - Cần spike audio panner API
+
+4. **3.5 VR/360** (chuyên dụng, defer nếu không có 360 content)
+   - `convert_to_vr_sequence` — đã có `auto_reframe_sequence`?
+   - `apply_vr_transition` — wrap VR transition matchName
+   - `set_vr_view_orientation` — set rotation cho 360° clip
+
+5. **3.1 Dynamic Link AE** (research-heavy, defer)
+   - Cần AE chạy + verify Dynamic Link API qua ExtendScript
+   - High-touch testing
+
+**Workflow đề xuất next session:**
+- Spike 3.8 render queue API (1 ph) → quyết định render_and_replace có khả thi không
+- Nếu có: implement 3.8 (~1-2 giờ) → commit
+- Sau đó knock out batch Phase 4 (~1 giờ cho 5-7 tool)
+- Cuối session: update plan + commit + bump v1.1.3 nếu xong nhiều
+
+**Risk note:** Render queue async behavior chưa verify. Có thể cần callback hoặc polling status (`get_render_queue_status` đã có) → render_and_replace có thể là 2-step async tool (start render → poll until done → replace). Spike trước để biết.
+
+---
+
+## ✅ Phase 4 batch (partial, 2026-05-10) — code-only, runtime test pending
+
+CEP bridge bị hang sau big probe script → end session với code commit. 4 tool Phase 4 added, **chưa test runtime**.
+
+| # | Tool | File | Status |
+|---|---|---|---|
+| 1 | `apply_lens_distortion_correction` | effects.ts | ✅ Built — apply Lens Distortion với optional curvature param. Test pending. |
+| 2 | `apply_drop_shadow` | effects.ts | ✅ Built — Drop Shadow với opacity/direction/distance/softness defaults. Test pending. |
+| 3 | `burn_in_timecode` | effects.ts | ✅ Built — burn Timecode effect, opacity optional. Test pending. |
+| 4 | `apply_basic_3d` | effects.ts | ✅ Built — Basic 3D với swivel/tilt/distance/specular. Test pending. |
+
+**Tổng tool sau Phase 4 partial:** **326** (322 + 4)
+
+**Pattern:** Mỗi tool wraps `apply_effect` với matchName cụ thể + optional property setters cho sensible defaults. Reuse `__getQEClip(result)` helper từ Phase 0.5 để correct DOM↔QE indexing.
+
+**Cần làm session sau:**
+- Test e2e 4 tool Phase 4 trên clip thật (apply + verify property values + remove)
+- Probe property names chính xác cho mỗi effect (vd Drop Shadow's "Direction" có thể tên khác trong 25.4)
+- Continue Phase 4 batch: skin_tone_smoothing, auto_color, burn_in_metadata, ...
+- Pickup Phase 3.8 Render & Replace với render queue spike
+
+**CEP recovery checklist (cho user):**
+1. Check Premiere Pro vẫn chạy
+2. Window → Extensions → MCP plugin (re-open nếu plugin tab bị close)
+3. Hoặc restart Premiere Pro nếu CEP hung
+4. Save project trước khi restart (Cmd+S) để giữ test artifacts đã clean
+5. Sau recover, ping qua MCP để verify connection
 
 **Phase 3.4 HDR — discovery details:**
 - `seq.getSettings().workingColorSpaceList` returns 4 entries: Rec. 709, Rec. 2100 HLG, Rec. 2100 PQ, ACEScct
