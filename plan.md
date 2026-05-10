@@ -37,6 +37,7 @@
 | (next) | **Phase 4 batch 15 + v1.1.12** — 5 mixed (Lightning, Vector Motion, Eyedropper Fill, Calculations, Alpha Adjust). Shape skipped — binary Path/Appearance blobs | **407** | +5 (runtime verified) |
 | (next) | **Phase 4 batch 16 + v1.1.13** — 5 distort/math/AI/shadow/fill (Turbulent Displace, Arithmetic, Auto Reframe, Radial Shadow, Paint Bucket) | **412** | +5 (runtime verified) |
 | (next) | **Phase 4 batch 17 + v1.1.14** — 5 geometry/blur/key (Corner Pin, Transform, Offset, Fast Blur, Extract) | **417** | +5 (runtime verified) |
+| (next) | **Phase 4 batch 18 + v1.1.15** — 5 corrective/burn-in/broadcast/noise (Rolling Shutter Repair, Clip Name, Timecode, Video Limiter, Noise HLS). Metadata & Timecode Burn-in skipped (6 dup metadata-line groups) | **422** | +5 (runtime verified) |
 
 ### 📌 Session continuation note (post-compact, 2026-05-10)
 

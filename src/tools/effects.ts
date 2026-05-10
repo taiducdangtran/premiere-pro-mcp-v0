@@ -3305,6 +3305,339 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_rolling_shutter_repair: {
+      description:
+        "Apply Rolling Shutter Repair — corrects skew/wobble caused by rolling-shutter sensors during fast pan/whip. Set rolling_shutter_rate based on sensor; typical 50% for many cameras.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          rolling_shutter_rate: { type: "number", description: "Sensor rolling shutter rate percent (default 50). Higher = stronger correction." },
+          scan_direction: { type: "number", description: "0=Top to Bottom (default), 1=Bottom to Top, 2=Left to Right, 3=Right to Left" },
+          method: { type: "number", description: "Repair method: 0=Warp (default), 1=Pixel Motion" },
+          pixel_motion_detail: { type: "number", description: "Detail percent when method=Pixel Motion (default 20)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.rolling_shutter_rate !== undefined) setLines.push(`if (n === "Rolling Shutter Rate") prop.setValue(${args.rolling_shutter_rate}, true);`);
+        if (args.scan_direction !== undefined) setLines.push(`if (n === "Scan Direction") prop.setValue(${Math.round(args.scan_direction)}, true);`);
+        if (args.method !== undefined) setLines.push(`if (n === "Method") prop.setValue(${Math.round(args.method)}, true);`);
+        if (args.pixel_motion_detail !== undefined) setLines.push(`if (n === "Pixel Motion Detail") prop.setValue(${args.pixel_motion_detail}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Rolling Shutter Repair is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Rolling Shutter Repair") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Rolling Shutter Repair");
+            if (!eff || !eff.name) return __error("Rolling Shutter Repair effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Rolling Shutter Repair") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_clip_name_burn_in: {
+      description:
+        "Apply Clip Name burn-in — overlays the source clip's name as text. Useful for QC/dailies/review. Configure position, size, opacity, justification.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          position_x: { type: "number", description: "Position X 0.0-1.0 (default 0.5)" },
+          position_y: { type: "number", description: "Position Y 0.0-1.0 (default 0.88)" },
+          justification: { type: "number", description: "Text justification: 0=Left, 1=Center (default), 2=Right" },
+          size: { type: "number", description: "Font size (default 120)" },
+          opacity: { type: "number", description: "Opacity 0-100 (default 40)" },
+          display: { type: "number", description: "What to display enum (default 0=Sequence Clip Name)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.position_x !== undefined || args.position_y !== undefined) {
+          const px = args.position_x ?? 0.5;
+          const py = args.position_y ?? 0.88;
+          setLines.push(`if (n === "Position") prop.setValue([${px}, ${py}], true);`);
+        }
+        if (args.justification !== undefined) setLines.push(`if (n === "Justification") prop.setValue(${Math.round(args.justification)}, true);`);
+        if (args.size !== undefined) setLines.push(`if (n === "Size") prop.setValue(${args.size}, true);`);
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.display !== undefined) setLines.push(`if (n === "Display") prop.setValue(${Math.round(args.display)}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Clip Name is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Clip Name") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Clip Name");
+            if (!eff || !eff.name) return __error("Clip Name effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Clip Name") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_timecode_burn_in: {
+      description:
+        "Apply Timecode burn-in — overlays running timecode as text. Useful for review/QC/dailies. Configure position, size, opacity, format, time-display mode.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          position_x: { type: "number", description: "Position X 0.0-1.0 (default 0.5)" },
+          position_y: { type: "number", description: "Position Y 0.0-1.0 (default 0.88)" },
+          size: { type: "number", description: "Font size (default 120)" },
+          opacity: { type: "number", description: "Opacity 0-100 (default 40)" },
+          format: { type: "number", description: "Format enum (default 0=SMPTE)" },
+          timecode_source: { type: "number", description: "Source: 0=Generate, 1=Clip (default), 2=Media" },
+          time_display: { type: "number", description: "Time display mode enum (default 5=24fps)" },
+          offset: { type: "number", description: "Frame offset (default 0)" },
+          starting_timecode: { type: "number", description: "Starting timecode in frames (default 0)" },
+          label_text: { type: "number", description: "Label text enum (default 0=None)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.position_x !== undefined || args.position_y !== undefined) {
+          const px = args.position_x ?? 0.5;
+          const py = args.position_y ?? 0.88;
+          setLines.push(`if (n === "Position") prop.setValue([${px}, ${py}], true);`);
+        }
+        if (args.size !== undefined) setLines.push(`if (n === "Size") prop.setValue(${args.size}, true);`);
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.format !== undefined) setLines.push(`if (n === "Format") prop.setValue(${Math.round(args.format)}, true);`);
+        if (args.timecode_source !== undefined) setLines.push(`if (n === "Timecode Source") prop.setValue(${Math.round(args.timecode_source)}, true);`);
+        if (args.time_display !== undefined) setLines.push(`if (n === "Time Display") prop.setValue(${Math.round(args.time_display)}, true);`);
+        if (args.offset !== undefined) setLines.push(`if (n === "Offset") prop.setValue(${args.offset}, true);`);
+        if (args.starting_timecode !== undefined) setLines.push(`if (n === "Starting Timecode") prop.setValue(${args.starting_timecode}, true);`);
+        if (args.label_text !== undefined) setLines.push(`if (n === "Label Text") prop.setValue(${Math.round(args.label_text)}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Timecode is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Timecode") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Timecode");
+            if (!eff || !eff.name) return __error("Timecode effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Timecode") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_video_limiter: {
+      description:
+        "Apply Video Limiter effect — broadcast-safe luminance/chroma limiter. Clips out-of-gamut values to keep within broadcast specs. **Quirk in 25.4**: Clip Level / Compression numeric setValue() silently no-ops (always returns 0) — appears to require an internal panel toggle. Wrapper still applies the effect; use UI to fine-tune values.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          clip_level: { type: "number", description: "Clip level 0-1 (default 1)" },
+          compression_before_clipping: { type: "number", description: "Compression amount before hard clip (default 0)" },
+          gamut_warning_color: { type: "array", items: { type: "number" }, description: "Out-of-gamut warning color [R,G,B] 0-255" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.clip_level !== undefined) setLines.push(`if (n === "Clip Level") prop.setValue(${args.clip_level}, true);`);
+        if (args.compression_before_clipping !== undefined) setLines.push(`if (n === "Compression before clipping") prop.setValue(${args.compression_before_clipping}, true);`);
+        if (args.gamut_warning_color && args.gamut_warning_color.length >= 3) {
+          const [r, g, b] = args.gamut_warning_color;
+          const a = args.gamut_warning_color[3] ?? 255;
+          setLines.push(`if (n === "Gamut Warning Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Video Limiter is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Video Limiter") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Video Limiter");
+            if (!eff || !eff.name) return __error("Video Limiter effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Video Limiter") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_noise_hls: {
+      description:
+        "Apply Noise HLS effect — color-aware noise (separate Hue/Lightness/Saturation control + grain size). Different from grayscale Noise — this lets you control color noise independently per HSL component.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          noise_type: { type: "number", description: "Noise type: 0=Uniform (default), 1=Squared, 2=Grain" },
+          hue: { type: "number", description: "Hue noise amount 0-100 (default 0)" },
+          lightness: { type: "number", description: "Lightness noise amount 0-100 (default 0)" },
+          saturation: { type: "number", description: "Saturation noise amount 0-100 (default 0)" },
+          grain_size: { type: "number", description: "Grain size (default 1)" },
+          noise_phase: { type: "number", description: "Noise phase (default 0). Animate for moving noise." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.noise_type !== undefined) setLines.push(`if (n === "Noise") prop.setValue(${Math.round(args.noise_type)}, true);`);
+        if (args.hue !== undefined) setLines.push(`if (n === "Hue") prop.setValue(${args.hue}, true);`);
+        if (args.lightness !== undefined) setLines.push(`if (n === "Lightness") prop.setValue(${args.lightness}, true);`);
+        if (args.saturation !== undefined) setLines.push(`if (n === "Saturation") prop.setValue(${args.saturation}, true);`);
+        if (args.grain_size !== undefined) setLines.push(`if (n === "Grain Size") prop.setValue(${args.grain_size}, true);`);
+        if (args.noise_phase !== undefined) setLines.push(`if (n === "Noise Phase") prop.setValue(${args.noise_phase}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Noise HLS is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Noise HLS") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Noise HLS");
+            if (!eff || !eff.name) return __error("Noise HLS effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Noise HLS") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_corner_pin: {
       description:
         "Apply Corner Pin effect — 4-corner perspective transform. Useful for screen replacement, billboards, putting content into a TV/phone in the shot. All 4 corners are 0.0-1.0 normalized to clip bounds.",

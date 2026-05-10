@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.15] - 2026-05-10
+
+### Added — 5 new tools (417 → 422)
+
+#### Phase 4 batch 18 — Corrective/burn-in/broadcast/noise (5 tools, `src/tools/effects.ts`)
+
+- **`apply_rolling_shutter_repair`** — corrects rolling-shutter skew/wobble (Warp or Pixel Motion methods).
+- **`apply_clip_name_burn_in`** — overlays source clip name as text (QC/dailies/review use).
+- **`apply_timecode_burn_in`** — overlays running timecode as text. Configure format/source/time-display/offset.
+- **`apply_video_limiter`** — broadcast-safe luminance/chroma limiter.
+- **`apply_noise_hls`** — color-aware HLS-channel noise (separate Hue/Lightness/Saturation amounts + grain size).
+
+### Skipped from batch 18
+
+- **Metadata & Timecode Burn-in** — has 6 metadata-line groups with duplicate Position/Size/Format/Time Display/etc. property names, making single-line wrapper ergonomics poor. Skipped in favor of Noise HLS.
+
+### Changed
+
+- Tool count: 417 → 422
+- Updated `package.json` description
+
+### Verified / Discovery
+
+- 19 properties round-trip verified (Rolling Shutter Repair, Clip Name, Timecode, Noise HLS).
+- **Video Limiter quirk in 25.4**: `Clip Level` / `Compression before clipping` `setValue()` silently no-ops (always returns 0) — appears to require an internal panel toggle that's not addressable via API. Wrapper still applies the effect; users must fine-tune values via UI. Documented in tool description.
+
 ## [1.1.14] - 2026-05-10
 
 ### Added — 5 new tools (412 → 417)
