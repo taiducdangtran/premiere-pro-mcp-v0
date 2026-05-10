@@ -27,6 +27,7 @@
 | (next) | **v1.1.3 release checkpoint** — package.json bump 1.1.2→1.1.3, CHANGELOG backfill v1.1.0/v1.1.1/v1.1.2/v1.1.3 | **362** | net 0 (release) |
 | (next) | **Phase 4 batch 7** — 5 effect wrappers (Replicate, Roughen Edges, Bevel Edges, Reduce Interlace Flicker, Median Legacy) | **367** | +5 (runtime verified) |
 | (next) | **v1.1.4 release** — package.json 1.1.3→1.1.4, CHANGELOG entry | **367** | net 0 (release) |
+| (next) | **Phase 4 batch 8 + v1.1.5** — 5 effect wrappers (Color Replace, Color Pass, Gamma Correction, Channel Blur, Strobe Light) | **372** | +5 (runtime verified) |
 
 ### 📌 Session continuation note (post-compact, 2026-05-10)
 
@@ -134,6 +135,36 @@
 3. **Phase 3.1 Dynamic Link AE** (research-heavy)
 4. Push to origin (14 commits ahead khi commit batch 7)
 
+### 📌 Session post-compact progress (2026-05-10 batch 5) — v1.1.5 release
+
+**Workspace tool spike (probed):**
+- `app.getWorkspaces()` ✓ (already wrapped)
+- `app.setWorkspace()` ✓ (already wrapped)
+- `app.saveWorkspace`, `saveWorkspaceAs`, `deleteWorkspace`, `getCurrentWorkspace`, `refreshCurrentWorkspace` — ALL UNDEFINED ❌
+- `app.preferences`, `app.autoSavePrefs`, `app.userPreferences` — UNDEFINED ❌
+- `app.properties.getProperty(name)` / `setProperty(name, value)` / `doesPropertyExist(name)` exist nhưng không có known keys (probed 19 candidates, 0 matched). Wild-key API không document được — không reliable cho production tool.
+- `app.openDocument()` ✓ + `app.project.saveAs()` ✓ → `create_project_from_template` khả thi NHƯNG destructive (closes current project). Skip — risky for AI-driven workflow.
+
+**Kết luận: Workspace/auto-save/template tools NOT FEASIBLE/SAFE trong 25.4.** Chuyển sang Phase 4 batch 8.
+
+**Đã hoàn thành (367 → 372):**
+
+1. ✅ **Phase 4 batch 8** (367 → 372):
+   - 5 effect wrappers: `apply_color_replace`, `apply_color_pass`, `apply_gamma_correction`, `apply_channel_blur`, `apply_strobe_light`
+   - 18 properties + 4 setColorValue calls round-trip verified
+   - Adobe typo discovered: Strobe Light → "Random Strobe **Probablity**" (sic) — wrapper preserves exact spelling
+   - Gamma Correction default stored = 10 (= linear gamma 1.0), range 1-28
+
+2. ✅ **v1.1.5 release**:
+   - `package.json` 1.1.4 → 1.1.5, "367 tools" → "372 tools"
+   - `CHANGELOG.md` thêm entry [1.1.5]
+
+**Pending sau v1.1.5 (theo ROI giảm dần):**
+1. **More Phase 4 batches** — còn ~100 effect chưa wrap (Lens Distortion, Channel Mixer, Camera Lens Blur, Compound Blur, Magnify, Lighting Effects, Brush Strokes, Color Emboss, Emboss, etc.)
+2. **Generator effects** — Cell Pattern, Lightning, Ramp, Grid, Checkerboard, Cell Pattern (procedural)
+3. **Phase 3.1 Dynamic Link AE** (research-heavy)
+4. Push to origin (15 commits ahead)
+
 ### Key discoveries — Premiere 25.4 ExtendScript regressions & limitations
 
 > Pattern chung: API surface đã di chuyển từ DOM/track-level sang QE clip-level trong 25.4. Tools cũ tin tưởng DOM operations đều bị broken.
@@ -152,6 +183,8 @@
 
 | Feature | Lý do |
 |---|---|
+| Save workspace layout / Save Workspace As | `app.saveWorkspace`, `saveWorkspaceAs`, `deleteWorkspace`, `getCurrentWorkspace`, `refreshCurrentWorkspace` đều undefined. Chỉ `getWorkspaces()` và `setWorkspace(name)` có. UI-only operation. |
+| Auto-save preferences config | `app.preferences`, `app.autoSavePrefs`, `app.userPreferences` đều undefined. `app.properties.setProperty(key, value)` exists nhưng wild-key API — Adobe không document keys, probe 19 common candidates đều miss. |
 | Mask bezier path / addMask / addBezierMask | Method không tồn tại ở mọi level (DOM, QE clip, QE sequence, qe.project) |
 | Master Clip Effects (apply effect at projectItem level) | `projectItem` chỉ có `children, getOverrideColorSpaceList, interpretedTimebase, name, nodeId, sourceTimebase, timeDisplayFormat, treePath, type` — không có components/addEffect/getMasterClip |
 | Speed-ramp keyframes (bezier speed curve) | Time Remapping component không expose qua DOM/QE; `qeClip.enableTimeRemapping/addSpeedKeyframe/setSpeedRamp` đều undefined |

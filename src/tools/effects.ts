@@ -3305,6 +3305,368 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_color_replace: {
+      description:
+        "Apply Color Replace effect — swaps a target color with a replacement color. Useful for changing the color of an object/wall/garment without rotoscoping.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          target_color: {
+            type: "array",
+            items: { type: "number" },
+            description: "Color to replace as [R, G, B] each 0-255 (optional 4th alpha 0-255).",
+          },
+          replace_color: {
+            type: "array",
+            items: { type: "number" },
+            description: "Replacement color as [R, G, B] each 0-255 (optional 4th alpha 0-255).",
+          },
+          similarity: { type: "number", description: "Similarity threshold 0-100 (default 10). Higher = wider color range matched." },
+          solid_colors: { type: "boolean", description: "Replace as solid color instead of preserving luminance (default false)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        target_color?: number[];
+        replace_color?: number[];
+        similarity?: number;
+        solid_colors?: boolean;
+      }) => {
+        const setLines: string[] = [];
+        if (args.similarity !== undefined) setLines.push(`if (n === "Similarity") prop.setValue(${args.similarity}, true);`);
+        if (args.solid_colors !== undefined) setLines.push(`if (n === "Solid Colors") prop.setValue(${args.solid_colors ? "true" : "false"}, true);`);
+        if (args.target_color && args.target_color.length >= 3) {
+          const [tr, tg, tb] = args.target_color;
+          const ta = args.target_color[3] ?? 255;
+          setLines.push(`if (n === "Target Color") prop.setColorValue(${tr}, ${tg}, ${tb}, ${ta});`);
+        }
+        if (args.replace_color && args.replace_color.length >= 3) {
+          const [rr, rg, rb] = args.replace_color;
+          const ra = args.replace_color[3] ?? 255;
+          setLines.push(`if (n === "Replace Color") prop.setColorValue(${rr}, ${rg}, ${rb}, ${ra});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Color Replace is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Color Replace") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Color Replace");
+            if (!eff || !eff.name) return __error("Color Replace effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Color Replace") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_color_pass: {
+      description:
+        "Apply Color Pass effect — preserves only one color (or its inverse), desaturates everything else. Classic Schindler's-List-style selective color look.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          color: {
+            type: "array",
+            items: { type: "number" },
+            description: "Color to preserve as [R, G, B] each 0-255 (optional 4th alpha 0-255). Default red.",
+          },
+          similarity: { type: "number", description: "Similarity threshold 0-100 (default 10). Higher = wider color range preserved." },
+          reverse: { type: "boolean", description: "Reverse: desaturate the chosen color, preserve the rest (default false)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; color?: number[]; similarity?: number; reverse?: boolean }) => {
+        const setLines: string[] = [];
+        if (args.similarity !== undefined) setLines.push(`if (n === "Similarity") prop.setValue(${args.similarity}, true);`);
+        if (args.reverse !== undefined) setLines.push(`if (n === "Reverse") prop.setValue(${args.reverse ? "true" : "false"}, true);`);
+        if (args.color && args.color.length >= 3) {
+          const [r, g, b] = args.color;
+          const a = args.color[3] ?? 255;
+          setLines.push(`if (n === "Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Color Pass is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Color Pass") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Color Pass");
+            if (!eff || !eff.name) return __error("Color Pass effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Color Pass") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_gamma_correction: {
+      description:
+        "Apply Gamma Correction effect — adjusts midtones without affecting black/white points. Default stored value is 10 (= linear/no change). Higher = brighter midtones, lower = darker midtones. Premiere UI typical range 1-28.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          gamma: { type: "number", description: "Gamma value, integer 1-28 (default 10 = no change). 28=brightest midtones, 1=darkest. Note: this is the raw slider value, not the 0.1-2.8 gamma curve." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; gamma?: number }) => {
+        const setLines: string[] = [];
+        if (args.gamma !== undefined) setLines.push(`if (n === "Gamma") prop.setValue(${Math.round(args.gamma)}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Gamma Correction is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Gamma Correction") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Gamma Correction");
+            if (!eff || !eff.name) return __error("Gamma Correction effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Gamma Correction") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_channel_blur: {
+      description:
+        "Apply Channel Blur effect — blurs each RGBA channel independently. Useful for chromatic-aberration looks (different blur per RGB) or selective alpha softening.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          red_blurriness: { type: "number", description: "Red channel blur radius (default 0)" },
+          green_blurriness: { type: "number", description: "Green channel blur radius (default 0)" },
+          blue_blurriness: { type: "number", description: "Blue channel blur radius (default 0)" },
+          alpha_blurriness: { type: "number", description: "Alpha channel blur radius (default 0)" },
+          repeat_edge_pixels: { type: "boolean", description: "Repeat edge pixels to avoid darkening edges (default true)" },
+          blur_dimensions: { type: "number", description: "0=Both (default), 1=Horizontal only, 2=Vertical only" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        red_blurriness?: number;
+        green_blurriness?: number;
+        blue_blurriness?: number;
+        alpha_blurriness?: number;
+        repeat_edge_pixels?: boolean;
+        blur_dimensions?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.red_blurriness !== undefined) setLines.push(`if (n === "Red Blurriness") prop.setValue(${args.red_blurriness}, true);`);
+        if (args.green_blurriness !== undefined) setLines.push(`if (n === "Green Blurriness") prop.setValue(${args.green_blurriness}, true);`);
+        if (args.blue_blurriness !== undefined) setLines.push(`if (n === "Blue Blurriness") prop.setValue(${args.blue_blurriness}, true);`);
+        if (args.alpha_blurriness !== undefined) setLines.push(`if (n === "Alpha Blurriness") prop.setValue(${args.alpha_blurriness}, true);`);
+        if (args.repeat_edge_pixels !== undefined) setLines.push(`if (n === "Repeat Edge Pixels") prop.setValue(${args.repeat_edge_pixels ? "true" : "false"}, true);`);
+        if (args.blur_dimensions !== undefined) setLines.push(`if (n === "Blur Dimensions") prop.setValue(${Math.round(args.blur_dimensions)}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Channel Blur is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Channel Blur") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Channel Blur");
+            if (!eff || !eff.name) return __error("Channel Blur effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Channel Blur") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_strobe_light: {
+      description:
+        "Apply Strobe Light effect — adds rhythmic flashes/strobing. Configure flash duration, period (frequency), color, and operator (how the strobe combines with the source).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          strobe_color: {
+            type: "array",
+            items: { type: "number" },
+            description: "Strobe flash color [R, G, B] each 0-255 (optional 4th alpha). Default white.",
+          },
+          blend_with_original: { type: "number", description: "Blend with original 0.0-1.0 normalized (default 0 = full strobe color)" },
+          strobe_duration: { type: "number", description: "Duration of each flash in seconds (default 0.5)" },
+          strobe_period: { type: "number", description: "Period between flash starts in seconds (default 1.0). Must be > strobe_duration." },
+          random_strobe_probability: { type: "number", description: "Probability of random strobe events 0.0-1.0 (default 0)" },
+          strobe: { type: "number", description: "0=Operates on Color Only (default), 1=Makes Layer Transparent" },
+          strobe_operator: { type: "number", description: "Combine operator: 0=Copy (default), 1=Add, 2=Subtract, 3=Multiply, 4=Difference, 5=Or, 6=And, 7=Xor" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        strobe_color?: number[];
+        blend_with_original?: number;
+        strobe_duration?: number;
+        strobe_period?: number;
+        random_strobe_probability?: number;
+        strobe?: number;
+        strobe_operator?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.blend_with_original !== undefined) setLines.push(`if (n === "Blend With Original") prop.setValue(${args.blend_with_original}, true);`);
+        if (args.strobe_duration !== undefined) setLines.push(`if (n === "Strobe Duration (secs)") prop.setValue(${args.strobe_duration}, true);`);
+        if (args.strobe_period !== undefined) setLines.push(`if (n === "Strobe Period (secs)") prop.setValue(${args.strobe_period}, true);`);
+        if (args.random_strobe_probability !== undefined) setLines.push(`if (n === "Random Strobe Probablity") prop.setValue(${args.random_strobe_probability}, true);`);
+        if (args.strobe !== undefined) setLines.push(`if (n === "Strobe") prop.setValue(${Math.round(args.strobe)}, true);`);
+        if (args.strobe_operator !== undefined) setLines.push(`if (n === "Strobe Operator") prop.setValue(${Math.round(args.strobe_operator)}, true);`);
+        if (args.strobe_color && args.strobe_color.length >= 3) {
+          const [r, g, b] = args.strobe_color;
+          const a = args.strobe_color[3] ?? 255;
+          setLines.push(`if (n === "Strobe Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Strobe Light is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Strobe Light") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Strobe Light");
+            if (!eff || !eff.name) return __error("Strobe Light effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Strobe Light") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_median_legacy: {
       description:
         "Apply Median (Legacy) effect — replaces each pixel with the median of neighboring pixels. Removes salt-and-pepper noise; creates a painterly look at higher radii.",

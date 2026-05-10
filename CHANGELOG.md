@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.5] - 2026-05-10
+
+### Added — 5 new tools (367 → 372)
+
+#### Phase 4 batch 8 — Color/Channel/Light wrappers (5 tools, `src/tools/effects.ts`)
+
+- **`apply_color_replace`** — swap a target color with a replacement. Params: target_color/replace_color [R,G,B,A] 0-255, similarity 0-100, solid_colors bool.
+- **`apply_color_pass`** — preserve only one color, desaturate the rest (selective color look). Params: color [R,G,B,A], similarity, reverse.
+- **`apply_gamma_correction`** — midtone-only adjustment. Param: gamma (raw slider value 1-28, default 10 = no change).
+- **`apply_channel_blur`** — independent R/G/B/A blur radii. Params: red/green/blue/alpha_blurriness, repeat_edge_pixels, blur_dimensions (0=Both, 1=Horizontal, 2=Vertical).
+- **`apply_strobe_light`** — rhythmic flashes with configurable color, duration, period, randomness, and combine operator. Params: strobe_color, blend_with_original, strobe_duration, strobe_period, random_strobe_probability, strobe (transparency mode), strobe_operator.
+
+### Changed
+
+- Tool count: 367 → 372
+- Updated `package.json` description to reflect new total
+
+### Verified
+
+- All 5 effects probed in 25.4.1; property names canonicalized; setValue() round-trip verified for: 18 properties + 4 setColorValue calls.
+- Discoveries: Strobe Light has Adobe typo `Random Strobe Probablity` (sic) — wrapper uses exact spelling. Gamma Correction default stored value is 10 (= linear/no change), range 1-28.
+
 ## [1.1.4] - 2026-05-10
 
 ### Added — 5 new tools (362 → 367)
