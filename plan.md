@@ -23,6 +23,7 @@
 | (next) | **Phase 3.8 Render & Replace** — 3 tools (render_clip_in_place, render_sequence_range, replace_clip_with_file) | **343** | +3 (logic dry-run verified, real AME e2e pending) |
 | (next) | **Phase 3.5 VR/360** — 3 tools (get_sequence_vr_settings, set_sequence_vr_settings, list_vr_effects_and_transitions) | **346** | +3 (round-trip verified). 3.6 Surround pan: NOT FEASIBLE (track has no pan API). |
 | (next) | **Phase 4 batch 5 + clear_sequence_in_out fix** — 8 effect wrappers (Tint, Alpha Glow, Posterize, Threshold, Find Edges, Mirror, Sharpen, ProcAmp) + latent bug fix | **354** | +8 (runtime verified) |
+| (next) | **Phase 4 batch 6** — 8 effect wrappers (Echo, Solarize, Spherize, Twirl, Wave Warp, Bevel Alpha, Noise, Dust & Scratches) | **362** | +8 (runtime verified) |
 
 ### 📌 Session continuation note (post-compact, 2026-05-10)
 
@@ -339,6 +340,40 @@
   - Set new in/out via clipStart.ticks (string) ✓
   - Restore via `__secondsToTicks(prevSec).toString()` ✓
 - ⏸️ Real AME e2e (start AME + render + replace) — deferred to user-driven test (tốn CPU + thời gian)
+
+---
+
+## ✅ Phase 4 batch 6 — DONE (2026-05-10, post-compact)
+
+**Tool count sau Phase 4 batch 6:** **362** (354 + 8)
+
+### Tools added (effects.ts) — 8 distortion / film-look wrappers
+
+| # | Tool | matchName | Properties |
+|---|---|---|---|
+| 1 | `apply_echo` | `AE.ADBE Echo` | Echo Time (seconds), Number Of Echoes, Starting Intensity (0-1), Decay (0-1) |
+| 2 | `apply_solarize` | `PR.ADBE Solarize` | Threshold (0-255, NOTE: actual property uses 0-255 scale, default 128 midpoint) |
+| 3 | `apply_spherize` | `AE.ADBE Spherize` | Radius (signed for bulge/pinch), Center of Sphere [x,y] normalized |
+| 4 | `apply_twirl` | `AE.ADBE Twirl` | Angle (degrees), Twirl Radius (0-100), Twirl Center [x,y] |
+| 5 | `apply_wave_warp` | `AE.ADBE Wave Warp` | Wave Type (enum 0-6: Sine/Triangle/Square/Saw/Inverse Saw/Noise/Smooth Noise), Wave Height, Wave Width, Direction, Wave Speed |
+| 6 | `apply_bevel_alpha` | `AE.ADBE Bevel Alpha` | Edge Thickness, Light Angle, Light Intensity (0-1) |
+| 7 | `apply_noise` | `AE.ADBE Noise` | Amount of Noise (0-100), Use Color Noise (bool), Clip Result Values (bool) |
+| 8 | `apply_dust_and_scratches` | `AE.ADBE Dust & Scratches` | Radius (px), Threshold (**0-1 normalized**, không phải 0-255), Operate on Alpha (bool) |
+
+### Runtime verification
+
+- ✅ TypeScript build zero errors
+- ✅ Replicate handler trên C7984.MP4 — 7/8 effects properties set perfectly first try
+- 🐛 Bug found + fixed: `apply_dust_and_scratches` Threshold expected 0-1 normalized (clamp 30→1) — fix description (similar pattern as Find Edges blend)
+- ✅ Test clip cleaned up (Opacity + Motion intrinsic only)
+
+### Discovery patterns
+
+**Threshold properties stored as 0-1 in some effects:** Dust & Scratches Threshold, Find Edges Blend With Original. **But** Solarize Threshold uses 0-255 (default 128) — Premiere is **inconsistent**. Always probe `getValue()` after first setValue to confirm scale.
+
+**Echo time can be negative** — negative = trail (ghosts of past frames lag), positive = lead (future frames). Default `-0.0333` ≈ -1/30 sec = one-frame trail at 30fps.
+
+**Solarize matchName uses `PR.` prefix** (PR.ADBE Solarize) instead of typical `AE.ADBE` — anomaly in Premiere effects DB. Probably legacy Premiere-specific port.
 
 ---
 
