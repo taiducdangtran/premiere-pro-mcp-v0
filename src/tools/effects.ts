@@ -590,7 +590,7 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
         if (args.swivel !== undefined) setLines.push(`if (n === "Swivel") prop.setValue(${args.swivel}, true);`);
         if (args.tilt !== undefined) setLines.push(`if (n === "Tilt") prop.setValue(${args.tilt}, true);`);
         if (args.distance_to_image !== undefined) setLines.push(`if (n === "Distance to Image") prop.setValue(${args.distance_to_image}, true);`);
-        if (args.specular_highlight !== undefined) setLines.push(`if (n === "Specular Highlight") prop.setValue(${args.specular_highlight}, true);`);
+        if (args.specular_highlight !== undefined) setLines.push(`if (n === "Show Specular Highlight") prop.setValue(${args.specular_highlight}, true);`);
 
         const script = buildToolScript(`
           app.enableQE();
@@ -746,8 +746,18 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
         required: ["node_id"],
       },
       handler: async (args: { node_id: string; channel?: string; blend_with_original?: number }) => {
+        // Premiere 25.4: Channel is enum int, not string. Mapping verified empirically.
+        const channelMap: Record<string, number> = {
+          "RGB": 0, "Red": 1, "Green": 2, "Blue": 3, "Alpha": 4,
+          "Hue": 5, "Lightness": 6, "Saturation": 7,
+          "Yellow": 8, "Magenta": 9, "Cyan": 10,
+        };
         const setLines: string[] = [];
-        if (args.channel !== undefined) setLines.push(`if (n === "Channel") prop.setValue("${escapeForExtendScript(args.channel)}", true);`);
+        if (args.channel !== undefined) {
+          const v = channelMap[args.channel];
+          if (v === undefined) throw new Error(`Invalid channel: ${args.channel}`);
+          setLines.push(`if (n === "Channel") prop.setValue(${v}, true);`);
+        }
         if (args.blend_with_original !== undefined) setLines.push(`if (n === "Blend With Original") prop.setValue(${args.blend_with_original}, true);`);
 
         const script = buildToolScript(`
@@ -1053,7 +1063,7 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
           node_id: { type: "string", description: "Node ID of the video clip" },
           input_black: { type: "number", description: "Input black point 0-255 (default 0)" },
           input_white: { type: "number", description: "Input white point 0-255 (default 255)" },
-          gamma: { type: "number", description: "Gamma 0.1-9.99 (default 1.0)" },
+          gamma: { type: "number", description: "Gamma 0.1-9.99 (default 1.0). Tool converts to Premiere's internal integer (1.0 → 100, 1.5 → 150)." },
           output_black: { type: "number", description: "Output black point 0-255 (default 0)" },
           output_white: { type: "number", description: "Output white point 0-255 (default 255)" },
         },
@@ -1068,11 +1078,13 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
         output_white?: number;
       }) => {
         const setLines: string[] = [];
-        if (args.input_black !== undefined) setLines.push(`if (n === "(RGB) Input Black" || n === "Input Black") prop.setValue(${args.input_black}, true);`);
-        if (args.input_white !== undefined) setLines.push(`if (n === "(RGB) Input White" || n === "Input White") prop.setValue(${args.input_white}, true);`);
-        if (args.gamma !== undefined) setLines.push(`if (n === "(RGB) Gamma" || n === "Gamma") prop.setValue(${args.gamma}, true);`);
-        if (args.output_black !== undefined) setLines.push(`if (n === "(RGB) Output Black" || n === "Output Black") prop.setValue(${args.output_black}, true);`);
-        if (args.output_white !== undefined) setLines.push(`if (n === "(RGB) Output White" || n === "Output White") prop.setValue(${args.output_white}, true);`);
+        // Premiere 25.4 prop names (verified via probe): "(RGB) Black Input Level", etc.
+        if (args.input_black !== undefined) setLines.push(`if (n === "(RGB) Black Input Level") prop.setValue(${args.input_black}, true);`);
+        if (args.input_white !== undefined) setLines.push(`if (n === "(RGB) White Input Level") prop.setValue(${args.input_white}, true);`);
+        // Premiere stores Gamma as integer where 100 = 1.0. Convert user-facing float.
+        if (args.gamma !== undefined) setLines.push(`if (n === "(RGB) Gamma") prop.setValue(${Math.round(args.gamma * 100)}, true);`);
+        if (args.output_black !== undefined) setLines.push(`if (n === "(RGB) Black Output Level") prop.setValue(${args.output_black}, true);`);
+        if (args.output_white !== undefined) setLines.push(`if (n === "(RGB) White Output Level") prop.setValue(${args.output_white}, true);`);
 
         const script = buildToolScript(`
           app.enableQE();

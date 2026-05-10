@@ -276,6 +276,38 @@ CEP bridge bị hang sau big probe script → end session với code commit. 4 t
 
 **Tổng sau batch 4:** **340** (336 + 4).
 
+### Phase 4 runtime verification (cùng session, sau khi user restart Premiere)
+
+CEP đã restart, runtime test 18+1 Phase 4 tools qua execute_extendscript (replicate handler logic):
+
+**✅ Verified (15 tools không cần fix):**
+- apply_effect_with_properties (architectural — apply Lumetri + set Exposure/Highlights/Shadows)
+- apply_lens_distortion_correction (Curvature)
+- apply_drop_shadow (Opacity/Direction/Distance/Softness)
+- burn_in_timecode (Opacity)
+- apply_unsharp_mask (Amount/Radius/Threshold)
+- apply_brightness_contrast (Brightness/Contrast)
+- apply_camera_blur (Percent Blur — tool đã handle 3 variants, đúng tên là "Percent Blur")
+- burn_in_metadata (no specific props, just apply)
+- edit_subclip_boundaries (no test — needs subclip)
+- apply_gaussian_blur (Blurriness/Blur Dimensions/Repeat Edge Pixels)
+- apply_mosaic (Horizontal Blocks/Vertical Blocks/Sharp Colors)
+- apply_lens_flare (Flare Brightness/Lens Type)
+- apply_skin_tone_smoothing (uses Camera Blur — works)
+- apply_directional_blur (Direction/Blur Length)
+- apply_black_white (no props)
+
+**🐛 Bugs found + fixed:**
+
+| Tool | Bug | Fix |
+|---|---|---|
+| `apply_basic_3d` | Param name `"Specular Highlight"` không match | → `"Show Specular Highlight"` |
+| `apply_levels` | 4 prop names sai thứ tự (`"Input Black"` etc.) | → `"(RGB) Black Input Level"`, `"(RGB) White Input Level"`, `"(RGB) Black Output Level"`, `"(RGB) White Output Level"` |
+| `apply_levels` | Gamma value 1.5 → result 1 (truncated) | Gamma stored as int 100=1.0; tool converts user-facing float × 100 |
+| `apply_invert` | Channel param accepts string nhưng Premiere expects int (`"Red"` → "Illegal Parameter type") | Add channelMap enum: RGB=0, Red=1, Green=2, Blue=3, Alpha=4, Hue=5, Lightness=6, Saturation=7, Yellow=8, Magenta=9, Cyan=10 |
+
+Test clip C7984.MP4 sạch sau test (chỉ Opacity + Motion intrinsic).
+
 **Pattern:** Mỗi tool wraps `apply_effect` với matchName cụ thể + optional property setters cho sensible defaults. Reuse `__getQEClip(result)` helper từ Phase 0.5 để correct DOM↔QE indexing.
 
 **Cần làm session sau:**
