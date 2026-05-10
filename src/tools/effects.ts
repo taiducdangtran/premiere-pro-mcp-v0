@@ -3305,6 +3305,466 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_ramp: {
+      description:
+        "Apply Ramp effect — generates a linear or radial gradient from start_color to end_color. Useful for masks, sky replacement, color overlay sources.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          start_x: { type: "number", description: "Start X 0.0-1.0 normalized (default 0.5)" },
+          start_y: { type: "number", description: "Start Y 0.0-1.0 normalized (default 0.0 = top)" },
+          start_color: { type: "array", items: { type: "number" }, description: "Start color [R,G,B] 0-255 (optional 4th alpha). Default black." },
+          end_x: { type: "number", description: "End X 0.0-1.0 normalized (default 0.5)" },
+          end_y: { type: "number", description: "End Y 0.0-1.0 normalized (default 1.0 = bottom)" },
+          end_color: { type: "array", items: { type: "number" }, description: "End color [R,G,B] 0-255 (optional 4th alpha). Default white." },
+          ramp_shape: { type: "number", description: "0=Linear (default), 1=Radial" },
+          ramp_scatter: { type: "number", description: "Dithering 0-100 (default 0)" },
+          blend_with_original: { type: "number", description: "Blend with original 0.0-1.0 (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        start_x?: number; start_y?: number; start_color?: number[];
+        end_x?: number; end_y?: number; end_color?: number[];
+        ramp_shape?: number; ramp_scatter?: number; blend_with_original?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.start_x !== undefined || args.start_y !== undefined) {
+          const sx = args.start_x ?? 0.5;
+          const sy = args.start_y ?? 0;
+          setLines.push(`if (n === "Start of Ramp") prop.setValue([${sx}, ${sy}], true);`);
+        }
+        if (args.end_x !== undefined || args.end_y !== undefined) {
+          const ex = args.end_x ?? 0.5;
+          const ey = args.end_y ?? 1;
+          setLines.push(`if (n === "End of Ramp") prop.setValue([${ex}, ${ey}], true);`);
+        }
+        if (args.start_color && args.start_color.length >= 3) {
+          const [r, g, b] = args.start_color;
+          const a = args.start_color[3] ?? 255;
+          setLines.push(`if (n === "Start Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+        if (args.end_color && args.end_color.length >= 3) {
+          const [r, g, b] = args.end_color;
+          const a = args.end_color[3] ?? 255;
+          setLines.push(`if (n === "End Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+        if (args.ramp_shape !== undefined) setLines.push(`if (n === "Ramp Shape") prop.setValue(${Math.round(args.ramp_shape)}, true);`);
+        if (args.ramp_scatter !== undefined) setLines.push(`if (n === "Ramp Scatter") prop.setValue(${args.ramp_scatter}, true);`);
+        if (args.blend_with_original !== undefined) setLines.push(`if (n === "Blend With Original") prop.setValue(${args.blend_with_original}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Ramp is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Ramp") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Ramp");
+            if (!eff || !eff.name) return __error("Ramp effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Ramp") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_grid: {
+      description:
+        "Apply Grid effect — overlay a grid pattern. Useful for layout guides, technical references, or stylistic looks. Width/Height require size_from=2 (Width & Height Sliders); ignored when size_from=0 (Corner Point).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          anchor_x: { type: "number", description: "Grid anchor X 0.0-1.0 (default 0.5)" },
+          anchor_y: { type: "number", description: "Grid anchor Y 0.0-1.0 (default 0.5)" },
+          size_from: { type: "number", description: "0=Corner Point (default), 1=Width Slider, 2=Width & Height Sliders" },
+          width: { type: "number", description: "Cell width in pixels (default 32). Used when size_from is 1 or 2." },
+          height: { type: "number", description: "Cell height in pixels (default 24). Used when size_from is 2." },
+          border: { type: "number", description: "Border thickness in pixels (default 5)" },
+          invert_grid: { type: "boolean", description: "Invert: filled cells (default false)" },
+          color: { type: "array", items: { type: "number" }, description: "Grid color [R,G,B] 0-255 (optional 4th alpha). Default white." },
+          opacity: { type: "number", description: "Grid opacity 0-100 (default 100)" },
+          blending_mode: { type: "number", description: "Blend mode int (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        anchor_x?: number; anchor_y?: number; size_from?: number;
+        width?: number; height?: number; border?: number;
+        invert_grid?: boolean; color?: number[]; opacity?: number; blending_mode?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.anchor_x !== undefined || args.anchor_y !== undefined) {
+          const ax = args.anchor_x ?? 0.5;
+          const ay = args.anchor_y ?? 0.5;
+          setLines.push(`if (n === "Anchor") prop.setValue([${ax}, ${ay}], true);`);
+        }
+        if (args.size_from !== undefined) setLines.push(`if (n === "Size From") prop.setValue(${Math.round(args.size_from)}, true);`);
+        if (args.width !== undefined) setLines.push(`if (n === "Width" && !widthSeen) { prop.setValue(${args.width}, true); widthSeen = true; }`);
+        if (args.height !== undefined) setLines.push(`if (n === "Height" && !heightSeen) { prop.setValue(${args.height}, true); heightSeen = true; }`);
+        if (args.border !== undefined) setLines.push(`if (n === "Border") prop.setValue(${args.border}, true);`);
+        if (args.invert_grid !== undefined) setLines.push(`if (n === "Invert Grid") prop.setValue(${args.invert_grid ? "true" : "false"}, true);`);
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.blending_mode !== undefined) setLines.push(`if (n === "Blending Mode") prop.setValue(${Math.round(args.blending_mode)}, true);`);
+        if (args.color && args.color.length >= 3) {
+          const [r, g, b] = args.color;
+          const a = args.color[3] ?? 255;
+          setLines.push(`if (n === "Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Grid is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Grid") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Grid");
+            if (!eff || !eff.name) return __error("Grid effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Grid") {
+              var widthSeen = false;
+              var heightSeen = false;
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_checkerboard: {
+      description:
+        "Apply Checkerboard effect — overlay a checker pattern. Useful for transparent-area indicators, technical references, or stylistic backgrounds.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          anchor_x: { type: "number", description: "Anchor X 0.0-1.0 (default 0.5)" },
+          anchor_y: { type: "number", description: "Anchor Y 0.0-1.0 (default 0.5)" },
+          size_from: { type: "number", description: "0=Corner Point, 1=Width Slider (default), 2=Width & Height Sliders" },
+          width: { type: "number", description: "Cell width in pixels (default 16). Used when size_from is 1 or 2." },
+          height: { type: "number", description: "Cell height in pixels (default 8). Used when size_from is 2." },
+          color: { type: "array", items: { type: "number" }, description: "Square color [R,G,B,A] 0-255. Default white." },
+          opacity: { type: "number", description: "Opacity 0-100 (default 100)" },
+          blending_mode: { type: "number", description: "Blend mode int (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        anchor_x?: number; anchor_y?: number; size_from?: number;
+        width?: number; height?: number;
+        color?: number[]; opacity?: number; blending_mode?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.anchor_x !== undefined || args.anchor_y !== undefined) {
+          const ax = args.anchor_x ?? 0.5;
+          const ay = args.anchor_y ?? 0.5;
+          setLines.push(`if (n === "Anchor") prop.setValue([${ax}, ${ay}], true);`);
+        }
+        if (args.size_from !== undefined) setLines.push(`if (n === "Size From") prop.setValue(${Math.round(args.size_from)}, true);`);
+        if (args.width !== undefined) setLines.push(`if (n === "Width" && !widthSeen) { prop.setValue(${args.width}, true); widthSeen = true; }`);
+        if (args.height !== undefined) setLines.push(`if (n === "Height" && !heightSeen) { prop.setValue(${args.height}, true); heightSeen = true; }`);
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.blending_mode !== undefined) setLines.push(`if (n === "Blending Mode") prop.setValue(${Math.round(args.blending_mode)}, true);`);
+        if (args.color && args.color.length >= 3) {
+          const [r, g, b] = args.color;
+          const a = args.color[3] ?? 255;
+          setLines.push(`if (n === "Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Checkerboard is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Checkerboard") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Checkerboard");
+            if (!eff || !eff.name) return __error("Checkerboard effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Checkerboard") {
+              var widthSeen = false;
+              var heightSeen = false;
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_4color_gradient: {
+      description:
+        "Apply 4-Color Gradient effect — blend 4 colors anchored at 4 points. Default points are corners; great for color washes, mood overlays, or stylized backgrounds.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          point1_x: { type: "number", description: "Point 1 X 0.0-1.0 (default 0.1)" },
+          point1_y: { type: "number", description: "Point 1 Y 0.0-1.0 (default 0.1)" },
+          color1: { type: "array", items: { type: "number" }, description: "Color 1 [R,G,B,A] 0-255" },
+          point2_x: { type: "number", description: "Point 2 X (default 0.9)" },
+          point2_y: { type: "number", description: "Point 2 Y (default 0.1)" },
+          color2: { type: "array", items: { type: "number" }, description: "Color 2 [R,G,B,A]" },
+          point3_x: { type: "number", description: "Point 3 X (default 0.1)" },
+          point3_y: { type: "number", description: "Point 3 Y (default 0.9)" },
+          color3: { type: "array", items: { type: "number" }, description: "Color 3 [R,G,B,A]" },
+          point4_x: { type: "number", description: "Point 4 X (default 0.9)" },
+          point4_y: { type: "number", description: "Point 4 Y (default 0.9)" },
+          color4: { type: "array", items: { type: "number" }, description: "Color 4 [R,G,B,A]" },
+          blend: { type: "number", description: "Blend amount 0-100 (default 100)" },
+          jitter: { type: "number", description: "Jitter 0-100 (default 0)" },
+          opacity: { type: "number", description: "Opacity 0-100 (default 100)" },
+          blending_mode: { type: "number", description: "Blend mode int (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        point1_x?: number; point1_y?: number; color1?: number[];
+        point2_x?: number; point2_y?: number; color2?: number[];
+        point3_x?: number; point3_y?: number; color3?: number[];
+        point4_x?: number; point4_y?: number; color4?: number[];
+        blend?: number; jitter?: number; opacity?: number; blending_mode?: number;
+      }) => {
+        const setLines: string[] = [];
+        const pts: [string, number | undefined, number | undefined, number, number][] = [
+          ["Point 1", args.point1_x, args.point1_y, 0.1, 0.1],
+          ["Point 2", args.point2_x, args.point2_y, 0.9, 0.1],
+          ["Point 3", args.point3_x, args.point3_y, 0.1, 0.9],
+          ["Point 4", args.point4_x, args.point4_y, 0.9, 0.9],
+        ];
+        for (const [label, x, y, dx, dy] of pts) {
+          if (x !== undefined || y !== undefined) {
+            const px = x ?? dx;
+            const py = y ?? dy;
+            setLines.push(`if (n === "${label}") prop.setValue([${px}, ${py}], true);`);
+          }
+        }
+        const cols: [string, number[] | undefined][] = [
+          ["Color 1", args.color1],
+          ["Color 2", args.color2],
+          ["Color 3", args.color3],
+        ];
+        for (const [label, c] of cols) {
+          if (c && c.length >= 3) {
+            const [r, g, b] = c;
+            const a = c[3] ?? 255;
+            setLines.push(`if (n === "${label}") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+          }
+        }
+        // Color 4 has a duplicate — guard with flag
+        if (args.color4 && args.color4.length >= 3) {
+          const [r, g, b] = args.color4;
+          const a = args.color4[3] ?? 255;
+          setLines.push(`if (n === "Color 4" && !color4Seen) { prop.setColorValue(${r}, ${g}, ${b}, ${a}); color4Seen = true; }`);
+        }
+        if (args.blend !== undefined) setLines.push(`if (n === "Blend") prop.setValue(${args.blend}, true);`);
+        if (args.jitter !== undefined) setLines.push(`if (n === "Jitter") prop.setValue(${args.jitter}, true);`);
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.blending_mode !== undefined) setLines.push(`if (n === "Blending Mode") prop.setValue(${Math.round(args.blending_mode)}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("4-Color Gradient is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "4-Color Gradient") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("4-Color Gradient");
+            if (!eff || !eff.name) return __error("4-Color Gradient effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "4-Color Gradient") {
+              var color4Seen = false;
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_cell_pattern: {
+      description:
+        "Apply Cell Pattern effect — procedural cell/voronoi noise generator. Use for organic textures, water caustics, animated backgrounds. 'Cells Vertical' has a duplicate property name — only first match is set.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          cell_pattern: { type: "number", description: "Pattern type enum int 0-11 (default 0=Bubbles). Try 1-11 for crystals/plates/static plates etc." },
+          invert: { type: "boolean", description: "Invert pattern (default false)" },
+          contextual_slider: { type: "number", description: "Contextual slider 0-100 (default 100). Meaning depends on cell_pattern." },
+          disperse: { type: "number", description: "Disperse 0-1 (default 1)" },
+          size: { type: "number", description: "Cell size in pixels (default 60)" },
+          offset_x: { type: "number", description: "Offset X 0.0-1.0 (default 0.5)" },
+          offset_y: { type: "number", description: "Offset Y 0.0-1.0 (default 0.5)" },
+          enable_tiling: { type: "boolean", description: "Enable tiling (default false)" },
+          cells_horizontal: { type: "number", description: "Horizontal tile count (default 4). Used when enable_tiling=true." },
+          cells_vertical: { type: "number", description: "Vertical tile count (default 4). Used when enable_tiling=true." },
+          evolution: { type: "number", description: "Evolution angle in degrees (default 0). Animate to evolve pattern." },
+          random_seed: { type: "number", description: "Random seed (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        cell_pattern?: number; invert?: boolean; contextual_slider?: number;
+        disperse?: number; size?: number;
+        offset_x?: number; offset_y?: number;
+        enable_tiling?: boolean; cells_horizontal?: number; cells_vertical?: number;
+        evolution?: number; random_seed?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.cell_pattern !== undefined) setLines.push(`if (n === "Cell Pattern") prop.setValue(${Math.round(args.cell_pattern)}, true);`);
+        if (args.invert !== undefined) setLines.push(`if (n === "Invert") prop.setValue(${args.invert ? "true" : "false"}, true);`);
+        if (args.contextual_slider !== undefined) setLines.push(`if (n === "Contextual Slider") prop.setValue(${args.contextual_slider}, true);`);
+        if (args.disperse !== undefined) setLines.push(`if (n === "Disperse") prop.setValue(${args.disperse}, true);`);
+        if (args.size !== undefined) setLines.push(`if (n === "Size") prop.setValue(${args.size}, true);`);
+        if (args.offset_x !== undefined || args.offset_y !== undefined) {
+          const ox = args.offset_x ?? 0.5;
+          const oy = args.offset_y ?? 0.5;
+          setLines.push(`if (n === "Offset") prop.setValue([${ox}, ${oy}], true);`);
+        }
+        if (args.enable_tiling !== undefined) setLines.push(`if (n === "Enable Tiling") prop.setValue(${args.enable_tiling ? "true" : "false"}, true);`);
+        if (args.cells_horizontal !== undefined) setLines.push(`if (n === "Cells Horizontal") prop.setValue(${args.cells_horizontal}, true);`);
+        if (args.cells_vertical !== undefined) setLines.push(`if (n === "Cells Vertical" && !cellsVerticalSeen) { prop.setValue(${args.cells_vertical}, true); cellsVerticalSeen = true; }`);
+        if (args.evolution !== undefined) setLines.push(`if (n === "Evolution") prop.setValue(${args.evolution}, true);`);
+        if (args.random_seed !== undefined) setLines.push(`if (n === "Random Seed") prop.setValue(${args.random_seed}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Cell Pattern is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Cell Pattern") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Cell Pattern");
+            if (!eff || !eff.name) return __error("Cell Pattern effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Cell Pattern") {
+              var cellsVerticalSeen = false;
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_asc_cdl: {
       description:
         "Apply ASC CDL effect — industry-standard Color Decision List (Slope/Offset/Power per RGB + Saturation). Used in DI/finishing pipelines for portable color grades that round-trip across DaVinci/Avid/Nuke. All 10 numeric params default to identity (Slope=1, Offset=0, Power=1, Saturation=1).",

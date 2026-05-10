@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.9] - 2026-05-10
+
+### Added — 5 new tools (387 → 392)
+
+#### Phase 4 batch 12 — Generator wrappers (5 tools, `src/tools/effects.ts`)
+
+- **`apply_ramp`** — linear/radial gradient generator. Params: start_x/y + start_color, end_x/y + end_color, ramp_shape (0=Linear, 1=Radial), ramp_scatter, blend_with_original.
+- **`apply_grid`** — grid overlay. Params: anchor_x/y, size_from (0=Corner Point, 1=Width Slider, 2=Width&Height), width, height, border, invert_grid, color, opacity, blending_mode.
+- **`apply_checkerboard`** — checker pattern. Params: anchor, size_from, width, height, color, opacity, blending_mode.
+- **`apply_4color_gradient`** — 4-color anchored gradient. Params: point1-4 + color1-4, blend, jitter, opacity, blending_mode.
+- **`apply_cell_pattern`** — procedural voronoi/cell noise. Params: cell_pattern (0=Bubbles), invert, contextual_slider, disperse, size, offset, enable_tiling, cells_horizontal/vertical, evolution, random_seed.
+
+### Changed
+
+- Tool count: 387 → 392
+- Updated `package.json` description
+
+### Verified
+
+- 27 properties round-trip verified including duplicate-name handling.
+- New pattern: declared `var widthSeen/heightSeen/color4Seen/cellsVerticalSeen = false` before property loop and guarded duplicate-named props with `&& !flag` to set only first occurrence (the slider, not the feather/toggle dup).
+- Grid/Checkerboard `Width`/`Height` props at index 7-8 are feather widths (default 0); first match (index 3-4) is the actual cell size — flag pattern correctly targets the first.
+- 4-Color Gradient `Color 4` at index 9 is a panel-toggle bool; first match at index 8 is the actual color.
+
 ## [1.1.8] - 2026-05-10
 
 ### Added — 5 new tools (382 → 387)
