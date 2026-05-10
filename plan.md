@@ -204,11 +204,11 @@
 4. **Normalized vs percent**: nhiều effect có numeric props là 0-1 normalized (NOT 0-100 like UI suggests). Đã document từng wrapper: Bevel Edges Edge Thickness/Light Intensity, Calc Second Layer Opacity, Radial Shadow Opacity, Find Edges Blend With Original, Dust & Scratches Threshold, etc.
 5. **Adobe quirks**: Strobe Light "Random Strobe Probablity" (typo "Probablity"), Gamma Correction stored 1-28 raw (not gamma curve), Median Legacy matchName `AE.ADBE Median` (no Legacy suffix), Solarize matchName `PR.ADBE Solarize` (PR prefix not AE).
 
-**Pending còn lại (estimate ~2-3 batches cho VR):**
+**Pending còn lại (1 batch — VR group B cuối):**
 - ✅ **Batch 19** (v1.1.16, 427) — Noise HLS Auto, Noise Alpha, Remove Matte, Write-on, Timewarp — DONE
 - ✅ **Batch 20** (v1.1.17, 432) — SDR Conform, Vertical/Horizontal Flip, Lighting Effects, Gradient Wipe — DONE
-- **Batch 21** — VR group A: VR Plane to Sphere, VR Rotate Sphere, VR Blur, VR Sharpen, VR Glow (5)
-- **Batch 22** — VR group B: VR Color Gradients, VR Projection, VR Digital Glitch, VR Chromatic Aberrations, VR Fractal Noise, VR De-Noise (6)
+- ✅ **Batch 21** (v1.1.18, 437) — VR group A: VR Plane to Sphere, VR Rotate Sphere, VR Blur, VR Sharpen, VR Glow — DONE
+- **Batch 22** — VR group B: VR Color Gradients, VR Projection, VR Digital Glitch, VR Chromatic Aberrations, VR Fractal Noise, VR De-Noise (6 → split 5+1 hoặc 1 batch lớn)
 
 → Sau batch 21-22: tổng ~443 tools, hoàn thành effect-wrapping work cho 360°/VR workflow.
 
