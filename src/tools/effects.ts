@@ -3305,6 +3305,460 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_vr_color_gradients: {
+      description:
+        "Apply VR Color Gradients — generates a 360° gradient using up to 8 control points/colors. Wrapper exposes global params (Points Number, Gradient Power/Blend, Opacity, Blending Mode); per-point colors require apply_effect_with_properties.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          frame_layout: { type: "number", description: "0=Monoscopic (default), 1=Stereo Side-By-Side, 2=Stereo Over-Under" },
+          horizontal_fov: { type: "number", description: "Horizontal FoV degrees (default 360)" },
+          vertical_fov: { type: "number", description: "Vertical FoV degrees (default 180)" },
+          points_number: { type: "number", description: "Number of gradient points 1-8 (default 8)" },
+          gradient_power: { type: "number", description: "Gradient power 0-100 (default 50)" },
+          gradient_blend: { type: "number", description: "Gradient blend 0-100 (default 10)" },
+          opacity: { type: "number", description: "Opacity 0-100 (default 100)" },
+          blending_mode: { type: "number", description: "Blend mode int (default 1)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.frame_layout !== undefined) setLines.push(`if (n === "Frame Layout") prop.setValue(${Math.round(args.frame_layout)}, true);`);
+        if (args.horizontal_fov !== undefined) setLines.push(`if (n === "Horizontal Field of View") prop.setValue(${args.horizontal_fov}, true);`);
+        if (args.vertical_fov !== undefined) setLines.push(`if (n === "Vertical Field of View") prop.setValue(${args.vertical_fov}, true);`);
+        if (args.points_number !== undefined) setLines.push(`if (n === "Points Number") prop.setValue(${Math.round(args.points_number)}, true);`);
+        if (args.gradient_power !== undefined) setLines.push(`if (n === "Gradient Power") prop.setValue(${args.gradient_power}, true);`);
+        if (args.gradient_blend !== undefined) setLines.push(`if (n === "Gradient Blend") prop.setValue(${args.gradient_blend}, true);`);
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.blending_mode !== undefined) setLines.push(`if (n === "Blending Mode") prop.setValue(${Math.round(args.blending_mode)}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("VR Color Gradients is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "VR Color Gradients") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("VR Color Gradients");
+            if (!eff || !eff.name) return __error("VR Color Gradients effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "VR Color Gradients") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_vr_projection: {
+      description:
+        "Apply VR Projection — converts between 360° projection types (equirectangular, fisheye, cubemap variants) at input and output. Use to fix mismatched 360° footage formats.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          input_projection: { type: "number", description: "Input projection enum int (default 1)" },
+          input_layout: { type: "number", description: "Input layout enum int (default 0=Monoscopic)" },
+          input_horizontal_fov: { type: "number", description: "Input horizontal FoV degrees (default 360)" },
+          input_vertical_fov: { type: "number", description: "Input vertical FoV degrees (default 180)" },
+          output_projection: { type: "number", description: "Output projection enum int (default 1)" },
+          output_layout: { type: "number", description: "Output layout enum int (default 0=Monoscopic)" },
+          output_horizontal_fov: { type: "number", description: "Output horizontal FoV degrees (default 360)" },
+          output_vertical_fov: { type: "number", description: "Output vertical FoV degrees (default 180)" },
+          filtering: { type: "number", description: "Filtering enum (default 1)" },
+          disparity_adjustment: { type: "number", description: "Stereo disparity adjustment (default 0)" },
+          pan: { type: "number", description: "Pan degrees (default 0)" },
+          tilt: { type: "number", description: "Tilt degrees (default 0)" },
+          roll: { type: "number", description: "Roll degrees (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.input_projection !== undefined) setLines.push(`if (n === "Input Projection") prop.setValue(${Math.round(args.input_projection)}, true);`);
+        if (args.input_layout !== undefined) setLines.push(`if (n === "Input Layout") prop.setValue(${Math.round(args.input_layout)}, true);`);
+        if (args.input_horizontal_fov !== undefined) setLines.push(`if (n === "Input Horizontal FOV") prop.setValue(${args.input_horizontal_fov}, true);`);
+        if (args.input_vertical_fov !== undefined) setLines.push(`if (n === "Input Vertical FOV") prop.setValue(${args.input_vertical_fov}, true);`);
+        if (args.output_projection !== undefined) setLines.push(`if (n === "Output Projection") prop.setValue(${Math.round(args.output_projection)}, true);`);
+        if (args.output_layout !== undefined) setLines.push(`if (n === "Output Layout") prop.setValue(${Math.round(args.output_layout)}, true);`);
+        if (args.output_horizontal_fov !== undefined) setLines.push(`if (n === "Output Horizontal FOV") prop.setValue(${args.output_horizontal_fov}, true);`);
+        if (args.output_vertical_fov !== undefined) setLines.push(`if (n === "Output Vertical FOV") prop.setValue(${args.output_vertical_fov}, true);`);
+        if (args.filtering !== undefined) setLines.push(`if (n === "Filtering") prop.setValue(${Math.round(args.filtering)}, true);`);
+        if (args.disparity_adjustment !== undefined) setLines.push(`if (n === "Disparity Adjustment") prop.setValue(${args.disparity_adjustment}, true);`);
+        if (args.pan !== undefined) setLines.push(`if (n === "Pan") prop.setValue(${args.pan}, true);`);
+        if (args.tilt !== undefined) setLines.push(`if (n === "Tilt") prop.setValue(${args.tilt}, true);`);
+        if (args.roll !== undefined) setLines.push(`if (n === "Roll") prop.setValue(${args.roll}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("VR Projection is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "VR Projection") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("VR Projection");
+            if (!eff || !eff.name) return __error("VR Projection effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "VR Projection") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_vr_digital_glitch: {
+      description:
+        "Apply VR Digital Glitch — seamless 360° glitch effect (color/geometry distortion radiating from a Point of Interest). Animate Master Amplitude or Distortion Evolution for moving glitches.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          frame_layout: { type: "number", description: "0=Monoscopic (default), 1=Stereo Side-By-Side, 2=Stereo Over-Under" },
+          horizontal_fov: { type: "number", description: "Horizontal FoV degrees (default 360)" },
+          vertical_fov: { type: "number", description: "Vertical FoV degrees (default 180)" },
+          poi_x: { type: "number", description: "Point of Interest X 0-1 (default 0.5)" },
+          poi_y: { type: "number", description: "Point of Interest Y 0-1 (default 0.5)" },
+          poi_scale: { type: "number", description: "POI radius scale (default 100)" },
+          master_amplitude: { type: "number", description: "Master glitch amplitude (default 100)" },
+          color_distortion: { type: "number", description: "Color distortion (default 50)" },
+          geometry_distortion_x: { type: "number", description: "Geometry distortion X (default 50)" },
+          geometry_distortion_y: { type: "number", description: "Geometry distortion Y (default 0)" },
+          geometry_distortion_z: { type: "number", description: "Geometry distortion Z (default 0)" },
+          distortion_complexity: { type: "number", description: "Distortion complexity (default 40)" },
+          distortion_rate: { type: "number", description: "Distortion rate (default 50)" },
+          distortion_evolution: { type: "number", description: "Distortion evolution (default 0). Animate for movement." },
+          color_evolution: { type: "number", description: "Color evolution (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.frame_layout !== undefined) setLines.push(`if (n === "Frame Layout") prop.setValue(${Math.round(args.frame_layout)}, true);`);
+        if (args.horizontal_fov !== undefined) setLines.push(`if (n === "Horizontal Field of View") prop.setValue(${args.horizontal_fov}, true);`);
+        if (args.vertical_fov !== undefined) setLines.push(`if (n === "Vertical Field of View") prop.setValue(${args.vertical_fov}, true);`);
+        if (args.poi_x !== undefined || args.poi_y !== undefined) {
+          const px = args.poi_x ?? 0.5;
+          const py = args.poi_y ?? 0.5;
+          setLines.push(`if (n === "Point of Interest") prop.setValue([${px}, ${py}], true);`);
+        }
+        if (args.poi_scale !== undefined) setLines.push(`if (n === "POI Scale") prop.setValue(${args.poi_scale}, true);`);
+        if (args.master_amplitude !== undefined) setLines.push(`if (n === "Master Amplitude") prop.setValue(${args.master_amplitude}, true);`);
+        if (args.color_distortion !== undefined) setLines.push(`if (n === "Color Distortion") prop.setValue(${args.color_distortion}, true);`);
+        if (args.geometry_distortion_x !== undefined) setLines.push(`if (n === "Geometry Distortion X") prop.setValue(${args.geometry_distortion_x}, true);`);
+        if (args.geometry_distortion_y !== undefined) setLines.push(`if (n === "Geometry Distortion Y") prop.setValue(${args.geometry_distortion_y}, true);`);
+        if (args.geometry_distortion_z !== undefined) setLines.push(`if (n === "Geometry Distortion Z") prop.setValue(${args.geometry_distortion_z}, true);`);
+        if (args.distortion_complexity !== undefined) setLines.push(`if (n === "Distortion Complexity") prop.setValue(${args.distortion_complexity}, true);`);
+        if (args.distortion_rate !== undefined) setLines.push(`if (n === "Distortion Rate") prop.setValue(${args.distortion_rate}, true);`);
+        if (args.distortion_evolution !== undefined) setLines.push(`if (n === "Distortion Evolution") prop.setValue(${args.distortion_evolution}, true);`);
+        if (args.color_evolution !== undefined) setLines.push(`if (n === "Color Evolution") prop.setValue(${args.color_evolution}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("VR Digital Glitch is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "VR Digital Glitch") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("VR Digital Glitch");
+            if (!eff || !eff.name) return __error("VR Digital Glitch effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "VR Digital Glitch") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_vr_chromatic_aberrations: {
+      description:
+        "Apply VR Chromatic Aberrations — seamless 360° per-channel RGB displacement (lens-fringe simulation). Animate Aberration values for psychedelic looks; falloff_distance fades effect from POI.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          frame_layout: { type: "number", description: "0=Monoscopic (default), 1=Stereo Side-By-Side, 2=Stereo Over-Under" },
+          horizontal_fov: { type: "number", description: "Horizontal FoV degrees (default 360)" },
+          vertical_fov: { type: "number", description: "Vertical FoV degrees (default 180)" },
+          poi_x: { type: "number", description: "Point of Interest X 0-1 (default 0.5)" },
+          poi_y: { type: "number", description: "Point of Interest Y 0-1 (default 0.5)" },
+          aberration_red: { type: "number", description: "Red channel offset (default -10)" },
+          aberration_green: { type: "number", description: "Green channel offset (default 0)" },
+          aberration_blue: { type: "number", description: "Blue channel offset (default 10)" },
+          falloff_distance: { type: "number", description: "Falloff distance from POI 0-100 (default 50)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.frame_layout !== undefined) setLines.push(`if (n === "Frame Layout") prop.setValue(${Math.round(args.frame_layout)}, true);`);
+        if (args.horizontal_fov !== undefined) setLines.push(`if (n === "Horizontal Field of View") prop.setValue(${args.horizontal_fov}, true);`);
+        if (args.vertical_fov !== undefined) setLines.push(`if (n === "Vertical Field of View") prop.setValue(${args.vertical_fov}, true);`);
+        if (args.poi_x !== undefined || args.poi_y !== undefined) {
+          const px = args.poi_x ?? 0.5;
+          const py = args.poi_y ?? 0.5;
+          setLines.push(`if (n === "Point of Interest") prop.setValue([${px}, ${py}], true);`);
+        }
+        if (args.aberration_red !== undefined) setLines.push(`if (n === "Aberration (Red)") prop.setValue(${args.aberration_red}, true);`);
+        if (args.aberration_green !== undefined) setLines.push(`if (n === "Aberration (Green)") prop.setValue(${args.aberration_green}, true);`);
+        if (args.aberration_blue !== undefined) setLines.push(`if (n === "Aberration (Blue)") prop.setValue(${args.aberration_blue}, true);`);
+        if (args.falloff_distance !== undefined) setLines.push(`if (n === "Falloff Distance") prop.setValue(${args.falloff_distance}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("VR Chromatic Aberrations is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "VR Chromatic Aberrations") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("VR Chromatic Aberrations");
+            if (!eff || !eff.name) return __error("VR Chromatic Aberrations effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "VR Chromatic Aberrations") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_vr_fractal_noise: {
+      description:
+        "Apply VR Fractal Noise — seamless 360° fractal noise generator. Useful for energy fields, smoke, abstract overlays. Animate Evolution for movement.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          frame_layout: { type: "number", description: "0=Monoscopic (default), 1=Stereo Side-By-Side, 2=Stereo Over-Under" },
+          horizontal_fov: { type: "number", description: "Horizontal FoV degrees (default 360)" },
+          vertical_fov: { type: "number", description: "Vertical FoV degrees (default 180)" },
+          fractal_type: { type: "number", description: "Fractal type enum (default 0)" },
+          contrast: { type: "number", description: "Contrast (default 100)" },
+          brightness: { type: "number", description: "Brightness (default 0)" },
+          complexity: { type: "number", description: "Complexity 1-10 (default 6)" },
+          evolution: { type: "number", description: "Evolution degrees (default 0). Animate for movement." },
+          scale: { type: "number", description: "Scale (default 8)" },
+          tilt: { type: "number", description: "Tilt X-axis (default 0)" },
+          pan: { type: "number", description: "Pan Y-axis (default 0)" },
+          roll: { type: "number", description: "Roll Z-axis (default 0)" },
+          random_seed: { type: "number", description: "Random seed (default 0)" },
+          opacity: { type: "number", description: "Opacity 0-100 (default 100)" },
+          blending_mode: { type: "number", description: "Blend mode int (default 1)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.frame_layout !== undefined) setLines.push(`if (n === "Frame Layout") prop.setValue(${Math.round(args.frame_layout)}, true);`);
+        if (args.horizontal_fov !== undefined) setLines.push(`if (n === "Horizontal Field of View") prop.setValue(${args.horizontal_fov}, true);`);
+        if (args.vertical_fov !== undefined) setLines.push(`if (n === "Vertical Field of View") prop.setValue(${args.vertical_fov}, true);`);
+        if (args.fractal_type !== undefined) setLines.push(`if (n === "Fractal Type") prop.setValue(${Math.round(args.fractal_type)}, true);`);
+        if (args.contrast !== undefined) setLines.push(`if (n === "Contrast") prop.setValue(${args.contrast}, true);`);
+        if (args.brightness !== undefined) setLines.push(`if (n === "Brightness") prop.setValue(${args.brightness}, true);`);
+        if (args.complexity !== undefined) setLines.push(`if (n === "Complexity") prop.setValue(${args.complexity}, true);`);
+        if (args.evolution !== undefined) setLines.push(`if (n === "Evolution") prop.setValue(${args.evolution}, true);`);
+        if (args.scale !== undefined) setLines.push(`if (n === "Scale") prop.setValue(${args.scale}, true);`);
+        if (args.tilt !== undefined) setLines.push(`if (n === "Tilt (X axis)") prop.setValue(${args.tilt}, true);`);
+        if (args.pan !== undefined) setLines.push(`if (n === "Pan (Y axis)") prop.setValue(${args.pan}, true);`);
+        if (args.roll !== undefined) setLines.push(`if (n === "Roll (Z axis)") prop.setValue(${args.roll}, true);`);
+        if (args.random_seed !== undefined) setLines.push(`if (n === "Random Seed") prop.setValue(${args.random_seed}, true);`);
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.blending_mode !== undefined) setLines.push(`if (n === "Blending Mode") prop.setValue(${Math.round(args.blending_mode)}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("VR Fractal Noise is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "VR Fractal Noise") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("VR Fractal Noise");
+            if (!eff || !eff.name) return __error("VR Fractal Noise effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "VR Fractal Noise") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_vr_de_noise: {
+      description:
+        "Apply VR De-Noise — seamless 360° denoising for VR footage (low-light or compressed sources). Lighter weight than full Lumetri or external denoisers.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          frame_layout: { type: "number", description: "0=Monoscopic (default), 1=Stereo Side-By-Side, 2=Stereo Over-Under" },
+          horizontal_fov: { type: "number", description: "Horizontal FoV degrees (default 360)" },
+          vertical_fov: { type: "number", description: "Vertical FoV degrees (default 180)" },
+          noise_type: { type: "number", description: "Noise type enum (default 0)" },
+          noise_level: { type: "number", description: "Noise level 0.0-1.0 normalized (default 0.2)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.frame_layout !== undefined) setLines.push(`if (n === "Frame Layout") prop.setValue(${Math.round(args.frame_layout)}, true);`);
+        if (args.horizontal_fov !== undefined) setLines.push(`if (n === "Horizontal Field of View") prop.setValue(${args.horizontal_fov}, true);`);
+        if (args.vertical_fov !== undefined) setLines.push(`if (n === "Vertical Field of View") prop.setValue(${args.vertical_fov}, true);`);
+        if (args.noise_type !== undefined) setLines.push(`if (n === "Noise Type") prop.setValue(${Math.round(args.noise_type)}, true);`);
+        if (args.noise_level !== undefined) setLines.push(`if (n === "Noise Level") prop.setValue(${args.noise_level}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("VR De-Noise is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "VR De-Noise") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("VR De-Noise");
+            if (!eff || !eff.name) return __error("VR De-Noise effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "VR De-Noise") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_vr_plane_to_sphere: {
       description:
         "Apply VR Plane to Sphere — projects flat content (logos, text, graphics) into 360° equirectangular VR sequences. Configure FoV, scale, source orientation (tilt/pan/roll) and projection orientation. Use list_vr_effects_and_transitions to discover related VR effects.",

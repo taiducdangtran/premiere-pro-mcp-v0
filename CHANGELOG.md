@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.19] - 2026-05-10 — Phase 4 effect-wrapping complete
+
+### Added — 6 new tools (437 → 443)
+
+#### Phase 4 batch 22 — VR group B (final batch, 6 tools, `src/tools/effects.ts`)
+
+- **`apply_vr_color_gradients`** — 360° gradient generator (up to 8 control points). Wrapper exposes global params; per-point colors via apply_effect_with_properties.
+- **`apply_vr_projection`** — converts between 360° projection types (equirectangular, fisheye, cubemap variants). Input + output projection/layout/FoV plus pan/tilt/roll.
+- **`apply_vr_digital_glitch`** — seamless 360° glitch (color/geometry distortion radiating from POI). Animate Master Amplitude or Distortion Evolution.
+- **`apply_vr_chromatic_aberrations`** — seamless 360° per-channel RGB displacement. POI + Aberration Red/Green/Blue + falloff distance.
+- **`apply_vr_fractal_noise`** — seamless 360° fractal noise generator. Animate Evolution for movement.
+- **`apply_vr_de_noise`** — seamless 360° denoising. Noise Type + Noise Level (0-1 normalized).
+
+### Changed
+
+- Tool count: 437 → 443
+- Updated `package.json` description
+
+### Verified
+
+- 16 properties round-trip verified.
+- Discovery: VR Digital Glitch `Master Amplitude` clamps to max 100 (set 150 → stored 100).
+
+### 🎯 Phase 4 effect-wrapping work complete
+
+After 16 minor releases (v1.1.4 → v1.1.19) and 22 batches across this session, **all practical Premiere Pro 25.4 video effects are now wrapped** as ergonomic MCP tools (~100 effect-specific wrappers + intrinsic helpers). Skipped due to API limitations: Shape (binary blob Path/Appearance), Mask (no API), Set Matte / Track Matte / Image Matte / Difference Matte (require external layer references not settable from API in 25.4).
+
+**Cumulative session impact**: 307 → 443 tools (+136 net). Test clip C7984.MP4 cleaned up across all 22 batches.
+
 ## [1.1.18] - 2026-05-10
 
 ### Added — 5 new tools (432 → 437)

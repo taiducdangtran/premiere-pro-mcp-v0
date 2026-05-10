@@ -196,6 +196,7 @@
 | 19 | v1.1.16 | Noise HLS Auto, Noise Alpha, Remove Matte, Write-on, Timewarp | Timewarp Smoothing/Tuning/Weighting/Motion Blur panel toggles return object — skipped from wrapper |
 | 20 | v1.1.17 | SDR Conform, Vertical Flip, Horizontal Flip, Lighting Effects, Gradient Wipe | Gradient Wipe Completion/Softness 0-1 normalized; Lighting Effects 8 seen-flag vars for Light 1 props (5 lights × 9 dup-named props) |
 | 21 | v1.1.18 | VR Plane to Sphere, VR Rotate Sphere, VR Blur, VR Sharpen, VR Glow | VR group A — all share Frame Layout/Horizontal/Vertical FoV header props |
+| 22 | v1.1.19 | VR Color Gradients, VR Projection, VR Digital Glitch, VR Chromatic Aberrations, VR Fractal Noise, VR De-Noise | **VR group B (final)** — VR Digital Glitch Master Amplitude clamps to 100 |
 
 **Patterns được phát hiện và áp dụng nhất quán:**
 1. **Dup-name flag pattern**: Khi effect có duplicate displayName (slider vs feather toggle, color vs panel toggle), wrapper declare `var fooSeen = false` trước property loop và guard với `&& !fooSeen` để chỉ set first occurrence.
@@ -204,18 +205,18 @@
 4. **Normalized vs percent**: nhiều effect có numeric props là 0-1 normalized (NOT 0-100 like UI suggests). Đã document từng wrapper: Bevel Edges Edge Thickness/Light Intensity, Calc Second Layer Opacity, Radial Shadow Opacity, Find Edges Blend With Original, Dust & Scratches Threshold, etc.
 5. **Adobe quirks**: Strobe Light "Random Strobe Probablity" (typo "Probablity"), Gamma Correction stored 1-28 raw (not gamma curve), Median Legacy matchName `AE.ADBE Median` (no Legacy suffix), Solarize matchName `PR.ADBE Solarize` (PR prefix not AE).
 
-**Pending còn lại (1 batch — VR group B cuối):**
+**🎯 Phase 4 effect-wrapping COMPLETE** (v1.1.19, 443 tools):
 - ✅ **Batch 19** (v1.1.16, 427) — Noise HLS Auto, Noise Alpha, Remove Matte, Write-on, Timewarp — DONE
 - ✅ **Batch 20** (v1.1.17, 432) — SDR Conform, Vertical/Horizontal Flip, Lighting Effects, Gradient Wipe — DONE
-- ✅ **Batch 21** (v1.1.18, 437) — VR group A: VR Plane to Sphere, VR Rotate Sphere, VR Blur, VR Sharpen, VR Glow — DONE
-- **Batch 22** — VR group B: VR Color Gradients, VR Projection, VR Digital Glitch, VR Chromatic Aberrations, VR Fractal Noise, VR De-Noise (6 → split 5+1 hoặc 1 batch lớn)
+- ✅ **Batch 21** (v1.1.18, 437) — VR group A — DONE
+- ✅ **Batch 22** (v1.1.19, 443) — VR group B — DONE
 
-→ Sau batch 21-22: tổng ~443 tools, hoàn thành effect-wrapping work cho 360°/VR workflow.
+→ Tổng đạt 443 tools (+136 net trong session, +43 effect-specific wrappers cho VR/360 workflow). All practical Premiere 25.4 video effects wrapped. Skip categories: binary-blob (Shape), no-API (Mask), layer-ref (Set/Track/Image/Difference Matte).
 
-**After effect-wrapping work hoàn tất:**
-- v1.2.0 milestone bump (semantic version: 16+ minor releases trong 1 session đủ để jump major)
+**After effect-wrapping work hoàn tất (post-v1.1.19):**
+- v1.2.0 milestone bump (17 minor releases trong 1 session đủ để jump major)
 - Phase 3.1 Dynamic Link AE (research-heavy, separate session)
-- Push to origin (28+ commits ahead khi commit batch 20)
+- Push to origin (32+ commits ahead khi commit batch 22)
 - README update với danh sách 100+ effect wrappers
 
 **Sau khi xong effects:**
