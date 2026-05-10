@@ -1359,12 +1359,21 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
       handler: async (args: { node_id: string; lut_path: string }) => {
         const script = buildToolScript(`
+          // Bug #26: pre-validate file existence so error message is useful.
+          var lutPath = "${escapeForExtendScript(args.lut_path)}";
+          try {
+            var f = new File(lutPath);
+            if (!f.exists) return __error("LUT file not found at: " + lutPath);
+          } catch(eFile) {
+            return __error("Could not verify LUT path: " + lutPath + " (" + eFile.toString() + ")");
+          }
+
           app.enableQE();
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found");
-          
+
           var clip = result.clip;
-          
+
           // Find or apply Lumetri Color
           var lumetriComp = null;
           for (var i = 0; i < clip.components.numItems; i++) {
@@ -1373,7 +1382,7 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
               break;
             }
           }
-          
+
           if (!lumetriComp) {
             var qeSeq = qe.project.getActiveSequence();
             var qeTrack = qeSeq.getVideoTrackAt(result.trackIndex);

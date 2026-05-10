@@ -22,19 +22,43 @@ export function getTrackTools(bridgeOptions: BridgeOptions) {
       },
       handler: async (args: { track_type: string; count?: number }) => {
         const count = args.count ?? 1;
+        const isVideo = args.track_type === "video";
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          
-          var before = ${args.track_type === "video" ? "seq.videoTracks.numTracks" : "seq.audioTracks.numTracks"};
-          
-          ${args.track_type === "video"
-            ? `seq.insertVideoTrackAt(before, ${count});`
-            : `seq.insertAudioTrackAt(before, ${count});`
+
+          var before = ${isVideo ? "seq.videoTracks.numTracks" : "seq.audioTracks.numTracks"};
+
+          // 25.4 (Bug #49): seq.insertVideoTrackAt/insertAudioTrackAt removed.
+          // Try DOM first, then add_tracks-style call (addTracks(numVideo, vIdx, numAudio, aIdx, type, numSubs, sIdx)).
+          var inserted = false;
+          var insertFn = ${isVideo ? "seq.insertVideoTrackAt" : "seq.insertAudioTrackAt"};
+          if (typeof insertFn === "function") {
+            try {
+              ${isVideo ? `seq.insertVideoTrackAt(before, ${count});` : `seq.insertAudioTrackAt(before, ${count});`}
+              inserted = true;
+            } catch(e1) {}
           }
-          
-          var after = ${args.track_type === "video" ? "seq.videoTracks.numTracks" : "seq.audioTracks.numTracks"};
-          
+          if (!inserted && typeof seq.addTracks === "function") {
+            try {
+              ${isVideo
+                ? `seq.addTracks(${count}, before, 0, 0, 1, 0, 0);`
+                : `seq.addTracks(0, 0, ${count}, before, 1, 0, 0);`}
+              inserted = true;
+            } catch(e2) {}
+          }
+
+          var after = ${isVideo ? "seq.videoTracks.numTracks" : "seq.audioTracks.numTracks"};
+          if (!inserted && after === before) {
+            return __result({
+              available: false,
+              added: 0,
+              trackType: "${args.track_type}",
+              totalTracks: after,
+              note: "add_track API removed in 25.4 — both insertVideoTrackAt/insertAudioTrackAt and seq.addTracks unavailable. Workaround: use the add_tracks tool (variant) or right-click the track header in UI."
+            });
+          }
+
           return __result({
             added: after - before,
             trackType: "${args.track_type}",
@@ -63,18 +87,38 @@ export function getTrackTools(bridgeOptions: BridgeOptions) {
         required: ["track_type", "track_index"],
       },
       handler: async (args: { track_type: string; track_index: number }) => {
+        const isVideo = args.track_type === "video";
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          
-          ${args.track_type === "video"
-            ? `if (${args.track_index} >= seq.videoTracks.numTracks) return __error("Track index out of range");
-               seq.deleteVideoTrackAt(${args.track_index});`
-            : `if (${args.track_index} >= seq.audioTracks.numTracks) return __error("Track index out of range");
-               seq.deleteAudioTrackAt(${args.track_index});`
+
+          var numTracks = ${isVideo ? "seq.videoTracks.numTracks" : "seq.audioTracks.numTracks"};
+          if (${args.track_index} >= numTracks) return __error("Track index out of range");
+
+          // 25.4 (Bug #50): seq.deleteVideoTrackAt/deleteAudioTrackAt removed.
+          var deleteFn = ${isVideo ? "seq.deleteVideoTrackAt" : "seq.deleteAudioTrackAt"};
+          if (typeof deleteFn === "function") {
+            try {
+              ${isVideo ? `seq.deleteVideoTrackAt(${args.track_index});` : `seq.deleteAudioTrackAt(${args.track_index});`}
+              return __result({ deleted: true, trackType: "${args.track_type}", trackIndex: ${args.track_index} });
+            } catch(e1) {}
           }
-          
-          return __result({ deleted: true, trackType: "${args.track_type}", trackIndex: ${args.track_index} });
+          // QE fallback
+          try {
+            app.enableQE();
+            var qeSeq = qe.project.getActiveSequence();
+            var qeDeleteFn = ${isVideo ? "qeSeq.deleteVideoTrack" : "qeSeq.deleteAudioTrack"};
+            if (typeof qeDeleteFn === "function") {
+              ${isVideo ? `qeSeq.deleteVideoTrack(${args.track_index});` : `qeSeq.deleteAudioTrack(${args.track_index});`}
+              return __result({ deleted: true, trackType: "${args.track_type}", trackIndex: ${args.track_index}, method: "QE" });
+            }
+          } catch(e2) {}
+
+          return __result({
+            available: false,
+            deleted: false,
+            note: "delete_track API removed in 25.4 — seq.deleteVideoTrackAt/deleteAudioTrackAt and QE qeSeq.deleteVideoTrack/deleteAudioTrack all undefined. Workaround: right-click track header in UI > Delete Track."
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

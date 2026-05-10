@@ -331,8 +331,38 @@ export function getTransitionsTools(bridgeOptions: BridgeOptions) {
             if (!qeTrack) return __error("QE track not found");
             var qeClip = qeTrack.getItemAt(${args.clip_index});
             if (!qeClip) return __error("QE clip not found");
-            qeClip.removeTransition(${position === "start" ? "true" : "false"});
-            return __result({ removed: true, position: "${position}" });
+
+            // 25.4 (Bug #29): qeClip.removeTransition is undefined. Try several alternative
+            // signatures discovered across Premiere versions before giving up.
+            var atStart = ${position === "start" ? "true" : "false"};
+            if (typeof qeClip.removeTransition === "function") {
+              qeClip.removeTransition(atStart);
+              return __result({ removed: true, position: "${position}", method: "qeClip.removeTransition" });
+            }
+            if (typeof qeClip.removeTransitionAt === "function") {
+              qeClip.removeTransitionAt(atStart ? 0 : 1);
+              return __result({ removed: true, position: "${position}", method: "qeClip.removeTransitionAt" });
+            }
+            // Try DOM transitionIn / transitionOut path
+            var domClip = null;
+            var domTrack = ${args.track_type === "video"
+              ? `seq.videoTracks[${args.track_index}]`
+              : `seq.audioTracks[${args.track_index}]`};
+            if (domTrack && domTrack.clips && ${args.clip_index} < domTrack.clips.numItems) {
+              domClip = domTrack.clips[${args.clip_index}];
+            }
+            if (domClip) {
+              var trProp = atStart ? domClip.transitionIn : domClip.transitionOut;
+              if (trProp && typeof trProp.remove === "function") {
+                trProp.remove();
+                return __result({ removed: true, position: "${position}", method: "DOM transitionIn/Out.remove" });
+              }
+            }
+            return __result({
+              removed: false,
+              available: false,
+              note: "remove_transition API removed in 25.4 — qeClip.removeTransition / removeTransitionAt undefined and DOM transitionIn/Out.remove not callable. Workaround: select the transition in UI and press Delete."
+            });
           } catch (ex) {
             return __error("Failed to remove transition: " + ex.toString());
           }

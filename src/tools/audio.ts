@@ -69,22 +69,28 @@ export function getAudioTools(bridgeOptions: BridgeOptions) {
         required: ["node_id", "keyframes"],
       },
       handler: async (args: { node_id: string; keyframes: Array<{ time_seconds: number; level_db: number }> }) => {
+        // Premiere 25.4: Property.addKeyframe / setValueAtKey signatures changed.
+        // Use add_keyframe pattern with time-varying property + per-keyframe setValue+keyframe.
         const keyframeCode = args.keyframes
           .map(
             (kf) => `
-            var kfTime = __secondsToTicks(${kf.time_seconds}).toString();
-            levelProp.addKeyframe(kfTime);
-            levelProp.setValueAtKey(kfTime, ${kf.level_db});`
+            try {
+              var kfTime${kf.time_seconds.toFixed(0).replace(/\\D/g, "")} = __secondsToTicks(${kf.time_seconds}).toString();
+              levelProp.addKey(kfTime${kf.time_seconds.toFixed(0).replace(/\\D/g, "")});
+              levelProp.setValueAtKey(kfTime${kf.time_seconds.toFixed(0).replace(/\\D/g, "")}, ${kf.level_db}, true);
+            } catch(eKf) {
+              kfErrors.push("kf @" + ${kf.time_seconds} + ": " + eKf.toString());
+            }`
           )
           .join("\n");
 
         const script = buildToolScript(`
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found");
-          
+
           var clip = result.clip;
           var levelProp = null;
-          
+
           for (var i = 0; i < clip.components.numItems; i++) {
             var comp = clip.components[i];
             if (comp.displayName === "Volume" || comp.matchName === "audioVolume") {
@@ -96,13 +102,30 @@ export function getAudioTools(bridgeOptions: BridgeOptions) {
               }
             }
           }
-          
+
           if (!levelProp) return __error("Could not find audio Level property");
-          
-          levelProp.setTimeVarying(true);
+
+          // 25.4 regression (Bug #27): older code used levelProp.addKeyframe (singular) which
+          // is now undefined. Fall back to addKey + setValueAtKey if available; if neither
+          // exists report graceful failure with workaround note.
+          if (typeof levelProp.addKey !== "function" || typeof levelProp.setValueAtKey !== "function") {
+            return __result({
+              available: false,
+              keyframesAdded: 0,
+              clipName: clip.name,
+              note: "Audio level keyframe API removed in 25.4 (Property.addKey/setValueAtKey not exposed). Workaround: use add_keyframe with effect_name='Volume' property_name='Level'."
+            });
+          }
+
+          try { levelProp.setTimeVarying(true); } catch(eTV) {}
+          var kfErrors = [];
           ${keyframeCode}
-          
-          return __result({ keyframesAdded: ${args.keyframes.length}, clipName: clip.name });
+
+          return __result({
+            keyframesAdded: ${args.keyframes.length} - kfErrors.length,
+            keyframeErrors: kfErrors,
+            clipName: clip.name
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

@@ -107,9 +107,16 @@ export function getCaptionTools(bridgeOptions: BridgeOptions) {
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
 
+          // 25.4 (Bug #44): seq.captionTracks may be undefined when sequence has no caption track.
+          if (typeof seq.captionTracks === "undefined" || !seq.captionTracks) {
+            return __result({ count: 0, captions: [], note: "No caption tracks in this sequence" });
+          }
+          if (${args.track_index} >= seq.captionTracks.numTracks) {
+            return __result({ count: 0, captions: [], note: "Caption track index out of range (have " + seq.captionTracks.numTracks + " tracks)" });
+          }
           try {
             var captionTrack = seq.captionTracks[${args.track_index}];
-            if (!captionTrack) return __error("Caption track not found at index: ${args.track_index}");
+            if (!captionTrack) return __result({ count: 0, captions: [], note: "Caption track at index ${args.track_index} is null" });
 
             var captions = [];
             if (captionTrack.clips) {
@@ -270,13 +277,23 @@ export function getCaptionTools(bridgeOptions: BridgeOptions) {
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
 
+          // Bug #46: pre-validate file existence to avoid silent false-positive on
+          // 25.4's importFiles() that doesn't throw for missing paths.
+          var captionPath = "${escapeForExtendScript(args.file_path)}";
           try {
-            seq.importCaptionFile("${escapeForExtendScript(args.file_path)}");
-            return __result({ imported: true, filePath: "${escapeForExtendScript(args.file_path)}" });
+            var f = new File(captionPath);
+            if (!f.exists) return __error("Caption file not found at: " + captionPath);
+          } catch(eFile) {
+            return __error("Could not verify caption path: " + captionPath);
+          }
+
+          try {
+            seq.importCaptionFile(captionPath);
+            return __result({ imported: true, filePath: captionPath });
           } catch (ex) {
             try {
-              app.project.importFiles(["${escapeForExtendScript(args.file_path)}"], false, app.project.rootItem, false);
-              return __result({ imported: true, filePath: "${escapeForExtendScript(args.file_path)}", note: "Imported as media (not directly into caption track)" });
+              app.project.importFiles([captionPath], false, app.project.rootItem, false);
+              return __result({ imported: true, filePath: captionPath, note: "Imported as media (not directly into caption track)" });
             } catch (ex2) {
               return __error("Failed to import captions: " + ex.toString());
             }
@@ -324,11 +341,19 @@ export function getCaptionTools(bridgeOptions: BridgeOptions) {
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
 
+          // 25.4 (Bug #64): seq.transcribe is undefined.
+          if (typeof seq.transcribe !== "function") {
+            return __result({
+              started: false,
+              available: false,
+              note: "seq.transcribe API removed in Premiere 25.4. Workaround: open Window > Text > Transcript > Transcribe Sequence in UI."
+            });
+          }
           try {
             seq.transcribe();
             return __result({ started: true, note: "Transcription started. Check Premiere Pro for progress." });
           } catch (ex) {
-            return __error("Transcription not available: " + ex.toString());
+            return __error("Transcription failed: " + ex.toString());
           }
         `);
         return sendCommand(script, bridgeOptions);

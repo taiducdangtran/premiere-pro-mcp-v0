@@ -149,17 +149,34 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
           if (!seq) return __error("No active sequence");
 
           app.enableQE();
-          try {
-            var qeSeq = qe.project.getActiveSequence();
-            qeSeq.addAdjustmentLayer(${track});
+          var qeSeq = qe.project.getActiveSequence();
 
-            return __result({
-              added: true,
-              trackIndex: ${track}
-            });
-          } catch(e) {
-            return __error("Failed to add adjustment layer: " + e.message);
+          // 25.4 (Bug #36): qeSeq.addAdjustmentLayer is undefined. Try the project-item path
+          // (rootItem.createNewAdjustmentLayer or createAdjustmentLayer) and fall back to a
+          // graceful failure with workaround.
+          var rootItem = app.project.rootItem;
+          if (typeof qeSeq.addAdjustmentLayer === "function") {
+            try {
+              qeSeq.addAdjustmentLayer(${track});
+              return __result({ added: true, trackIndex: ${track}, method: "qeSeq.addAdjustmentLayer" });
+            } catch(e1) {}
           }
+          if (rootItem && typeof rootItem.createNewAdjustmentLayer === "function") {
+            try {
+              var item = rootItem.createNewAdjustmentLayer();
+              if (item) {
+                var phTicks = (typeof seq.getPlayerPosition === "function" && seq.getPlayerPosition() != null) ?
+                  String(seq.getPlayerPosition()) : "0";
+                seq.overwriteClip(item, phTicks, ${track}, -1);
+                return __result({ added: true, trackIndex: ${track}, method: "rootItem.createNewAdjustmentLayer + overwriteClip" });
+              }
+            } catch(e2) {}
+          }
+          return __result({
+            added: false,
+            available: false,
+            note: "add_adjustment_layer API removed in 25.4 — qeSeq.addAdjustmentLayer and rootItem.createNewAdjustmentLayer both undefined. Workaround: import an adjustment layer template (.prproj fragment) via import_media, or create one via UI (File > New > Adjustment Layer) then add_to_timeline by name."
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

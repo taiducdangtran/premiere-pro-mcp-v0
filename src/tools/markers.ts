@@ -43,25 +43,57 @@ export function getMarkerTools(bridgeOptions: BridgeOptions) {
         duration_seconds?: number;
         node_id?: string;
       }) => {
+        // Bug #42 / #43: 25.4 expects time as Number (seconds), and clip-level markers
+        // require getMarkers() rather than .markers property in some builds. Probe both.
         const markerTarget = args.node_id
           ? `var clipResult = __findClip("${escapeForExtendScript(args.node_id)}");
              if (!clipResult) return __error("Clip not found");
-             var markers = clipResult.clip.markers;`
+             // 25.4: clip.markers may be undefined; try clip.getMarkers() first.
+             var markers = null;
+             if (typeof clipResult.clip.getMarkers === "function") {
+               try { markers = clipResult.clip.getMarkers(); } catch(eGM) {}
+             }
+             if (!markers) markers = clipResult.clip.markers;
+             if (!markers) {
+               return __result({
+                 added: false,
+                 available: false,
+                 note: "Clip-level markers API unavailable in 25.4 — clip.getMarkers and clip.markers both undefined."
+               });
+             }`
           : `var seq = app.project.activeSequence;
              if (!seq) return __error("No active sequence");
              var markers = seq.markers;`;
 
         const script = buildToolScript(`
           ${markerTarget}
-          
-          var timeTicks = __secondsToTicks(${args.time_seconds}).toString();
-          var marker = markers.createMarker(parseFloat(timeTicks));
-          
-          ${args.name ? `marker.name = "${escapeForExtendScript(args.name)}";` : ""}
-          ${args.comments ? `marker.comments = "${escapeForExtendScript(args.comments)}";` : ""}
-          ${args.color !== undefined ? `marker.setColorByIndex(${args.color});` : ""}
-          ${args.duration_seconds ? `marker.end = __secondsToTicks(${args.time_seconds + args.duration_seconds}).toString();` : ""}
-          
+
+          // 25.4: createMarker takes Number (seconds), not ticks.
+          var marker = null;
+          try {
+            marker = markers.createMarker(${args.time_seconds});
+          } catch(e1) {
+            // Older builds: try ticks-as-number
+            try {
+              marker = markers.createMarker(parseFloat(__secondsToTicks(${args.time_seconds}).toString()));
+            } catch(e2) {
+              return __error("createMarker failed: " + e1.toString() + " / fallback: " + e2.toString());
+            }
+          }
+          if (!marker) return __error("createMarker returned null");
+
+          try { ${args.name ? `marker.name = "${escapeForExtendScript(args.name)}";` : "/* no name */"} } catch(e) {}
+          try { ${args.comments ? `marker.comments = "${escapeForExtendScript(args.comments)}";` : "/* no comments */"} } catch(e) {}
+          try { ${args.color !== undefined ? `marker.setColorByIndex(${args.color});` : "/* no color */"} } catch(e) {}
+          ${args.duration_seconds
+            ? `try {
+                 // marker.end expects same type as createMarker accepts (seconds).
+                 marker.end = ${args.time_seconds + args.duration_seconds};
+               } catch(eDur) {
+                 try { marker.end = __secondsToTicks(${args.time_seconds + args.duration_seconds}).toString(); } catch(eDur2) {}
+               }`
+            : ""}
+
           return __result({
             added: true,
             timeSeconds: ${args.time_seconds},

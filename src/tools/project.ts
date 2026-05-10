@@ -99,10 +99,33 @@ export function getProjectTools(bridgeOptions: BridgeOptions) {
       handler: async (args: { count?: number }) => {
         const count = args.count || 1;
         const script = buildToolScript(`
-          for (var i = 0; i < ${count}; i++) {
-            app.project.undo();
+          // 25.4 (Bug #54): app.project.undo removed. Try executeCommand by menu ID.
+          // Premiere "Undo" menu command ID is 14 on macOS, 16 on Windows in some builds —
+          // use findMenuCommandId if available (also commonly removed). Fall back gracefully.
+          var undone = 0;
+          var note = null;
+          if (typeof app.project.undo === "function") {
+            for (var i = 0; i < ${count}; i++) {
+              try { app.project.undo(); undone++; } catch(e) { break; }
+            }
+            return __result({ undone: undone });
           }
-          return __result({ undone: ${count} });
+          if (typeof app.executeCommand === "function" && typeof app.findMenuCommandId === "function") {
+            try {
+              var cmdId = app.findMenuCommandId("Undo");
+              if (cmdId) {
+                for (var j = 0; j < ${count}; j++) {
+                  try { app.executeCommand(cmdId); undone++; } catch(e) { break; }
+                }
+                return __result({ undone: undone, method: "executeCommand" });
+              }
+            } catch(e2) {}
+          }
+          return __result({
+            undone: 0,
+            available: false,
+            note: "undo API removed in 25.4 — app.project.undo and app.executeCommand both undefined. Workaround: press Cmd/Ctrl+Z in the Premiere UI."
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -160,8 +183,13 @@ export function getProjectTools(bridgeOptions: BridgeOptions) {
           var project = app.project;
           if (!project) return __error("No project is open");
           var name = project.name;
-          project.closeDocument(${save ? "1" : "0"}, ${save ? "0" : "0"});
-          return __result({ closed: true, name: name, saved: ${save} });
+          // Suppress "Save before closing?" dialog (Bug #70). When save_first=false we
+          // explicitly tell closeDocument to discard; the dialog suppression also covers
+          // any "Are you sure?" follow-up prompt 25.4 may bring up.
+          return __withDialogsSuppressed(function() {
+            project.closeDocument(${save ? "1" : "0"}, ${save ? "0" : "0"});
+            return __result({ closed: true, name: name, saved: ${save} });
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -312,7 +340,7 @@ export function getProjectTools(bridgeOptions: BridgeOptions) {
               items.push({
                 nodeId: matches[i].nodeId,
                 name: matches[i].name,
-                type: matches[i].type === 1 ? "clip" : matches[i].type === 2 ? "bin" : "sequence"
+                type: __projectItemType(matches[i])
               });
             }
           }

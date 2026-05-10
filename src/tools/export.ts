@@ -74,16 +74,38 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          
+
           ${args.time_seconds !== undefined
             ? `seq.setPlayerPosition(__secondsToTicks(${args.time_seconds}).toString());`
             : ""
           }
-          
+
           var outputPath = "${escapeForExtendScript(args.output_path)}";
-          seq.exportFramePNG(seq.getPlayerPosition().ticks, outputPath);
-          
-          return __result({ exported: true, outputPath: outputPath });
+
+          // 25.4 (Bug #57): seq.exportFramePNG removed; try seq.exportFrameJPEG / DOM clip
+          // export, fall back to graceful failure with workaround note.
+          if (typeof seq.exportFramePNG === "function") {
+            try {
+              var phStr = seq.getPlayerPosition();
+              var phTicks = (phStr && phStr.ticks) ? phStr.ticks : String(phStr);
+              seq.exportFramePNG(phTicks, outputPath);
+              return __result({ exported: true, outputPath: outputPath, method: "exportFramePNG" });
+            } catch(e1) {}
+          }
+          if (typeof seq.exportFrameJPEG === "function") {
+            try {
+              var phStr2 = seq.getPlayerPosition();
+              var phTicks2 = (phStr2 && phStr2.ticks) ? phStr2.ticks : String(phStr2);
+              seq.exportFrameJPEG(phTicks2, outputPath);
+              return __result({ exported: true, outputPath: outputPath, method: "exportFrameJPEG" });
+            } catch(e2) {}
+          }
+          return __result({
+            exported: false,
+            available: false,
+            outputPath: outputPath,
+            note: "seq.exportFramePNG removed in 25.4. Workaround: use capture_frame tool (returns base64) or File > Export > Media in UI."
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -151,16 +173,26 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          
-          seq.exportAsAAF(
-            "${escapeForExtendScript(args.output_path)}",
-            ${args.mix_down_video !== false ? 1 : 0},
-            ${args.explode_to_mono ? 1 : 0},
-            ${args.sample_rate ?? 48000},
-            ${args.bits_per_sample ?? 16}
-          );
-          
-          return __result({ exported: true, outputPath: "${escapeForExtendScript(args.output_path)}", format: "AAF" });
+
+          if (typeof seq.exportAsAAF !== "function") {
+            return __result({
+              exported: false,
+              available: false,
+              note: "seq.exportAsAAF removed in Premiere 25.4 (Bug #57). Workaround: File > Export > AAF in UI."
+            });
+          }
+          try {
+            seq.exportAsAAF(
+              "${escapeForExtendScript(args.output_path)}",
+              ${args.mix_down_video !== false ? 1 : 0},
+              ${args.explode_to_mono ? 1 : 0},
+              ${args.sample_rate ?? 48000},
+              ${args.bits_per_sample ?? 16}
+            );
+            return __result({ exported: true, outputPath: "${escapeForExtendScript(args.output_path)}", format: "AAF" });
+          } catch(e) {
+            return __error("Failed to export AAF: " + e.toString());
+          }
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -186,18 +218,26 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          
+
           var encoder = app.encoder;
           if (!encoder) return __error("Adobe Media Encoder not available");
-          
-          encoder.launchEncoder();
-          
-          var outputPath = "${escapeForExtendScript(args.output_path)}";
+
+          // Bug #62: encodeSequence in 25.4 requires a real preset path — passing
+          // ENCODE_MATCH_SEQUENCE (undefined) yields "Illegal Parameter type". Make
+          // preset_path effectively required and pre-validate.
           ${args.preset_path
-            ? `var presetPath = "${escapeForExtendScript(args.preset_path)}";`
-            : `var presetPath = encoder.ENCODE_MATCH_SEQUENCE;`
+            ? `var presetPath = "${escapeForExtendScript(args.preset_path)}";
+               try {
+                 var pf = new File(presetPath);
+                 if (!pf.exists) return __error("Encoder preset not found at: " + presetPath);
+               } catch(ePresetFile) {
+                 return __error("Could not verify preset path: " + presetPath);
+               }`
+            : `return __error("preset_path is required in Premiere 25.4 — ENCODE_MATCH_SEQUENCE fallback no longer works. Provide an explicit .epr preset file.");`
           }
-          
+
+          encoder.launchEncoder();
+          var outputPath = "${escapeForExtendScript(args.output_path)}";
           encoder.encodeSequence(
             seq,
             outputPath,
@@ -205,7 +245,7 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
             0, // workAreaType
             1  // removeOnCompletion
           );
-          
+
           return __result({ queued: true, outputPath: outputPath });
         `);
         return sendCommand(script, bridgeOptions);
@@ -483,19 +523,28 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
         remove_on_completion?: boolean;
       }) => {
         const script = buildToolScript(`
+          // Bug #69: pre-validate preset path so we don't queue with a bogus preset.
+          var presetPath = "${escapeForExtendScript(args.preset_path)}";
+          try {
+            var pf = new File(presetPath);
+            if (!pf.exists) return __error("Encoder preset not found at: " + presetPath);
+          } catch(ePresetFile) {
+            return __error("Could not verify preset path: " + presetPath);
+          }
+
           var item = __findProjectItem("${escapeForExtendScript(args.item_id)}");
           if (!item) return __error("Project item not found: ${escapeForExtendScript(args.item_id)}");
-          
+
           app.encoder.launchEncoder();
           app.encoder.encodeProjectItem(
             item,
             "${escapeForExtendScript(args.output_path)}",
-            "${escapeForExtendScript(args.preset_path)}",
+            presetPath,
             app.encoder.ENCODE_IN_TO_OUT,
             ${args.remove_on_completion !== false ? 1 : 0}
           );
           app.encoder.startBatch();
-          
+
           return __result({
             queued: true,
             item: item.name,
@@ -554,24 +603,36 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
           : `var srcOut = undefined;`;
 
         const script = buildToolScript(`
+          // Bug #68: pre-validate input and preset paths.
+          var inputPath = "${escapeForExtendScript(args.input_path)}";
+          var presetPath = "${escapeForExtendScript(args.preset_path)}";
+          try {
+            var inFile = new File(inputPath);
+            if (!inFile.exists) return __error("Input file not found at: " + inputPath);
+            var pFile = new File(presetPath);
+            if (!pFile.exists) return __error("Encoder preset not found at: " + presetPath);
+          } catch(eFile) {
+            return __error("Could not verify input/preset paths: " + eFile.toString());
+          }
+
           app.encoder.launchEncoder();
-          
+
           ${inPointCode}
           ${outPointCode}
-          
+
           app.encoder.encodeFile(
-            "${escapeForExtendScript(args.input_path)}",
+            inputPath,
             "${escapeForExtendScript(args.output_path)}",
-            "${escapeForExtendScript(args.preset_path)}",
+            presetPath,
             ${args.remove_on_completion !== false ? 1 : 0},
             srcIn,
             srcOut
           );
           app.encoder.startBatch();
-          
+
           return __result({
             queued: true,
-            inputPath: "${escapeForExtendScript(args.input_path)}",
+            inputPath: inputPath,
             outputPath: "${escapeForExtendScript(args.output_path)}"
           });
         `);
@@ -604,23 +665,37 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           var item = __findProjectItem("${escapeForExtendScript(args.item_id)}");
           if (!item) return __error("Item not found");
-          
+
           var action = "${args.action}";
-          
+
           if (action === "create") {
+            if (typeof item.createProxy !== "function") {
+              return __result({ action: "create", available: false, note: "item.createProxy removed in 25.4. Workaround: use Project Manager UI > Create Proxies." });
+            }
             item.createProxy("", 0);
             return __result({ action: "create", item: item.name, status: "Proxy creation started" });
           } else if (action === "attach") {
             ${args.proxy_path
-              ? `item.attachProxy("${escapeForExtendScript(args.proxy_path)}", 0);
+              ? `if (typeof item.attachProxy !== "function") {
+                   return __result({ action: "attach", available: false, note: "item.attachProxy removed in 25.4." });
+                 }
+                 item.attachProxy("${escapeForExtendScript(args.proxy_path)}", 0);
                  return __result({ action: "attach", item: item.name, proxyPath: "${escapeForExtendScript(args.proxy_path)}" });`
               : `return __error("proxy_path is required for attach action");`
             }
           } else if (action === "toggle") {
+            // 25.4 (Bug #63): app.project.setProxyEnabled removed.
+            if (typeof app.project.setProxyEnabled !== "function" || typeof app.project.isProxyEnabled !== "function") {
+              return __result({
+                action: "toggle",
+                available: false,
+                note: "app.project.setProxyEnabled / isProxyEnabled removed in 25.4. Workaround: toggle proxies via Project menu in UI."
+              });
+            }
             app.project.setProxyEnabled(!app.project.isProxyEnabled());
-            return __result({ action: "toggle", proxiesEnabled: !app.project.isProxyEnabled() });
+            return __result({ action: "toggle", proxiesEnabled: app.project.isProxyEnabled() });
           }
-          
+
           return __error("Unknown proxy action: " + action);
         `);
         return sendCommand(script, bridgeOptions);
@@ -650,6 +725,14 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
+          // 25.4 (Bug #57): seq.exportAsEDL removed.
+          if (typeof seq.exportAsEDL !== "function") {
+            return __result({
+              exported: false,
+              available: false,
+              note: "seq.exportAsEDL removed in Premiere 25.4. Workaround: use File > Export > EDL menu in UI."
+            });
+          }
           try {
             seq.exportAsEDL("${escapeForExtendScript(args.output_path)}", ${trackIndex});
             return __result({ exported: true, outputPath: "${escapeForExtendScript(args.output_path)}", trackIndex: ${trackIndex} });

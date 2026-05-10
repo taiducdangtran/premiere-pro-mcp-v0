@@ -175,14 +175,15 @@ export function getClipboardTools(bridgeOptions: BridgeOptions) {
           var trackType = clipResult.trackType;
           var trackIndex = clipResult.trackIndex;
 
-          // Overwrite at the same position with new media
-          if (trackType === "video") {
-            seq.overwriteClip(newItem, startTicks, trackIndex, -1);
-          } else {
-            seq.overwriteClip(newItem, startTicks, -1, trackIndex);
-          }
-
-          return __result({ replaced: true, clipName: clip.name, newSource: newItem.name });
+          // Suppress "Replace Media?" confirmation dialog that 25.4 may pop up (Bug #40).
+          return __withDialogsSuppressed(function() {
+            if (trackType === "video") {
+              seq.overwriteClip(newItem, startTicks, trackIndex, -1);
+            } else {
+              seq.overwriteClip(newItem, startTicks, -1, trackIndex);
+            }
+            return __result({ replaced: true, clipName: clip.name, newSource: newItem.name });
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

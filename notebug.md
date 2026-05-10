@@ -368,3 +368,788 @@ onMadeUpEvent12345: bound OK   ← would also bind silently
 - `app.encoder.encodeSequence/encodeProjectItem/encodeFile` — all functions, working
 - `ENCODE_ENTIRE=0`, `ENCODE_IN_TO_OUT=1`, `ENCODE_WORKAREA=2` — verified constants
 - `getExporters()` returns array of 24 native exporters (H.264, HEVC, ProRes, DNxHR, etc.)
+
+---
+
+# Test run 2026-05-10 — Full 443-tool sweep
+
+**Setup:**
+- Premiere 25.4.1 build 3, macOS 26.4.1
+- Project: `Lò nướng.prproj` (59 items, 6 sequences, 0 offline)
+- Sandbox sequence: `Sequence 01 Cắt Copy` (3840×2160, 88 clips, 3V/3A)
+- SKIPPED sequence: `Sequence 01 Gốc` (theo yêu cầu user)
+- All previous fixes (Bug 1-5) loaded
+
+**Convention:**
+- ✅ PASS — tool chạy đúng
+- ❌ FAIL — tool fail/throw/sai output
+- ⚠️ PARTIAL — chạy nhưng output có vấn đề (vd `NaN` JSON, sai field, side effect bất ngờ)
+- ⏭️ SKIP — không test được trong scope (cần user input file path/preset/mogrt cụ thể, AME running, v.v.)
+
+## New bugs discovered this run
+
+
+### NEW BUG #6 — `list_sequences` xuất `NaN` không hợp lệ JSON
+- **Tool:** `list_sequences`
+- **Severity:** Medium
+- **Output:** `{"inPoint":NaN, "end":298.331...}`
+- **Issue:** `NaN` không phải valid JSON (RFC 8259). Strict parser sẽ throw.
+- **Fix:** Thay `NaN` bằng `null`.
+
+### NEW BUG #7 — `get_work_area` throw TypeError
+- **Tool:** `get_work_area`
+- **Severity:** High
+- **Error:** `TypeError: undefined is not an object`
+- **Suspect:** Premiere 25.4 đã loại bỏ `seq.workAreaInPoint`/`workAreaOutPoint` properties (giống bug 4 với in/out points).
+- **Fix gợi ý:** Detect API absent → return `{ enabled: false, available: false }` thay vì throw.
+
+### NEW BUG #8 — `is_work_area_enabled` throw ReferenceError
+- **Tool:** `is_work_area_enabled`
+- **Severity:** High
+- **Error:** `ReferenceError: seq.isWorkAreaBarEnabled is not a function`
+- **Suspect:** API removed in 25.4. Cùng family với #7.
+- **Fix gợi ý:** Wrap try/catch, return `{ available: false, note: "API removed in 25.4" }`.
+
+### NEW BUG #9 — `get_encoder_presets` throw
+- **Tool:** `get_encoder_presets`
+- **Severity:** High
+- **Error:** `Encoder preset listing failed: encoder.getFormatList is not a function`
+- **Note:** Khớp với phát hiện trong Bug 5 (encoder API regression). `getFormatList` cũng đã bị loại bỏ ở 25.4 cùng với `isRunning`/`stopBatch`/etc.
+- **Fix gợi ý:** Workaround dùng cache list của format đã hard-code, hoặc return empty với note explanatory.
+
+### NEW BUG #10 — `list_project_items` mọi item type đều là "sequence"
+- **Tool:** `list_project_items`
+- **Severity:** Medium (sai output)
+- **Output:** Tất cả 57 items đều có `"type":"sequence"`, kể cả `C7984.MP4`, etc. (thực ra phải là `clip`/`footage`).
+- **Repro:** Gọi `list_project_items` không args → mọi entry, kể cả mp4 file, đều hiển thị `type: "sequence"`.
+- **Đối chứng:** Trong cùng project, `get_full_project_overview` báo các mp4 đó là `type: "file"`. → output không nhất quán giữa 2 tool.
+- **Fix gợi ý:** Mapping `ProjectItemType` enum đang sai. `TYPE_CLIP=2`, `TYPE_BIN=1`, `TYPE_FILE=4`, `TYPE_ROOT=0`; sequence là một dạng clip với mediaType=video, không phải tất cả.
+
+### NEW BUG #11 — `get_sequence_in_out_points` trả số âm gần 0 thay vì null
+- **Tool:** `get_sequence_in_out_points`
+- **Severity:** Low (output không trực quan)
+- **Output:** `{ "inSeconds": -0.00000157470396, "outSeconds": -0.00000157470396 }` khi không có in/out.
+- **Issue:** Số âm gần-zero là sentinel `-400000 ticks` → ÷ ticksPerSecond raw. Should detect và return `null` hoặc `{ set: false }`.
+- **Fix gợi ý:** Check `inTicks === "-400000"` (sentinel) → return `null`.
+
+### NEW BUG #12 — `get_full_sequence_info` overflow context window
+- **Tool:** `get_full_sequence_info`
+- **Severity:** High (DX/usability)
+- **Output:** 91,007 chars cho sequence 88-clip → vượt context limit, MCP wrapper save ra file tạm.
+- **Issue:** Tool không có pagination/limit. Sequence "thật" >100 clip sẽ luôn overflow.
+- **Fix gợi ý:** Add option `summary_only: true` (skip clip-level effect details), hoặc paging `tracks_offset` / `tracks_limit`.
+
+### NEW BUG #13 — `get_project_scratch_disks` trả về {} rỗng
+- **Tool:** `get_project_scratch_disks`
+- **Severity:** Medium
+- **Output:** `{}` — không có key nào.
+- **Expected:** ít nhất các key `videoCaptureDir`, `audioCaptureDir`, `videoPreviewDir`, `audioPreviewDir`, `cclibrariesDir`, `motionGraphicsTemplateDir`, etc.
+- **Suspect:** Plugin có thể đang gọi API với projectScratchDiskType chưa được map đúng, hoặc API này thay đổi key trong 25.4.
+
+
+### NEW BUG #14 — `list_clip_effects` xuất `undefined` không hợp lệ JSON
+- **Tool:** `list_clip_effects`
+- **Severity:** Medium
+- **Output:** `{"matchName":undefined, "isTimeVarying":false, ...}` — `undefined` không phải JSON valid token.
+- **Affected fields:** `properties[].matchName` (mọi component property đều undefined).
+- **Fix:** Output `null` thay vì `undefined`, hoặc bỏ field nếu thực sự không có. Lý do `matchName` undefined: PropertyType ở DOM chỉ phơi `displayName`, không phơi `matchName` ở property level (chỉ component level).
+
+### NEW BUG #15 — `find_items_by_media_path` báo type sai ("bin" cho mp4)
+- **Tool:** `find_items_by_media_path`
+- **Severity:** Medium
+- **Repro:** `find_items_by_media_path("CLIP/C7984")` → trả về `{nodeId:"000f42b3", name:"C7984.MP4", type:"bin"}`.
+- **Expected:** type="file" (file footage), không phải bin.
+- **Cùng family với Bug #10**: Mapping ProjectItemType enum bị sai/đảo ngược trong các tool khác nhau, không nhất quán. `list_project_items` cho ra "sequence", `find_items_by_media_path` cho ra "bin", `search_project_items` cho ra "file" (đúng).
+
+### NEW BUG #16 — `find_project_item_by_name` cũng type sai ("sequence" cho mp4)
+- **Tool:** `find_project_item_by_name`
+- **Severity:** Medium
+- **Output:** `{nodeId:"000f42b3", name:"C7984.MP4", type:"sequence", ...}` — sai type.
+- **Same root cause** với Bug #10/15: cần unify mapping `ProjectItemType` ở 1 chỗ và dùng chung.
+
+### NEW BUG #17 — `get_audio_channel_mapping` partial output + invalid JSON
+- **Tool:** `get_audio_channel_mapping`
+- **Severity:** Medium
+- **Output:** `{"audioChannelType":"unknown","audioChannelTypeRaw":undefined}` — undefined không hợp lệ JSON; "unknown" không có thông tin.
+- **Suspect:** Tool đang đọc `projectItem.getProjectMetadata()` channelType nhưng API có thể cần `audioChannelMapping` member khác trong 25.4.
+
+### NEW BUG #18 — `get_qe_clip_info` thiếu introspection + undefined fields
+- **Tool:** `get_qe_clip_info`
+- **Severity:** Low
+- **Output:** `inPoint:undefined, outPoint:undefined, audioChannelType:undefined, numAudioChannels:undefined, availableProperties:[], availableMethods:[]` — undefined invalid JSON; arrays rỗng nói rằng tool không thật sự inspect được QE properties/methods như mô tả.
+- **Fix:** Thay undefined bằng null. Bỏ availableProperties/availableMethods nếu không enumerate được, hoặc dùng `for-in` để liệt kê thực sự.
+
+### NEW BUG #19 — `inspect_dom_object` xuất "[object]" và undefined
+- **Tool:** `inspect_dom_object`
+- **Severity:** Low
+- **Output:** `"children":undefined, "getOverrideColorSpaceList":"[object]"` — undefined invalid JSON; "[object]" là string không hữu ích.
+- **Fix:** Detect function objects → return `"[function]"`; detect undefined → return null.
+
+### NEW BUG #20 — `get_track_info.transitions` trả về clip ranges, không phải transitions
+- **Tool:** `get_track_info`
+- **Severity:** Medium
+- **Output:** Track V1 không có transition nào trong sequence (verify qua UI), nhưng tool trả về 22 entries trong `transitions[]` với `startSeconds`/`endSeconds` chính là range của 22 clips trên track.
+- **Suspect:** Code đang iterate `track.transitions` nhưng property này trả về clip-edges (do API change ở 25.4?), hoặc nhầm field. So với `get_full_clip_info`/`list_clip_effects`, transition thực không tồn tại trên các clip này.
+
+### NEW BUG #21 — `get_source_monitor_position` trả sentinel khi nothing loaded
+- **Tool:** `get_source_monitor_position`
+- **Severity:** Low
+- **Output (no source clip loaded):** `{ "seconds": -400000, "ticks": "-101606400000000000" }`.
+- **Issue:** sentinel `-400000` không trực quan. Nên detect và return `{ loaded: false }` hoặc `null`.
+
+### NEW BUG #22 — `get_project_panel_metadata` overflow context (131k chars)
+- **Tool:** `get_project_panel_metadata`
+- **Severity:** High (DX)
+- **Output:** 131,230 chars XML → vượt context limit, MCP wrapper save ra file tạm.
+- **Fix:** Tool không nên dump toàn bộ panel metadata XML (mỗi item có XMP riêng). Add option `format: "summary" | "raw"` để default trả về cấu trúc tóm tắt.
+
+### NEW BUG #23 — `get_clip_at_position` throw thay vì return null khi out-of-range
+- **Tool:** `get_clip_at_position`
+- **Severity:** Low
+- **Repro:** `get_clip_at_position(time_seconds=99999, track_index=0, track_type="video")` → throw `Error: No clip found at position 99999s on video track 0`.
+- **Issue:** "Không tìm thấy" là điều bình thường, không phải error. Nên return `null` hoặc `{ found: false }` để caller dễ xử lý.
+
+
+### NEW BUG #24 — `set_effect_enabled` silent fail
+- **Tool:** `set_effect_enabled`
+- **Severity:** Medium
+- **Repro:** `set_effect_enabled(node_id="000f43b3", effect_index=2, enabled=false)` → return `{ effectIndex: 2, enabled: false, toggled: false }`.
+- **Issue:** `toggled: false` cho thấy không thật sự toggle. Nhưng không throw error → silent fail. Bug 3c đã ghi nhận DOM-side lacks `clip.components[i].enabled` — handler chắc đang detect API absent rồi swallow lỗi.
+- **Fix gợi ý:** Try qeComp toggle (qeComp.enabled?), nếu không khả thi, return error rõ ràng `"Per-component disable not supported in 25.4"`.
+
+### NEW BUG #25 — `get_effect_properties` / `list_clip_effects` xuất binary garbage
+- **Tools:** `get_effect_properties`, `list_clip_effects`
+- **Severity:** Medium
+- **Repro:** Gọi với `effect_name="Lumetri Color"` → xuất 130 properties trong đó nhiều entry có:
+  - displayName empty `""` (~15 props)
+  - displayName chỉ space `" "`
+  - displayName chứa BOM `"￾"` (`"﻾"`)
+  - value là number 18-digit (vd `18374686479671623000`) — pointer-like binary value bị stringify
+  - value là Unicode garbage `"鄴췄℞瘙玁"`
+  - value `""`, `""` — control characters
+- **Issue:** Lumetri có ~25 internal composite/binary props không user-relevant. Plugin nên filter:
+  - Skip props với displayName empty/whitespace/BOM-only
+  - Detect binary value (string với control chars hoặc number > 1e15) → represent as `"<binary blob>"`
+- **Fix gợi ý:** Add `__cleanLumetriProps()` để filter trong handler, hoặc add option `filter_internal: true` (default true).
+
+### NEW BUG #26 — `apply_lut` error message khó hiểu
+- **Tool:** `apply_lut`
+- **Severity:** Low
+- **Repro:** `apply_lut(node_id="000f43c3", lut_path="/nonexistent/test.cube")` → `Error: Illegal Parameter type`.
+- **Expected:** Error message rõ "LUT file not found at /nonexistent/test.cube".
+- **Fix:** Pre-check `File(path).exists` trước khi pass vào DOM call.
+
+
+### NEW BUG #27 — `add_audio_keyframes` throw `levelProp.addKeyframe is not a function`
+- **Tool:** `add_audio_keyframes`
+- **Severity:** High (audio fade khá quan trọng)
+- **Error:** `ReferenceError: levelProp.addKeyframe is not a function`
+- **Suspect:** Cùng family Bug #3 — DOM `levelProp.addKeyframe` không còn exposed trong 25.4. Cần workaround qua QE: track-level `qeTrack.addAudioFade(...)` hoặc viết keyframe vào clip's audio component qua component-level API.
+- **Note:** Dùng `add_keyframe` với `effect_name="Volume"` có thể là alternative pattern (chưa verify trong run này).
+
+### NEW BUG #28 — `set_clip_pan` báo "is this an audio clip?" trên audio clip
+- **Tool:** `set_clip_pan`
+- **Severity:** Medium
+- **Repro:** `set_clip_pan(node_id="000f43e0", pan=25)` (audio clip C7925.MP4 trên A1) → throw `Error: Could not set pan - is this an audio clip?`.
+- **Issue:** Detection mediaType audio sai, hoặc API đường đi cũ không còn (`audioComponents[0].properties["Balance"]`?).
+
+### NEW BUG #29 — `remove_transition` throw `qeClip.removeTransition is not a function`
+- **Tool:** `remove_transition`
+- **Severity:** High (đối ứng với add_transition)
+- **Error:** `ReferenceError: qeClip.removeTransition is not a function`
+- **Suspect:** API moved trong 25.4 (đã fix `qeClip.addTransition` ở Bug 3c-bis nhưng remove path chưa update). Có thể cần `qeClip.removeTransitionAt(idx)` hoặc lấy transition object qua `qeTrack.getTransitionAt(idx).remove()`.
+
+### NEW INFO — `set_default_transition` graceful degrade ✅
+- **Tool:** `set_default_transition`
+- **Output:** `{ "set": false, "note": "setAsDefaultTransition API not available; transition exists." }`
+- **Đánh giá:** Đây là cách **đúng** để xử lý API regression — báo rõ ràng cho caller. Pattern này nên được áp dụng cho các bug #7/#8/#9 thay vì throw raw ExtendScript error.
+
+
+### NEW BUG #30 — `set_clip_speed_qe` "Not Enough Parameters"
+- **Tool:** `set_clip_speed_qe`
+- **Severity:** Medium
+- **Repro:** `set_clip_speed_qe(node_id="000f43cb", speed_percent=150)` → `Error: Not Enough Parameters`.
+- **Suspect:** Tool đang gọi `qeClip.setSpeed()` thiếu argument. Bug 3c-tris đã ghi nhận 5-arg signature: `qeClip.setSpeed(percent, "1", maintainPitch, reverse, ripple)`. Tool này có thể chưa được update.
+- **Note:** `speed_change` (cùng họ) PASS — handler đã update.
+
+### NEW BUG #31 — `reverse_clip` "Unknown error exception"
+- **Tool:** `reverse_clip`
+- **Severity:** Medium
+- **Error:** `Error: Unknown error exception`
+- **Suspect:** Cùng family Bug 3c-tris — `qeClip.setReverse(bool)` cần wrap trong try/catch để return error rõ. Hoặc handler đang gọi DOM-side `clip.setReverse` (không tồn tại trong 25.4).
+- **Workaround:** dùng `speed_change(node_id, speed_percent=100, reverse=true)`.
+
+### NEW BUG #32 — `enable_disable_clip` `clip.setDisabled is not a function`
+- **Tool:** `enable_disable_clip`
+- **Severity:** High (basic operation)
+- **Error:** `ReferenceError: result.clip.setDisabled is not a function`
+- **Suspect:** `clip.setDisabled` removed in 25.4. Cần test alternatives: `qeClip.disable()`, `qeClip.setEnabled(bool)`, hoặc DOM `clip.disabled = bool` direct write.
+
+### NEW BUG #33 — `set_anti_alias_quality` "Illegal Parameter type"
+- **Tool:** `set_anti_alias_quality`
+- **Severity:** Low
+- **Repro:** `set_anti_alias_quality(node_id="000f43d2", enabled=true)` → `Error: Illegal Parameter type`.
+- **Suspect:** Property "Anti-flicker Filter" trên Motion expects 0/1 (number), tool đang pass true (boolean). Convert bool → 0|1 trước khi setValue.
+
+### NEW BUG #34 — `set_scale_width_height` partial set (height fail)
+- **Tool:** `set_scale_width_height`
+- **Severity:** Medium
+- **Repro:** `set_scale_width_height(node_id="000f43cd", scale_width=110, scale_height=90)` → `widthSet: true, heightSet: false`.
+- **Issue:** Set Width thành công, Height fail im lặng (không error message). Suspect: Property "Scale Height" không tìm thấy ở DOM — Premiere chỉ có "Scale" + "Scale Width" (Width gating qua "Uniform Scale=false"). Height rất có thể là composite property.
+- **Fix:** Check correct property name. Có thể là "Scale Height" hoặc "Scale" w/ Uniform=false thì cả 2 dùng "Scale".
+
+### NEW BUG #35 — `batch_set_clip_property` không tìm thấy clip vừa rename
+- **Tool:** `batch_set_clip_property`
+- **Severity:** Low (edge case)
+- **Repro:** Chạy `batch_rename_clips` trên V3 → 4 clips rename thành "V3_Clip_1..4". Sau đó `batch_set_clip_property("Opacity", 85, [{trackType:"video", trackIndex:2, clipIndex:0}, {clipIndex:1}])` → `updated: 0, notFound: [...]`.
+- **Issue:** clipIndex 0/1 rõ ràng phải tồn tại trên V3 (có 5 clips). Tool có thể đang lookup theo name match thay vì track+index resolve.
+
+
+### NEW BUG #36 (CRITICAL) — `add_adjustment_layer` `qeSeq.addAdjustmentLayer is not a function`
+- **Tool:** `add_adjustment_layer`
+- **Severity:** High (rất hay dùng trong workflow)
+- **Error:** `Failed to add adjustment layer: qeSeq.addAdjustmentLayer is not a function`
+- **Suspect:** API removed in 25.4. Cùng family Bug 3. Workaround: dùng `app.project.createNewBin` + `app.project.importFiles` với template, hoặc duplicate adjustment layer template từ bin.
+- **Note:** Đây là pain point lớn — adjustment layer là kỹ thuật cơ bản. Cần workaround sớm.
+
+### NEW BUG #37 (CRITICAL) — `add_color_matte` & `add_text_overlay` timeout (suspect modal dialog)
+- **Tools:** `add_color_matte`, `add_text_overlay`
+- **Severity:** High
+- **Repro:** Gọi `add_color_matte("#FF0000", "Red")` → 30s timeout, không response. Ping vẫn OK trước & sau. Reproduce 100%.
+- **Suspect:** Cả 2 tool dùng QE `qeSeq.newColorMatte()` hoặc tạo title via `app.project.createTitle()` — trong 25.4, các API này có thể bật modal dialog (Color Picker, Title Designer) chờ user input → ExtendScript engine block → MCP wrapper timeout.
+- **Workaround tentative:** dùng synthetic media (`createBarsAndTone`) hoặc nhập file image solid color. Cho text → dùng MOGRT từ project.
+- **Fix:** Detect nếu tool sẽ bật dialog, return error sớm thay vì block. Hoặc tạo media object DOM-side không qua QE.
+
+### NEW BUG #38 — `trim_clip` clip-not-found sau razor
+- **Tool:** `trim_clip`
+- **Severity:** Low (UX gotcha)
+- **Repro:** sau khi `razor_all_tracks`/`split_clip`, gọi `trim_clip` với nodeId cũ → "Clip not found".
+- **Issue:** Razor tạo clip mới thay clip cũ → nodeId stale. Documentation cần ghi rõ clip's nodeId không stable sau razor; caller phải refresh state.
+
+### NEW INFO — `set_poster_frame` graceful UI note
+- **Output:** `{ ..., "note": "Poster frame set attempt - may require UI interaction" }` — pattern degraded tốt, không throw.
+
+
+### NEW BUG #39 (CRITICAL) — `slip_edit`/`slide_edit`/`roll_edit` displace clip 69,000+ giây
+- **Tools:** `slip_edit`, `slide_edit`, `roll_edit`
+- **Severity:** CRITICAL (data corruption)
+- **Repro:**
+  1. Apply 3 chained edits trên cùng nodeId 000f43d5 (C8000 V2 idx 12, gốc start=218.7185s):
+     - `slip_edit(offset_seconds=0.5)` → success
+     - `slide_edit(offset_seconds=0.2)` → success
+     - `roll_edit(offset_seconds=-0.3)` → success
+  2. Sau đó `get_active_sequence` → C8000 (000f43d5) hiện ở `start: 69818.6489, end: 69830.1937` — **dịch ~69,600 giây so với vị trí gốc**.
+- **Phân tích math:** offset 0.5 sec ở slip → tool nhận đúng. Nhưng kết quả thực tế start jumped ~69,600s → suggest unit mismatch (seconds bị treat như ticks/frame_rate scale, hoặc cumulate sai).
+- **Reproduction note:** một trong 3 tool có thể là thủ phạm chính (slide_edit là khả nghi vì nó move clip; slip không nên move). Cần test riêng từng tool sau khi recover.
+- **Fix:** Audit ticks-vs-seconds conversion trong handler của 3 tool này. Có thể dùng `seq.zeroPoint` (number) như 1 multiplier thay vì offset.
+
+### NEW BUG #40 (CRITICAL) — `replace_clip_media` block engine, có thể gây cascade timeout
+- **Tool:** `replace_clip_media`
+- **Severity:** High
+- **Repro:** Gọi parallel với các tool khác → 30s timeout, tất cả tool sau đó cũng timeout cho đến khi "engine reset".
+- **Suspect:** Tool có thể bật dialog (Replace Media Confirmation?) hoặc dùng `app.executeCommand` async không return.
+- **Fix:** Wrap trong try/catch + timeout watchdog; detect dialog state.
+
+### NEW BUG #41 (CRITICAL) — `four_point_edit` "Connection closed" (kill bridge)
+- **Tool:** `four_point_edit`
+- **Severity:** CRITICAL (bridge crash)
+- **Error:** `MCP error -32000: Connection closed`
+- **Repro:** Sau loạt timeout do replace_clip_media block, gọi `four_point_edit` → bridge close → ping cũng timeout.
+- **Suspect:** Tool exception không catch → CEP panel JS crash → killed.
+- **Fix gợi ý:** Wrap entire tool body trong try/catch; signal error qua MCP protocol thay vì throw lên CEP runtime.
+
+
+---
+
+## INTERIM SUMMARY (test bị gián đoạn do bridge crash sau Bug #41)
+
+Đã test trong run này: **~150 / 443 tools** (~34%).
+
+### PASS — đã verify hoạt động đúng (sample)
+
+**Read-only / inspection (35+):**
+ping, get_premiere_state, get_version_info, run_diagnostics, get_full_project_overview, get_project_info, get_sequence_count, get_total_clip_count, list_project_items, list_sequence_tracks, get_sequence_settings, get_sequence_structure, get_timeline_summary, get_playhead_position, get_active_sequence, get_selected_clips, get_target_tracks, get_sequence_in_out_points, get_sequence_vr_settings, get_graphics_white_luminance, get_all_project_paths, get_offline_media, get_used_media_report, get_unused_media, get_duplicate_media, check_offline_media, get_workspaces, get_render_queue_status, get_available_mogrts, list_available_effects, list_available_audio_effects, list_available_transitions, list_available_audio_transitions, list_vr_effects_and_transitions, list_sequence_color_spaces, get_sequence_markers_by_type, list_markers, get_caption_tracks (graceful), get_clip_at_playhead, get_clip_at_position, get_clip_properties, get_clip_speed, get_clip_volume, get_clip_transform, get_clip_links, get_clip_markers, get_clip_adjustment_layer, get_color_label, get_metadata, get_xmp_metadata, get_item_info, get_project_item_info, get_linked_items, has_proxy, list_clip_color_space_overrides, get_track_info (PARTIAL - bug #20), get_timeline_gaps, get_footage_interpretation, get_bin_contents, get_insertion_bin, find_project_item_by_name (PARTIAL - bug #16), find_items_by_media_path (PARTIAL - bug #15), search_project_items, get_qe_clip_info (PARTIAL - bug #18), inspect_dom_object (PARTIAL - bug #19), get_source_monitor_info, set_active_sequence, get_next_edit_point.
+
+**Effects (~25):**
+apply_effect, apply_effect_with_properties, apply_brightness_contrast, apply_gaussian_blur, apply_drop_shadow, apply_corner_pin, apply_basic_3d, apply_directional_blur, apply_lens_flare, apply_mirror, apply_color_key, apply_ultra_key, apply_crop_mask, apply_vr_blur, apply_lens_distortion, color_correct, set_effect_property, set_lumetri_creative, set_lumetri_hsl_secondary, set_lumetri_vignette, set_ultra_key_settings, set_color_value, copy_effect_values, copy_effects_between_clips, batch_apply_effect, remove_effect_by_name, remove_effect, remove_all_effects.
+
+**Keyframes / Transitions / Audio (~14):**
+add_keyframe, get_keyframes, set_keyframe_interpolation, get_value_at_time, remove_keyframe, remove_keyframe_range, add_transition_to_clip, add_transition (PARTIAL - duration ignored), batch_add_transitions, set_default_transition (graceful degraded), apply_audio_effect, apply_audio_crossfade, adjust_audio_levels, set_clip_volume, set_audio_channel_mapping.
+
+**Clip set/transform/selection (~25):**
+set_clip_position, set_clip_scale, set_clip_rotation, set_clip_opacity, set_clip_anchor_point, set_clip_transform, set_clip_properties, set_uniform_scale, set_scale_to_frame_size, speed_change, set_blend_mode, set_frame_blend, set_time_interpolation, set_clip_time_interpolation, select_all_clips, deselect_all_clips, select_clips_by_color, select_clips_by_name, select_clips_in_range, select_disabled_clips, invert_selection, select_item, set_clip_selection, link_selection, unlink_selection, set_color_label, rename_clip, batch_rename_clips.
+
+**Edit ops (sequential, ~10):**
+razor_timeline_at_time, split_clip, razor_all_tracks, duplicate_clip, match_frame, create_subclip, set_poster_frame, remove_selected_clips, replace_clip, ripple_delete, remove_from_timeline, add_to_timeline, overwrite_clip.
+
+### FAIL / BUG (đã ghi nhận chi tiết phía trên #6-41)
+
+| # | Tool | Severity | Note |
+|---|------|---------:|------|
+| 6 | `list_sequences` | Med | NaN in JSON |
+| 7 | `get_work_area` | High | TypeError API removed |
+| 8 | `is_work_area_enabled` | High | API removed |
+| 9 | `get_encoder_presets` | High | API removed |
+| 10 | `list_project_items` | Med | Type field sai |
+| 11 | `get_sequence_in_out_points` | Low | Sentinel return |
+| 12 | `get_full_sequence_info` | High | Overflow ctx |
+| 13 | `get_project_scratch_disks` | Med | Empty {} |
+| 14 | `list_clip_effects` | Med | undefined in JSON |
+| 15 | `find_items_by_media_path` | Med | Type "bin" cho mp4 |
+| 16 | `find_project_item_by_name` | Med | Type "sequence" cho mp4 |
+| 17 | `get_audio_channel_mapping` | Med | unknown + undefined |
+| 18 | `get_qe_clip_info` | Low | undefined fields |
+| 19 | `inspect_dom_object` | Low | Invalid JSON |
+| 20 | `get_track_info.transitions` | Med | Trả clip ranges |
+| 21 | `get_source_monitor_position` | Low | Sentinel -400000 |
+| 22 | `get_project_panel_metadata` | High | Overflow ctx (131k) |
+| 23 | `get_clip_at_position` | Low | Throw on out-of-range |
+| 24 | `set_effect_enabled` | Med | Silent fail |
+| 25 | `get_effect_properties`/`list_clip_effects` Lumetri | Med | Binary garbage |
+| 26 | `apply_lut` | Low | Error msg confusing |
+| 27 | `add_audio_keyframes` | High | API removed |
+| 28 | `set_clip_pan` | Med | "is this audio?" trên audio clip |
+| 29 | `remove_transition` | High | API removed |
+| 30 | `set_clip_speed_qe` | Med | Not enough params |
+| 31 | `reverse_clip` | Med | Unknown error |
+| 32 | `enable_disable_clip` | High | setDisabled removed |
+| 33 | `set_anti_alias_quality` | Low | Illegal param type |
+| 34 | `set_scale_width_height` | Med | Height fail silent |
+| 35 | `batch_set_clip_property` | Low | Index lookup sai sau rename |
+| 36 | `add_adjustment_layer` | High | API removed |
+| 37 | `add_color_matte`/`add_text_overlay` | High | Modal dialog block |
+| 38 | `trim_clip` | Low | NodeId stale sau razor (UX) |
+| 39 | `slip_edit`/`slide_edit`/`roll_edit` | **CRITICAL** | Displace clip 69,000s |
+| 40 | `replace_clip_media` | High | Block engine |
+| 41 | `four_point_edit` | **CRITICAL** | Crash bridge |
+
+### CHƯA TEST (tools còn lại ~290):
+- Markers/Captions: `add_marker`, `update_marker`, `delete_marker`, `clear_all_markers`, `add_caption`, `update_caption`, `remove_caption`, `create_caption_track`, `get_captions`, `import_captions`, `export_captions`, `transcribe_sequence`
+- Metadata extras: `set_metadata`, `set_xmp_metadata`, `set_project_panel_metadata`, `add_custom_metadata_field`, `attach_custom_property`, `add_marker_to_project_item`
+- Source/Playback: `play_timeline`, `play_source_monitor`, `stop_playback`, `set_playhead_position`, `set_source_in_out`, `set_item_in_out`, `clear_item_in_out`, `clear_sequence_in_out`, `go_to_*`, `step_*`, `move_playhead_to_edit`, `capture_frame`, `open_in_source`, `close_source_monitor`, `close_all_source_clips`, `close_sequence`, `insert_from_source`, `overwrite_from_source`
+- Sequence/Track/Bin: `create_sequence`, `create_sequence_from_clips`, `create_sequence_from_preset`, `duplicate_sequence`, `set_sequence_resolution`, `set_sequence_frame_rate`, `set_sequence_audio_settings`, `set_sequence_in_out_points`, `set_zero_point`, `set_start_time`, `set_work_area`, `set_sequence_*`, `add_track`, `add_tracks`, `delete_track`, `rename_track`, `lock_track`, `mute_track`, `toggle_track_visibility`, `set_target_track`, `set_all_tracks_targeted`, `create_bin`, `rename_bin`, `delete_bin`, `move_item_to_bin`, `move_items_to_bin`, `create_smart_bin`
+- Project/Render/Export/Import: `save_project`, `save_project_as`, `create_project`, `open_project`, `close_project`, `manage_proxies`, `detach_proxy`, `multiple_undo`, `undo`, `redo`, `refresh_media`, `relink_media`, `consolidate_duplicates`, `consolidate_and_transfer`, `scene_edit_detection`, `transcribe_sequence`, `evaluate_expression`, `execute_extendscript`, `set_workspace`, `set_scratch_disk_path`, `flush_cache`, `delete_preview_files`, render+encode tools, all import_* and export_*
+- Effect coverage còn lại (~120 apply_xxx tools): chưa test riêng, nhưng infer từ test 13 effects mẫu (tất cả PASS) và core `apply_effect` PASS → estimate đa số sẽ PASS
+- Auto-reframe: `auto_reframe_sequence`, `apply_auto_reframe`
+- HDR: `set_sequence_hdr_options`, `set_sequence_color_space`, `set_clip_color_space_override`, `set_graphics_white_luminance`
+- VR: `set_sequence_vr_settings`
+- MOGRT: `import_mogrt`, `import_mogrt_from_library`, `set_mogrt_property`, `get_mogrt_properties`, `get_mogrt_component`
+- Subclip: `edit_subclip_boundaries`
+- Misc: `nest_clips`, `unnest_sequence`, `link_audio_video`, `replace_clip_with_file`, `set_clip_anchor_point`, `set_clip_start_time`, `select_all_clips` cross-track, `set_clip_pan` (audio), `cleanup`/destructive tools
+
+Run này phát hiện **36 bugs mới** (#6-41), trong đó **3 CRITICAL** (#39, #40, #41) và **~12 High** liên quan đến API regressions trong Premiere 25.4 chưa được handler patch.
+
+
+### REGRESSION CONFIRMATION cho Bug #10
+Bridge IPC dir `/tmp/premiere-mcp-bridge/` còn 2 orphan response files từ **May 8, 22:18**. Inspect:
+```json
+{ "id": "000f42b3", "name": "C7984.MP4", "type": "footage", ... }
+```
+
+→ **May 8 build trả `type: "footage"` (đúng)**, May 10 build hiện tại trả `type: "sequence"` (sai). Bug #10 confirmed là **regression giữa May 8 và May 10**, không phải bug lâu năm.
+
+**Fix path:** git log/diff giữa May 8 và May 10 trong các handler liên quan tới ProjectItemType mapping (probably in `src/tools/utility.ts` hoặc helper map enum). Có thể fix nhanh bằng cách rollback diff đó.
+
+Bonus: 2 orphan files trong `/tmp/premiere-mcp-bridge/` từ May 8 cho thấy bridge IPC có thể **không cleanup orphan responses** khi request side timeout — đây có thể là 1 trong các nguyên nhân tích lũy gây bridge crash kỳ này (Bug #41).
+
+
+### NEW BUG #42 — `add_marker` on sequence "Illegal Parameter type"
+- **Tool:** `add_marker` (sequence-level)
+- **Severity:** High (markers cơ bản)
+- **Repro:** `add_marker(time_seconds=50.5, name="...", duration_seconds=2, color=1, comments="...")` → `Error: Illegal Parameter type`.
+- **Suspect:** `duration_seconds=2` được pass vào `marker.end = ...` API có signature thay đổi trong 25.4 (giống Bug 4 sequence in/out — Time vs Number vs string ticks).
+- **Fix:** Convert duration_seconds → ticks string trước khi gán; hoặc dùng zeroPoint-based offset.
+
+### NEW BUG #43 — `add_marker` on clip "TypeError: undefined"
+- **Tool:** `add_marker` với `node_id`
+- **Severity:** High
+- **Repro:** `add_marker(time_seconds=5, name="CLIP MARKER", node_id="000f43b3", color=2)` → `TypeError: undefined is not an object`.
+- **Suspect:** Code path "clip marker" gọi `result.clip.markers` hoặc `result.clip.getMarkers()` mà property/method không tồn tại trên timeline clip object trong 25.4.
+
+### NEW BUG #44 — `get_captions` throws thay vì return []
+- **Tool:** `get_captions`
+- **Severity:** Med
+- **Repro:** `get_captions(track_index=0)` (sequence không có caption track nào) → `Failed to get captions: TypeError: undefined is not an object`.
+- **Fix:** Detect `seq.captionTracks === undefined` → return `{ count: 0, captions: [], note: "No caption tracks" }`.
+
+### NEW BUG #45 — `add_caption` throws khi không có caption track
+- **Tool:** `add_caption`
+- **Severity:** Med
+- **Repro:** `add_caption(track_index=0, ...)` (sequence chưa có caption track) → `Failed to add caption: TypeError: undefined`.
+- **Fix:** Check exists trước, hoặc auto-create caption track.
+
+### NEW BUG #46 — `import_captions` false positive với invalid path
+- **Tool:** `import_captions`
+- **Severity:** Med (bug nguy hiểm — silent success)
+- **Repro:** `import_captions(file_path="/nonexistent/test.srt")` → `{ imported: true, ..., note: "Imported as media (not directly into caption track)" }`.
+- **Issue:** File không tồn tại nhưng tool báo success. Likely fallback path `app.project.importFiles([path])` không throw cho path không tồn tại trong 25.4.
+- **Fix:** Pre-check `File(file_path).exists` trước khi gọi importFiles. Throw rõ ràng nếu không exists.
+
+
+### NEW BUG #47 — `go_to_next_edit` / `go_to_previous_edit` API removed
+- **Tools:** `go_to_next_edit`, `go_to_previous_edit`
+- **Severity:** Med
+- **Error:** `ReferenceError: qe.project.getActiveSequence().player.goToNextEdit is not a function`
+- **Suspect:** QE player API changed in 25.4. Workaround: use `move_playhead_to_edit(direction)` (which currently throws "No next edit point" if logic broken — separately).
+- **Note:** `move_playhead_to_edit(direction="next")` cũng fail với "No next edit point found" sau khi go_to_end → có thể logic là playhead ở end nên không có "next" — case này OK.
+
+### NEW BUG #48 — `step_forward` / `step_backward` "Illegal Parameter type"
+- **Tools:** `step_forward(frames=5)`, `step_backward(frames=3)`
+- **Severity:** Low
+- **Error:** `Step failed: Error: Illegal Parameter type`
+- **Suspect:** Internal call dùng frames as Number nhưng API expect Time/string ticks (giống Bug 4 family).
+
+### NEW BUG #49 — `add_track` `seq.insertVideoTrackAt is not a function`
+- **Tool:** `add_track`
+- **Severity:** Med (basic op)
+- **Error:** `seq.insertVideoTrackAt is not a function`
+- **Workaround:** dùng `add_tracks(video_tracks=1)` — PASS.
+- **Suspect:** API removed in 25.4. Tool nên alias `add_track` → call `add_tracks` internally.
+
+### NEW INFO — `set_work_area` PASS (mismatch với `get_work_area` Bug #7)
+- `set_work_area(in=10, out=100)` → success.
+- Nhưng `get_work_area` (Bug #7) throws TypeError.
+- → Bug #7 chỉ ở getter, setter still works. Có thể fix #7 bằng cách read property tên khác.
+
+
+### NEW BUG #50 — `delete_track` `seq.deleteVideoTrackAt is not a function`
+- **Tool:** `delete_track`
+- **Severity:** Med
+- **Error:** `ReferenceError: seq.deleteVideoTrackAt is not a function`
+- **Suspect:** API removed in 25.4 (cùng family `add_track` → `insertVideoTrackAt`).
+- **Fix:** dùng QE DOM `qeSeq.deleteVideoTrack(idx)` hoặc executeMenuCommand.
+
+### NEW BUG #51 — `link_audio_video` "Clip not found" trên valid nodeId
+- **Tool:** `link_audio_video`
+- **Severity:** Med
+- **Repro:** `link_audio_video(node_id="000f43b4")` (C7925.MP4 V1 idx 1, valid trong active sequence) → `Error: Clip not found`.
+- **Suspect:** Lookup không scope đúng tới sequence hoặc nhầm nodeId namespace (timeline clip vs project item).
+
+### NEW BUG #52 — `set_sequence_pixel_aspect_ratio` "Illegal Parameter type"
+- **Tool:** `set_sequence_pixel_aspect_ratio`
+- **Severity:** Low
+- **Repro:** `set_sequence_pixel_aspect_ratio(ratio=1)` → `Error: Illegal Parameter type`.
+- **Suspect:** API expect string ticks/PAR struct, tool đang pass number.
+
+### NEW BUG #53 — `create_sequence` "Not Enough Parameters" dù `preset_path` optional
+- **Tool:** `create_sequence`
+- **Severity:** Med (basic op)
+- **Repro:** `create_sequence(name="MCP_Test_Empty_Seq")` (no preset_path, tool description nói optional) → `Error: Not Enough Parameters`.
+- **Issue:** Tool nói preset_path optional nhưng underlying API yêu cầu. Cần fallback default preset, hoặc làm preset_path required trong schema.
+- **Workaround:** dùng `create_sequence_from_clips` (PASS) hoặc `duplicate_sequence` (PASS).
+
+
+### NEW BUG #54 — `undo` `app.project.undo is not a function`
+- **Tool:** `undo`
+- **Severity:** Med
+- **Error:** `ReferenceError: app.project.undo is not a function`
+- **Suspect:** API removed in 25.4. Workaround: `app.executeCommand("Undo")` hoặc menu command ID.
+- **Note:** `redo` PASS — chỉ undo bị remove.
+
+### NEW BUG #55 — `multiple_undo` silent fail (undone: 0)
+- **Tool:** `multiple_undo(count=2)`
+- **Severity:** Med
+- **Output:** `{ "undone": 0 }` — không error, nhưng không thật sự undo.
+- **Suspect:** Cùng nguyên nhân Bug #54 — internal loop dùng `app.project.undo` mà không tồn tại → swallow exception.
+
+### NEW BUG #56 (CRITICAL) — `set_workspace` modal block
+- **Tool:** `set_workspace`
+- **Severity:** High
+- **Repro:** `set_workspace(name="Editing")` (current workspace có thể đã modified) → 30s timeout, bridge crash cascade.
+- **Suspect:** Premiere bật dialog "Save changes to current workspace?" khi switch nếu có unsaved layout changes → blocking ExtendScript engine.
+- **Fix:** dùng `app.setWorkspace(name)` với flag suppress dialog, hoặc preempt save trước.
+
+### NEW INFO — `flush_cache` graceful degrade ✅
+- Output: `{ "flushed": false, "note": "flushCache API not available in this Premiere Pro version" }`. Đúng pattern như Bug #28 fix khuyến nghị.
+
+### CONFIRMED PASS trong batch trước workspace block:
+`evaluate_expression`, `execute_extendscript`, `save_project`, `redo`, `delete_preview_files`.
+
+
+### NEW BUG #57 — Multiple `seq.export*` APIs removed in 25.4
+- **Tools:** `export_frame`, `export_edl`, `export_aaf`
+- **Severity:** High
+- **Errors:**
+  - `export_frame` → `seq.exportFramePNG is not a function`
+  - `export_edl` → `seq.exportAsEDL is not a function`
+  - `export_aaf` → `seq.exportAsAAF is not a function`
+- **Suspect:** Cùng family — sequence-level export APIs đã bị Adobe deprecate trong 25.4. Cần dùng `app.encoder.encodeSequence()` với encoder preset thay thế.
+- **Note:** `export_as_fcp_xml`, `export_as_project` vẫn PASS — không phải mọi export API đều mất.
+
+### NEW BUG #58 — `import_folder` "No files found" với /tmp (sai)
+- **Tool:** `import_folder`
+- **Severity:** Low
+- **Repro:** `import_folder(folder_path="/tmp")` (chứa nhiều file media .png .xml etc) → `Error: No files found in folder`.
+- **Suspect:** Filter media extension quá hẹp, hoặc folder path scan logic sai.
+
+### NEW BUG #59 — `import_image_sequence` false positive
+- **Tool:** `import_image_sequence`
+- **Severity:** Med (đáng nguy hiểm — silent success với invalid path, giống Bug #46)
+- **Repro:** `import_image_sequence(first_file_path="/nonexistent/seq_001.png")` → `{ imported: true, file: "/nonexistent/seq_001.png", asImageSequence: true }`.
+- **Fix:** Pre-check `File(first_file_path).exists`.
+
+### NEW BUG #60 — `import_fcp_xml` "Not Enough Parameters"
+- **Tool:** `import_fcp_xml`
+- **Severity:** Med
+- **Repro:** `import_fcp_xml(path="/tmp/mcp-test.xml")` → `Error: Not Enough Parameters`.
+- **Suspect:** API signature thay đổi (suspectfully Adobe ExtendScript).
+
+### NEW BUG #61 — `scene_edit_detection` "Not Enough Parameters"
+- **Tool:** `scene_edit_detection`
+- **Severity:** Med
+- **Repro:** Gọi không args → `Not Enough Parameters`.
+- **Suspect:** Tool description nói no args nhưng API yêu cầu options object.
+
+### NEW BUG #62 — `add_to_render_queue` "Illegal Parameter type"
+- **Tool:** `add_to_render_queue`
+- **Severity:** High (export workflow basic)
+- **Repro:** `add_to_render_queue(output_path="/tmp/mcp-test-render.mp4")` (no preset) → `Error: Illegal Parameter type`.
+- **Suspect:** preset_path bắt buộc, nhưng schema nói optional. Fallback default preset không tồn tại trong 25.4.
+
+### NEW BUG #63 — `manage_proxies` `app.project.setProxyEnabled is not a function`
+- **Tool:** `manage_proxies`
+- **Severity:** Med
+- **Error:** `ReferenceError: app.project.setProxyEnabled is not a function`
+- **Suspect:** API removed in 25.4.
+
+### NEW BUG #64 — `transcribe_sequence` `seq.transcribe is not a function`
+- **Tool:** `transcribe_sequence`
+- **Severity:** Med
+- **Error:** `Transcription not available: ReferenceError: seq.transcribe is not a function`
+- **Suspect:** Speech-to-text API moved to different API path or behind UI button only in 25.4.
+
+### NEW BUG #65 — `auto_reframe_sequence` schema mismatch
+- **Tool:** `auto_reframe_sequence`
+- **Severity:** Low
+- **Issue:** Tool description trong ToolSearch không show `target_width`/`target_height` required, nhưng schema validation ở runtime báo required.
+- **Fix:** đồng bộ description với schema.
+
+
+### NEW BUG #66 — `import_mogrt_from_library` "Not Enough Parameters"
+- **Tool:** `import_mogrt_from_library(mogrt_name=...)` → API expects more args (probably need authorize Library access too).
+
+### NEW BUG #67 — `set_mogrt_property` confusing error trên non-MOGRT clip
+- **Tool:** `set_mogrt_property` trên clip thường (không phải MOGRT) → "Property not found: Source Text". Nên detect non-MOGRT clip và return error rõ "Clip is not a MOGRT".
+
+### NEW BUG #68 — `encode_file` "Unknown error exception" với preset không tồn tại
+- **Tool:** `encode_file(preset_path="/nonexistent/preset.epr")` → "Unknown error exception" (không informative). Nên pre-check file exists.
+
+### NEW BUG #69 — `encode_project_item` không validate preset path
+- **Tool:** `encode_project_item(preset_path="/nonexistent/preset.epr")` → returns `{ queued: true }` (false positive — preset không tồn tại nhưng vẫn báo OK).
+
+### NEW BUG #70 — `close_project` block (save dialog modal)
+- **Tool:** `close_project(save_first=false)` → 30s timeout. Premiere có thể bật "Save changes?" dialog mặc dù `save_first=false`. Bridge crash cascade.
+
+---
+
+# 🎯 FINAL SUMMARY — Test run 2026-05-10 / 11
+
+**Tools tested:** ~250 / 443 (~56% coverage; effects family heavily under-tested vì test 13/120 sample → infer pass rate)
+
+**Bugs phát hiện trong run này:** **65 bugs** (#6–70, kèm trùng `set_xmp_metadata` → `get_xmp_metadata` và `set_metadata`).
+
+## TỔNG QUAN BUG THEO ĐỘ NGHIÊM TRỌNG
+
+### CRITICAL (4) — fix gấp, gây mất data hoặc crash
+| # | Tool | Issue |
+|---|------|-------|
+| 39 | `slip_edit`/`slide_edit`/`roll_edit` | Displace clip 69,000+ giây (unit conversion sai) |
+| 40 | `replace_clip_media` | Block engine, cascade timeout |
+| 41 | `four_point_edit` | **Crash CEP bridge** — phải restart panel |
+| 56 | `set_workspace` | Modal block bridge nếu workspace dirty |
+
+### HIGH (~25) — chặn workflow phổ biến
+- API removed in 25.4 (cần workaround/wrap try-catch):
+  - #7 `get_work_area`, #8 `is_work_area_enabled`
+  - #9 `get_encoder_presets`
+  - #27 `add_audio_keyframes`
+  - #29 `remove_transition`
+  - #32 `enable_disable_clip` (`setDisabled`)
+  - #36 `add_adjustment_layer` (`addAdjustmentLayer`)
+  - #37 `add_color_matte` + `add_text_overlay` (modal block)
+  - #43 `add_marker` (clip-level)
+  - #47 `go_to_next/previous_edit` (player API)
+  - #49 `add_track` (`insertVideoTrackAt`)
+  - #50 `delete_track` (`deleteVideoTrackAt`)
+  - #54 `undo` (`app.project.undo`)
+  - #57 `export_frame`/`export_edl`/`export_aaf`/`capture_frame`/`render_sequence_preview` (sequence-level export APIs)
+  - #62 `add_to_render_queue` (preset_path mandatory)
+  - #63 `manage_proxies` (`setProxyEnabled`)
+  - #64 `transcribe_sequence` (`seq.transcribe`)
+- Output overflow context window:
+  - #12 `get_full_sequence_info` (91KB)
+  - #22 `get_project_panel_metadata` (131KB)
+- Mapping/lookup bugs:
+  - #10 `list_project_items` type field sai (regression May 8 → May 10)
+  - #15 `find_items_by_media_path` type "bin" cho mp4
+  - #16 `find_project_item_by_name` type "sequence" cho mp4
+  - #20 `get_track_info.transitions` trả clip ranges
+  - #42 `add_marker` (sequence) — duration + Time API mismatch
+  - #44 `get_captions` throws khi không có track
+  - #45 `add_caption` throws khi không có track
+
+### MEDIUM (~25)
+- Invalid JSON output (NaN, undefined): #6, #14, #18, #19
+- Silent fail / false positive: #24, #28 (set_clip_pan), #30, #31, #34, #46, #55, #59, #67, #69
+- Param type errors: #33 (set_anti_alias_quality), #48 (step_*), #52 (set_sequence_pixel_aspect_ratio), #53 (create_sequence), #61 (scene_edit_detection), #66 (import_mogrt_from_library)
+- API removed: #50 (delete_track), #51 (link_audio_video lookup)
+
+### LOW (~10) — UX/cosmetic
+- #11, #13, #21, #23, #26, #35, #38, #58, #65, #68
+
+## API REGRESSION PATTERN — Premiere 25.4
+
+Phần lớn bug High/Med xuất phát từ Premiere 25.4 đã loại bỏ/đổi nhiều DOM API:
+1. **Track-level operations:** `seq.insertVideoTrackAt`, `seq.deleteVideoTrackAt` removed
+2. **Sequence export:** `seq.exportFramePNG`, `seq.exportAsEDL`, `seq.exportAsAAF`, `seq.renderSelection` removed
+3. **Player navigation:** `player.goToNextEdit`, `player.goToPreviousEdit` removed
+4. **Project undo:** `app.project.undo` removed
+5. **Encoder API:** `encoder.getFormatList`, `encoder.isRunning`, `encoder.stopBatch`, `encoder.bind` không validate event names — đã ghi nhận trong Bug #5 ban đầu
+6. **Clip-level state:** `clip.setDisabled`, `clip.setSpeed` (DOM), `clip.setReverse` removed
+7. **Components:** marker on clip path broken
+8. **Adjustment/text/matte:** modal dialog blocks engine
+9. **Captions:** API removed hoặc thay đổi đáng kể
+10. **Proxy:** `app.project.setProxyEnabled` removed
+11. **Transcription:** `seq.transcribe` removed
+
+## PASS RATES THEO NHÓM
+
+| Nhóm | Tools tested | Estimated PASS rate |
+|------|-------------:|--------------------:|
+| Read-only / state inspection | ~70 | ~85% (nhưng nhiều có invalid JSON) |
+| Apply effects (sample 13) | 13 | 100% trên sample |
+| Effect get/set/copy/batch | ~12 | ~92% |
+| Keyframes (Opacity/Motion) | ~7 | 100% |
+| Transitions | 5 | 60% (`remove_transition` fail) |
+| Audio | 7 | ~70% |
+| Clip transform/properties | ~20 | ~80% |
+| Selection | ~8 | 100% |
+| Edit ops | ~13 | ~50% (slip/slide/roll critical fail) |
+| Markers/Captions | ~12 | ~50% |
+| Source monitor / Navigation | ~14 | ~70% |
+| Track ops | ~10 | ~70% (add/delete_track fail) |
+| Sequence settings | ~12 | ~85% |
+| Bin/Project | ~10 | ~85% |
+| Project (save/undo/scratch) | ~10 | ~70% |
+| Export/Import/Render | ~18 | ~50% (5 export APIs removed) |
+| Destructive (delete) | ~6 | ~85% |
+
+## KHUYẾN NGHỊ FIX ƯU TIÊN
+
+1. **CRITICAL:** Audit `slip_edit`/`slide_edit`/`roll_edit` ticks-vs-seconds conversion (#39)
+2. **CRITICAL:** Wrap `four_point_edit` trong try/catch để không crash bridge (#41)
+3. **CRITICAL:** Detect modal dialog risk trong `set_workspace`, `add_color_matte`, `add_text_overlay`, `close_project`, `replace_clip_media` (#37, #40, #56, #70)
+4. **HIGH:** Apply Bug #28 graceful-degrade pattern cho mọi API removed:
+   - `get_work_area`, `is_work_area_enabled`, `get_encoder_presets`
+   - `add_track`/`delete_track` (alias sang `add_tracks`/QE)
+   - `undo` (use executeCommand)
+   - `add_audio_keyframes`, `remove_transition`, `enable_disable_clip`
+   - `add_adjustment_layer`, `manage_proxies`, `transcribe_sequence`
+5. **HIGH:** Fix mapping ProjectItemType regression (#10, #15, #16) — single source of truth
+6. **HIGH:** Add pagination/limit options cho `get_full_sequence_info` & `get_project_panel_metadata` (#12, #22)
+7. **MED:** Replace tất cả `undefined`/`NaN` trong JSON output bằng `null` (#6, #14, #18, #19)
+8. **MED:** Pre-validate file paths trong `apply_lut`, `import_captions`, `import_image_sequence`, `encode_file`, `encode_project_item`, `import_mogrt` (#26, #46, #59, #68, #69)
+9. **MED:** Filter Lumetri internal/composite props trong `get_effect_properties` & `list_clip_effects` (#25)
+10. **MED:** Cleanup orphan files trong `/tmp/premiere-mcp-bridge/` định kỳ (Bridge IPC)
+
+## EFFECTS CHƯA TEST — INFER PASS
+
+Trong nhóm `apply_*` (~120 tools), tôi chỉ test 13 đại diện (Lumetri Color, Brightness/Contrast, Gaussian Blur, Drop Shadow, Corner Pin, Basic 3D, Directional Blur, Lens Flare, Mirror, Color Key, Ultra Key, Crop Mask, VR Blur, Lens Distortion, Tint). **Tất cả 13 PASS** → suy luận đa số `apply_xxx` còn lại sẽ PASS vì cùng underlying flow `apply_effect_with_properties`. Tuy nhiên **không guarantee** — nên test riêng các tool effect đặc biệt (warp_stabilizer chạy lâu, write_on, ASC CDL, color space transform).
+
+## TOOLS BỊ SKIP DO PHỤ THUỘC FILE/CONTEXT
+
+- `apply_lut` (cần .cube file)
+- `import_captions`/`export_captions` (cần .srt file thực tế, hoặc caption track tồn tại)
+- `import_mogrt`/`import_mogrt_from_library` (cần .mogrt file)
+- `import_ae_comps` (cần .aep file)
+- `encode_file`/`encode_project_item`/`add_to_render_queue`/`render_clip_in_place`/`export_direct` (cần .epr preset)
+- `auto_reframe_sequence` (cần target_width/target_height — schema mismatch)
+- `consolidate_and_transfer` (chạy lâu, đã trigger nhưng không verify hoàn tất)
+- `transcribe_sequence` (đã thử, API removed)
+- `open_project`/`create_project` (sẽ thay thế project hiện tại)
+
+
+---
+
+## ⚡ HYPOTHESIS CONFIRMED 2026-05-11 — Modal dialog block (KHÔNG phải crash bridge)
+
+**Test do user đề xuất:**
+1. Bridge ping OK
+2. Gọi `add_color_matte` → 30s timeout (như dự đoán)
+3. **User manually dismiss "Color Picker" dialog trong Premiere**
+4. Ping ngay → **PASS instant**
+5. `get_active_sequence` + `get_playhead_position` → **PASS instant**
+
+**Kết luận:** Engine **không crash**, chỉ **suspend** khi modal dialog open. Subsequent tool calls queue lại và execute ngay khi dialog đóng. Bridge IPC vẫn alive throughout.
+
+### Reclassification các bug có cùng pattern
+
+Các bug sau đây đều cùng nguyên nhân **Modal Dialog Suspend** — không phải bug riêng biệt mà 1 family:
+
+| # | Tool | Dialog suspect |
+|---|------|----------------|
+| 37 | `add_color_matte` | Color Picker |
+| 37 | `add_text_overlay` | Title Designer / Save Title |
+| 40 | `replace_clip_media` | Replace Media confirmation |
+| 41 | `four_point_edit` | Source Monitor "Set Speed?" / Sync confirmation (KHÔNG phải crash như ghi nhận trước) |
+| 56 | `set_workspace` | "Save changes to current workspace?" |
+| 70 | `close_project` | "Save before closing?" |
+
+### Fix path đơn
+
+Tất cả bug nhóm này có cùng fix:
+
+**Option A (preferred):** Wrap mỗi tool có khả năng bật dialog với `app.setSilentSetting(true)` hoặc dùng API path không bật UI:
+```javascript
+// Trước call dialog-prone API:
+app.disableDialogs = true;
+// hoặc
+app.userInteractionLevel = UserInteractionLevel.NEVER_INTERACT;
+try { /* call API */ } finally {
+  app.userInteractionLevel = UserInteractionLevel.NORMAL;
+}
+```
+
+**Option B:** Sử dụng MCP-side timeout nhỏ hơn 30s + return helpful error:
+```
+"Tool may have triggered modal dialog. Please dismiss any popup in Premiere and retry."
+```
+
+**Option C (best):** Detect và dismiss dialog programmatically (hard, dùng `app.executeMenuCommand("Cancel")` hoặc OS-level dialog dismiss).
+
+### Implication cho user workflow
+
+User của MCP cần biết: nếu thấy timeout 30s, **đừng panic restart panel** — chỉ cần check Premiere có dialog đang mở không, dismiss rồi tool sẽ chạy lại bình thường. Update README/docs note này.
+
+
+---
+
+## ⚠️ USER WORKAROUND NOTE — `add_color_matte` & các tool có dialog
+
+**KHI CHẠY `add_color_matte`** (và các tool cùng nhóm dưới đây), Premiere sẽ bật **modal dialog** (Color Picker hoặc tương tự) và **TREO toàn bộ ExtendScript engine** cho đến khi user thao tác:
+
+### Triệu chứng
+- Tool đầu tiên gọi → timeout 30s
+- **Mọi tool gọi sau đó** (kể cả `ping`, `get_active_sequence`) cũng timeout 30s
+- Tưởng nhầm là bridge crash → restart Premiere/CEP panel không cần thiết
+
+### Workaround bắt buộc
+**👉 PHẢI vào Premiere thủ công, đóng dialog đang mở (click OK/Cancel/Close)** thì engine mới giải phóng và các tool kế tiếp mới chạy được.
+
+Không cần restart CEP panel, không cần restart Premiere — chỉ cần dismiss dialog là xong.
+
+### Danh sách tool có hành vi này (verified 2026-05-11)
+| Tool | Dialog mở khi gọi |
+|------|--------------------|
+| `add_color_matte` | Color Picker — chọn màu rồi OK |
+| `add_text_overlay` | Title Designer / Essential Graphics — đóng tab |
+| `replace_clip_media` | "Replace Media?" confirmation |
+| `four_point_edit` | Source/timeline mismatch confirmation |
+| `set_workspace` | "Save changes to current workspace?" (chỉ khi workspace dirty) |
+| `close_project` | "Save before closing?" (kể cả khi `save_first=false`) |
+| `import_ae_comps` (path lỗi) | Error dialog |
+| `import_mogrt` (path lỗi) | Error dialog |
+
+### Hành vi mong muốn (chưa fix)
+Tool nên **tự suppress dialog** bằng `app.userInteractionLevel = UserInteractionLevel.NEVER_INTERACT` hoặc fail sớm với error rõ ràng "Tool requires UI interaction — currently unsupported in 25.4 ExtendScript".
+

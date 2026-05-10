@@ -78,17 +78,26 @@ export function getPlayheadTools(bridgeOptions: BridgeOptions) {
     },
 
     get_work_area: {
-      description: "Get the current work area in and out points",
+      description: "Get the current work area in and out points (returns available=false if API removed in 25.4).",
       parameters: {},
       handler: async () => {
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          
-          return __result({
-            inSeconds: __ticksToSeconds(seq.workInPoint.ticks),
-            outSeconds: __ticksToSeconds(seq.workOutPoint.ticks)
-          });
+
+          // 25.4: workInPoint / workOutPoint may be undefined or string-of-ticks like the
+          // sequence in/out APIs (Bug #7). Probe defensively.
+          var inT, outT;
+          try { inT = seq.workInPoint; } catch(e) {}
+          try { outT = seq.workOutPoint; } catch(e) {}
+          if (inT === undefined || outT === undefined) {
+            return __result({ available: false, note: "seq.workInPoint/workOutPoint undefined in this Premiere version" });
+          }
+          // Some versions: Time object with .ticks; others: string of ticks.
+          var inSec = null, outSec = null;
+          try { inSec = (inT && inT.ticks) ? __ticksToSeconds(inT.ticks) : __ticksToSeconds(inT); } catch(e) {}
+          try { outSec = (outT && outT.ticks) ? __ticksToSeconds(outT.ticks) : __ticksToSeconds(outT); } catch(e) {}
+          return __result({ available: true, inSeconds: inSec, outSeconds: outSec });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -125,16 +134,23 @@ export function getPlayheadTools(bridgeOptions: BridgeOptions) {
     },
 
     get_sequence_in_out_points: {
-      description: "Get the current sequence in and out points",
+      description: "Get the current sequence in and out points (null if not set).",
       parameters: {},
       handler: async () => {
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          
+
+          // 25.4: getInPoint/getOutPoint return string-of-seconds. Sentinel "-400000" = not set.
+          var inStr, outStr;
+          try { inStr = seq.getInPoint(); } catch(e) { inStr = null; }
+          try { outStr = seq.getOutPoint(); } catch(e) { outStr = null; }
+          var inSec = (inStr === null || inStr === "-400000" || inStr === -400000) ? null : parseFloat(inStr);
+          var outSec = (outStr === null || outStr === "-400000" || outStr === -400000) ? null : parseFloat(outStr);
           return __result({
-            inSeconds: __ticksToSeconds(seq.getInPoint()),
-            outSeconds: __ticksToSeconds(seq.getOutPoint())
+            inSeconds: inSec,
+            outSeconds: outSec,
+            isSet: inSec !== null || outSec !== null
           });
         `);
         return sendCommand(script, bridgeOptions);

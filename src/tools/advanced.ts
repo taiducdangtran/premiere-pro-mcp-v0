@@ -39,120 +39,65 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    // ⚠️ DATA-CORRUPTION SAFETY: roll/slide/slip in 25.4 QE have a unit-conversion regression
+    // that causes massive clip displacement (~69,600s for a 0.5s offset) when called with
+    // ticks-string. The exact correct signature is unknown without controlled testing
+    // (test reproduction caused real data loss). These tools are DISABLED until verified.
+    // Workaround: use the Premiere UI keyboard shortcuts Y (slip), U (slide), N (rolling edit).
     roll_edit: {
-      description: "Perform a roll edit on a clip (adjusts the edit point between two adjacent clips). Uses QE DOM.",
+      description: "⚠️ DISABLED in 25.4 due to data-corruption bug (clip displaced ~69k seconds). Use UI rolling-edit tool (N) instead. See notebug.md Bug #39.",
       parameters: {
         type: "object" as const,
         properties: {
-          node_id: {
-            type: "string",
-            description: "Node ID of the clip",
-          },
-          offset_seconds: {
-            type: "number",
-            description: "Offset in seconds (positive = roll right, negative = roll left)",
-          },
+          node_id: { type: "string", description: "Node ID of the clip" },
+          offset_seconds: { type: "number", description: "Offset in seconds" },
         },
         required: ["node_id", "offset_seconds"],
       },
-      handler: async (args: { node_id: string; offset_seconds: number }) => {
-        const script = buildToolScript(`
-          app.enableQE();
-          var qeSeq = qe.project.getActiveSequence();
-          if (!qeSeq) return __error("No active sequence (QE)");
-          
-          var result = __findClip("${escapeForExtendScript(args.node_id)}");
-          if (!result) return __error("Clip not found");
-          
-          var qeTrack = result.trackType === "video"
-            ? qeSeq.getVideoTrackAt(result.trackIndex)
-            : qeSeq.getAudioTrackAt(result.trackIndex);
-          var qeClip = __getQEClip(result);
-          if (!qeClip) return __error("QE clip not found");
-          
-          var offsetTicks = __secondsToTicks(${args.offset_seconds}).toString();
-          qeClip.roll(offsetTicks);
-          return __result({ rolled: true, clipName: result.clip.name, offsetSeconds: ${args.offset_seconds} });
-        `);
-        return sendCommand(script, bridgeOptions);
+      handler: async (_args: { node_id: string; offset_seconds: number }) => {
+        return {
+          success: false,
+          error:
+            "roll_edit is temporarily disabled in Premiere 25.4 due to a data-corruption bug — the QE.roll API has a unit-conversion regression that displaces clips by tens of thousands of seconds. Use the Premiere UI rolling-edit tool (keyboard 'N') until the correct ticks/seconds signature is verified. Tracked in notebug.md Bug #39.",
+        };
       },
     },
 
     slide_edit: {
-      description: "Perform a slide edit on a clip (moves clip without changing its duration, adjusting adjacent clips). Uses QE DOM.",
+      description: "⚠️ DISABLED in 25.4 due to data-corruption bug. Use UI slide tool (U) instead. See notebug.md Bug #39.",
       parameters: {
         type: "object" as const,
         properties: {
-          node_id: {
-            type: "string",
-            description: "Node ID of the clip",
-          },
-          offset_seconds: {
-            type: "number",
-            description: "Offset in seconds (positive = slide right, negative = slide left)",
-          },
+          node_id: { type: "string", description: "Node ID of the clip" },
+          offset_seconds: { type: "number", description: "Offset in seconds" },
         },
         required: ["node_id", "offset_seconds"],
       },
-      handler: async (args: { node_id: string; offset_seconds: number }) => {
-        const script = buildToolScript(`
-          app.enableQE();
-          var qeSeq = qe.project.getActiveSequence();
-          if (!qeSeq) return __error("No active sequence (QE)");
-          
-          var result = __findClip("${escapeForExtendScript(args.node_id)}");
-          if (!result) return __error("Clip not found");
-          
-          var qeTrack = result.trackType === "video"
-            ? qeSeq.getVideoTrackAt(result.trackIndex)
-            : qeSeq.getAudioTrackAt(result.trackIndex);
-          var qeClip = __getQEClip(result);
-          if (!qeClip) return __error("QE clip not found");
-          
-          var offsetTicks = __secondsToTicks(${args.offset_seconds}).toString();
-          qeClip.slide(offsetTicks);
-          return __result({ slid: true, clipName: result.clip.name, offsetSeconds: ${args.offset_seconds} });
-        `);
-        return sendCommand(script, bridgeOptions);
+      handler: async (_args: { node_id: string; offset_seconds: number }) => {
+        return {
+          success: false,
+          error:
+            "slide_edit is temporarily disabled in Premiere 25.4 due to a data-corruption bug — QE.slide API has a unit-conversion regression. Use the Premiere UI slide tool (keyboard 'U'). Tracked in notebug.md Bug #39.",
+        };
       },
     },
 
     slip_edit: {
-      description: "Perform a slip edit on a clip (changes source in/out points without moving clip on timeline). Uses QE DOM.",
+      description: "⚠️ DISABLED in 25.4 due to data-corruption bug. Use UI slip tool (Y) instead. See notebug.md Bug #39.",
       parameters: {
         type: "object" as const,
         properties: {
-          node_id: {
-            type: "string",
-            description: "Node ID of the clip",
-          },
-          offset_seconds: {
-            type: "number",
-            description: "Offset in seconds (positive = slip forward in source, negative = slip backward)",
-          },
+          node_id: { type: "string", description: "Node ID of the clip" },
+          offset_seconds: { type: "number", description: "Offset in seconds" },
         },
         required: ["node_id", "offset_seconds"],
       },
-      handler: async (args: { node_id: string; offset_seconds: number }) => {
-        const script = buildToolScript(`
-          app.enableQE();
-          var qeSeq = qe.project.getActiveSequence();
-          if (!qeSeq) return __error("No active sequence (QE)");
-          
-          var result = __findClip("${escapeForExtendScript(args.node_id)}");
-          if (!result) return __error("Clip not found");
-          
-          var qeTrack = result.trackType === "video"
-            ? qeSeq.getVideoTrackAt(result.trackIndex)
-            : qeSeq.getAudioTrackAt(result.trackIndex);
-          var qeClip = __getQEClip(result);
-          if (!qeClip) return __error("QE clip not found");
-          
-          var offsetTicks = __secondsToTicks(${args.offset_seconds}).toString();
-          qeClip.slip(offsetTicks);
-          return __result({ slipped: true, clipName: result.clip.name, offsetSeconds: ${args.offset_seconds} });
-        `);
-        return sendCommand(script, bridgeOptions);
+      handler: async (_args: { node_id: string; offset_seconds: number }) => {
+        return {
+          success: false,
+          error:
+            "slip_edit is temporarily disabled in Premiere 25.4 due to a data-corruption bug — QE.slip API has a unit-conversion regression. Use the Premiere UI slip tool (keyboard 'Y'). Tracked in notebug.md Bug #39.",
+        };
       },
     },
 

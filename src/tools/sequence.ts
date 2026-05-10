@@ -520,7 +520,7 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
     },
 
     is_work_area_enabled: {
-      description: "Check whether the work area bar is enabled on the active sequence",
+      description: "Check whether the work area bar is enabled on the active sequence (returns available=false if API removed in 25.4).",
       parameters: {
         type: "object" as const,
         properties: {},
@@ -529,8 +529,15 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          var enabled = seq.isWorkAreaBarEnabled();
-          return __result({ sequenceName: seq.name, workAreaEnabled: enabled });
+          if (typeof seq.isWorkAreaBarEnabled !== "function") {
+            return __result({ available: false, sequenceName: seq.name, note: "seq.isWorkAreaBarEnabled removed in 25.4" });
+          }
+          try {
+            var enabled = seq.isWorkAreaBarEnabled();
+            return __result({ available: true, sequenceName: seq.name, workAreaEnabled: enabled });
+          } catch(e) {
+            return __result({ available: false, sequenceName: seq.name, note: "isWorkAreaBarEnabled threw: " + e.toString() });
+          }
         `);
         return sendCommand(script, bridgeOptions);
       },

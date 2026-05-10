@@ -44,32 +44,30 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          
+
           var trackIndex = ${args.track_index !== undefined ? args.track_index : "seq.videoTracks.numTracks - 1"};
-          
-          // Create a graphics clip using the captions API approach
           var project = app.project;
-          
-          // Use QE DOM to insert text
           app.enableQE();
           var qeSeq = qe.project.getActiveSequence();
-          
-          // Add a caption track if needed, then add text
-          // Note: Direct text creation requires MOGRT or Graphics workspace
-          // For basic text, we use the Graphics approach
+
           var startTicks = __secondsToTicks(${startSeconds}).toString();
           var endTicks = __secondsToTicks(${startSeconds + durationSeconds}).toString();
-          
-          // Create text via project item
           var textContent = "${escapeForExtendScript(args.text)}";
-          project.activeSequence.createCaptionTrack(textContent, startTicks, "Subtitle");
-          
-          return __result({
-            added: true,
-            text: textContent,
-            trackIndex: trackIndex,
-            startSeconds: ${startSeconds},
-            durationSeconds: ${durationSeconds}
+
+          // Suppress Title Designer / Save Title modal dialogs (Bug #37 family).
+          return __withDialogsSuppressed(function() {
+            try {
+              project.activeSequence.createCaptionTrack(textContent, startTicks, "Subtitle");
+              return __result({
+                added: true,
+                text: textContent,
+                trackIndex: trackIndex,
+                startSeconds: ${startSeconds},
+                durationSeconds: ${durationSeconds}
+              });
+            } catch (ex) {
+              return __error("add_text_overlay failed: " + ex.toString());
+            }
           });
         `);
         return sendCommand(script, bridgeOptions);

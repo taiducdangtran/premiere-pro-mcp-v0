@@ -266,9 +266,45 @@ export function getTimelineTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found: ${escapeForExtendScript(args.node_id)}");
-          
-          result.clip.setDisabled(${args.enabled ? "false" : "true"});
-          return __result({ clipName: result.clip.name, enabled: ${args.enabled} });
+
+          var clip = result.clip;
+          var disabled = ${args.enabled ? "false" : "true"};
+
+          // 25.4 (Bug #32): clip.setDisabled is undefined. Try DOM property assignment first
+          // (supported in some 25.x builds), then QE clip.setEnabled / .disable as fallback.
+          if (typeof clip.setDisabled === "function") {
+            clip.setDisabled(disabled);
+            return __result({ clipName: clip.name, enabled: ${args.enabled}, method: "clip.setDisabled" });
+          }
+          // DOM property write
+          try {
+            clip.disabled = disabled;
+            if (clip.disabled === disabled) {
+              return __result({ clipName: clip.name, enabled: ${args.enabled}, method: "clip.disabled assignment" });
+            }
+          } catch(ePropWrite) {}
+
+          // QE fallback
+          try {
+            app.enableQE();
+            var qeClip = __getQEClip(result);
+            if (qeClip) {
+              if (typeof qeClip.setEnabled === "function") {
+                qeClip.setEnabled(${args.enabled ? "true" : "false"});
+                return __result({ clipName: clip.name, enabled: ${args.enabled}, method: "qeClip.setEnabled" });
+              }
+              if (typeof qeClip.disable === "function") {
+                qeClip.disable(disabled);
+                return __result({ clipName: clip.name, enabled: ${args.enabled}, method: "qeClip.disable" });
+              }
+            }
+          } catch(eQE) {}
+
+          return __result({
+            available: false,
+            clipName: clip.name,
+            note: "enable_disable_clip API removed in 25.4 — neither DOM clip.setDisabled, DOM clip.disabled assignment, nor QE qeClip.setEnabled/disable are functional. Workaround: select clip in UI and press Shift+E."
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -565,52 +601,58 @@ export function getTimelineTools(bridgeOptions: BridgeOptions) {
           if (timelineDur <= 0) return __error("timeline_out must be greater than timeline_in");
           var speedPercent = (sourceDur / timelineDur) * 100;
 
-          // Apply source in/out
-          var inT = new Time(); inT.seconds = ${args.source_in_seconds};
-          var outT = new Time(); outT.seconds = ${args.source_out_seconds};
-          item.setInPoint(inT.ticks, 4);
-          item.setOutPoint(outT.ticks, 4);
+          // Suppress any source/timeline mismatch confirmation dialogs (Bug #41 — formerly
+          // suspected to crash the bridge but actually a modal-suspend issue).
+          return __withDialogsSuppressed(function() {
+            try {
+              // Apply source in/out
+              var inT = new Time(); inT.seconds = ${args.source_in_seconds};
+              var outT = new Time(); outT.seconds = ${args.source_out_seconds};
+              item.setInPoint(inT.ticks, 4);
+              item.setOutPoint(outT.ticks, 4);
 
-          // Edit at timeline_in
-          var tlT = new Time(); tlT.seconds = ${args.timeline_in_seconds};
-          seq.${editFn}(item, tlT.ticks, ${vTrack}, ${aTrack});
+              // Edit at timeline_in
+              var tlT = new Time(); tlT.seconds = ${args.timeline_in_seconds};
+              seq.${editFn}(item, tlT.ticks, ${vTrack}, ${aTrack});
 
-          // Find newly inserted clip. Premiere rounds insert position to nearest frame, so the
-          // resulting clip's start may differ from tlInTicks by up to ~1 frame. Use 1-second
-          // tolerance which is well above any reasonable frame rate's frame duration.
-          var targetTrack = seq.videoTracks[${vTrack}];
-          var newClip = null;
-          var newClipIndex = -1;
-          var tlInTicks = parseFloat(tlT.ticks);
-          var TOLERANCE = TICKS_PER_SECOND; // 1 second
-          for (var c = 0; c < targetTrack.clips.numItems; c++) {
-            var cc = targetTrack.clips[c];
-            if (Math.abs(parseFloat(cc.start.ticks) - tlInTicks) < TOLERANCE) {
-              newClip = cc;
-              newClipIndex = c;
-              break;
+              // Find newly inserted clip with frame-tolerance.
+              var targetTrack = seq.videoTracks[${vTrack}];
+              var newClip = null;
+              var newClipIndex = -1;
+              var tlInTicks = parseFloat(tlT.ticks);
+              var TOLERANCE = TICKS_PER_SECOND;
+              for (var c = 0; c < targetTrack.clips.numItems; c++) {
+                var cc = targetTrack.clips[c];
+                if (Math.abs(parseFloat(cc.start.ticks) - tlInTicks) < TOLERANCE) {
+                  newClip = cc;
+                  newClipIndex = c;
+                  break;
+                }
+              }
+              if (!newClip) return __error("Newly inserted clip not located on target track");
+
+              var fakeResult = { trackIndex: ${vTrack}, clipIndex: newClipIndex, trackType: "video", clip: newClip };
+              var qeClip = __getQEClip(fakeResult);
+              if (!qeClip) return __error("QE clip not found for fit-to-fill speed adjustment");
+              qeClip.setSpeed(speedPercent, "1", false, false, false);
+
+              return __result({
+                edited: true,
+                mode: "${editType}",
+                item: item.name,
+                sourceIn: ${args.source_in_seconds},
+                sourceOut: ${args.source_out_seconds},
+                timelineIn: ${args.timeline_in_seconds},
+                timelineOut: ${args.timeline_out_seconds},
+                sourceDuration: sourceDur,
+                timelineDuration: timelineDur,
+                speedPercent: speedPercent,
+                videoTrack: ${vTrack},
+                audioTrack: ${aTrack}
+              });
+            } catch (ex) {
+              return __error("four_point_edit failed: " + ex.toString());
             }
-          }
-          if (!newClip) return __error("Newly inserted clip not located on target track");
-
-          var fakeResult = { trackIndex: ${vTrack}, clipIndex: newClipIndex, trackType: "video", clip: newClip };
-          var qeClip = __getQEClip(fakeResult);
-          if (!qeClip) return __error("QE clip not found for fit-to-fill speed adjustment");
-          qeClip.setSpeed(speedPercent, "1", false, false, false);
-
-          return __result({
-            edited: true,
-            mode: "${editType}",
-            item: item.name,
-            sourceIn: ${args.source_in_seconds},
-            sourceOut: ${args.source_out_seconds},
-            timelineIn: ${args.timeline_in_seconds},
-            timelineOut: ${args.timeline_out_seconds},
-            sourceDuration: sourceDur,
-            timelineDuration: timelineDur,
-            speedPercent: speedPercent,
-            videoTrack: ${vTrack},
-            audioTrack: ${aTrack}
           });
         `);
         return sendCommand(script, bridgeOptions);

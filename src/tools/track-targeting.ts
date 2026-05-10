@@ -412,15 +412,25 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
       },
       handler: async (args: { first_file_path: string; target_bin?: string }) => {
         const script = buildToolScript(`
+          // Bug #59: pre-validate file existence — 25.4 importFiles silently succeeds on
+          // missing paths.
+          var firstPath = "${escapeForExtendScript(args.first_file_path)}";
+          try {
+            var f = new File(firstPath);
+            if (!f.exists) return __error("First image file not found at: " + firstPath);
+          } catch(eFile) {
+            return __error("Could not verify image path: " + firstPath);
+          }
+
           var targetBin = app.project.rootItem;
           ${args.target_bin ? `
           var found = __findProjectItem("${escapeForExtendScript(args.target_bin)}");
           if (found && found.type === 2) targetBin = found;
           ` : ""}
 
-          app.project.importFiles(["${escapeForExtendScript(args.first_file_path)}"], true, targetBin, true);
+          app.project.importFiles([firstPath], true, targetBin, true);
 
-          return __result({ imported: true, file: "${escapeForExtendScript(args.first_file_path)}", asImageSequence: true });
+          return __result({ imported: true, file: firstPath, asImageSequence: true });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -946,9 +956,17 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
           var encoder = app.encoder;
           if (!encoder) return __error("Encoder not available");
 
+          if (typeof encoder.getFormatList !== "function") {
+            return __result({
+              available: false,
+              note: "encoder.getFormatList removed in Premiere 25.4. Provide a known preset path directly to encode_file/encode_project_item, or use the AME UI to discover preset filenames.",
+              presets: []
+            });
+          }
+
           try {
             var formats = encoder.getFormatList();
-            if (!formats) return __error("Could not get format list");
+            if (!formats) return __result({ available: true, presets: [] });
 
             var result = [];
             for (var f = 0; f < formats.length; f++) {
@@ -963,9 +981,9 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
               }
               result.push({ format: formatName, presets: presetNames });
             }
-            return __result(result);
+            return __result({ available: true, presets: result });
           } catch(e) {
-            return __error("Encoder preset listing failed: " + e.message);
+            return __result({ available: false, note: "Encoder preset listing failed: " + e.toString(), presets: [] });
           }
         `);
         return sendCommand(script, bridgeOptions);
@@ -1075,14 +1093,31 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
       handler: async (args: { count?: number }) => {
         const count = args.count ?? 1;
         const script = buildToolScript(`
+          // 25.4 (Bug #55): app.project.undo undefined → silent fail.
           var undone = 0;
-          for (var i = 0; i < ${count}; i++) {
-            try {
-              app.project.undo();
-              undone++;
-            } catch(e) { break; }
+          var hasUndo = typeof app.project.undo === "function";
+          if (hasUndo) {
+            for (var i = 0; i < ${count}; i++) {
+              try { app.project.undo(); undone++; } catch(e) { break; }
+            }
+            return __result({ undone: undone });
           }
-          return __result({ undone: undone });
+          if (typeof app.executeCommand === "function" && typeof app.findMenuCommandId === "function") {
+            try {
+              var cmdId = app.findMenuCommandId("Undo");
+              if (cmdId) {
+                for (var j = 0; j < ${count}; j++) {
+                  try { app.executeCommand(cmdId); undone++; } catch(e2) { break; }
+                }
+                return __result({ undone: undone, method: "executeCommand" });
+              }
+            } catch(e3) {}
+          }
+          return __result({
+            undone: 0,
+            available: false,
+            note: "multiple_undo API removed in 25.4 — both app.project.undo and app.executeCommand fallbacks unavailable. Workaround: hold Cmd/Ctrl+Z in UI."
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -1197,6 +1232,8 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
         required: ["node_id", "enabled"],
       },
       handler: async (args: { node_id: string; enabled: boolean }) => {
+        // Bug #33: Anti-flicker Filter expects 0 or 1 (number) not bool.
+        const intVal = args.enabled ? 1 : 0;
         const script = buildToolScript(`
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found");
@@ -1207,9 +1244,15 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
             if (clip.components[i].displayName === "Motion") {
               for (var p = 0; p < clip.components[i].properties.numItems; p++) {
                 var pName = clip.components[i].properties[p].displayName;
-                if (pName === "Anti-flicker Filter" || pName === "Use Composition's Shutter Angle") {
-                  clip.components[i].properties[p].setValue(${args.enabled}, true);
-                  set = true;
+                if (pName === "Anti-flicker Filter") {
+                  // Numeric (0/1) — passing bool throws "Illegal Parameter type" in 25.4.
+                  try {
+                    clip.components[i].properties[p].setValue(${intVal}, true);
+                    set = true;
+                  } catch(e) {
+                    // fallback: try boolean for older builds
+                    try { clip.components[i].properties[p].setValue(${args.enabled}, true); set = true; } catch(e2) {}
+                  }
                   break;
                 }
               }

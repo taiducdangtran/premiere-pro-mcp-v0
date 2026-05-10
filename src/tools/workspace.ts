@@ -34,9 +34,12 @@ export function getWorkspaceTools(bridgeOptions: BridgeOptions) {
       },
       handler: async (args: { name: string }) => {
         const script = buildToolScript(`
-          var result = app.setWorkspace("${escapeForExtendScript(args.name)}");
-          if (!result) return __error("Failed to set workspace: ${escapeForExtendScript(args.name)}");
-          return __result({ set: true, workspace: "${escapeForExtendScript(args.name)}" });
+          // Suppress "Save changes to current workspace?" dialog (Bug #56).
+          return __withDialogsSuppressed(function() {
+            var ok = app.setWorkspace("${escapeForExtendScript(args.name)}");
+            if (!ok) return __error("Failed to set workspace: ${escapeForExtendScript(args.name)}");
+            return __result({ set: true, workspace: "${escapeForExtendScript(args.name)}" });
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

@@ -4,6 +4,88 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.1] - 2026-05-11 — Tester sweep bug fixes (Bugs #6–#70)
+
+Addresses ~40 bugs from the 443-tool tester sweep (`notebug.md` Test run 2026-05-10).
+
+### Fixed — CRITICAL safety
+
+- **#39 `slip_edit` / `slide_edit` / `roll_edit` data-corruption bug** — these QE methods in 25.4 have an unknown unit-conversion regression that displaces clips by ~69,600 seconds for a 0.5s offset. **Tools temporarily DISABLED** with a clear error pointing users to UI keyboard shortcuts (Y / U / N) until the correct signature is verified on a controlled sandbox.
+
+### Fixed — Modal dialog suspend (was misdiagnosed as bridge crash)
+
+- **#37 / #40 / #41 / #56 / #70** — wrapped `add_color_matte`, `add_text_overlay`, `replace_clip_media`, `four_point_edit`, `set_workspace`, `close_project` in a new `__withDialogsSuppressed()` helper that sets `app.userInteractionLevel = NEVER_INTERACT` for the call's duration. Premiere modal dialogs that previously froze the ExtendScript engine for 30s+ (Color Picker, Title Designer, Replace Media confirmation, Save Workspace, Save Before Closing) are now auto-suppressed.
+
+### Fixed — ProjectItemType mapping regression (May 8 → May 10)
+
+- **#10 / #15 / #16** — `list_project_items`, `find_project_item_by_name`, `find_items_by_media_path` all reported wrong `type` (mp4 files appearing as "sequence" / "bin"). Added unified `__projectItemType(item)` helper in script-builder.ts (handles `type 1` + `isSequence()` discrimination → "footage" vs "sequence", `type 2` → "bin", `type 3` → "root", `type 4` → "file") and used it in all 3 sites.
+
+### Fixed — JSON output sanitization
+
+- **#6 / #14 / #17 / #18 / #19 / #25** — `__jsonStringify()` and new `__sanitizeForJson()` helpers now recursively replace `NaN`, `Infinity`, `-Infinity`, and `undefined` with `null` so output is RFC 8259-valid. Functions and other non-serializable objects coerce to `null` instead of leaking `"[object]"`. Applies to all tools.
+
+### Fixed — Sentinel return values
+
+- **#11 `get_sequence_in_out_points`** — detect Premiere's `-400000` sentinel and return `null` with `isSet: false` instead of the raw negative-near-zero seconds value.
+- **#21 `get_source_monitor_position`** — detect the same sentinel and return `loaded: false` cleanly when no clip is open.
+
+### Fixed — API-removed graceful degradation
+
+Wrapped the following tools to detect API absence and return `{ available: false, note: ... }` with a workaround hint instead of throwing raw ExtendScript errors:
+
+- **#7 `get_work_area`** — defensively probes `seq.workInPoint/workOutPoint`, accepts both Time-object and string-of-ticks forms, reports unavailable cleanly.
+- **#8 `is_work_area_enabled`** — checks `typeof seq.isWorkAreaBarEnabled === "function"` first.
+- **#9 `get_encoder_presets`** — guards `encoder.getFormatList`, returns helpful note pointing to AME UI for preset discovery.
+- **#27 `add_audio_keyframes`** — falls back from removed `levelProp.addKeyframe` to `levelProp.addKey` + `setValueAtKey`; reports unavailable with workaround if neither exposed.
+- **#29 `remove_transition`** — tries `qeClip.removeTransition`, then `qeClip.removeTransitionAt`, then DOM `transitionIn/Out.remove`.
+- **#32 `enable_disable_clip`** — tries DOM `clip.setDisabled`, then `clip.disabled` property assignment, then QE `qeClip.setEnabled`/`disable`.
+- **#36 `add_adjustment_layer`** — tries `qeSeq.addAdjustmentLayer`, then `rootItem.createNewAdjustmentLayer + overwriteClip`.
+- **#47 `go_to_next_edit` / `go_to_previous_edit`** — falls back from removed QE `player.goToNextEdit/goToPreviousEdit` to scanning all clip start/end ticks for the nearest boundary, then `seq.setPlayerPosition()`.
+- **#49 `add_track`** — tries `seq.insertVideoTrackAt`, then `seq.addTracks()` 7-arg form.
+- **#50 `delete_track`** — tries `seq.deleteVideoTrackAt`/`deleteAudioTrackAt`, then QE `qeSeq.deleteVideoTrack/deleteAudioTrack`.
+- **#54 `undo` / #55 `multiple_undo`** — falls back from removed `app.project.undo` to `app.executeCommand(findMenuCommandId("Undo"))`.
+- **#57 `export_frame` / `export_edl` / `export_aaf`** — guard each `seq.exportFramePNG`/`exportAsEDL`/`exportAsAAF` call; for frame export also probes `exportFrameJPEG`.
+- **#63 `manage_proxies`** — guards `item.createProxy`/`item.attachProxy`/`app.project.setProxyEnabled`/`isProxyEnabled`.
+- **#64 `transcribe_sequence`** — guards `seq.transcribe`.
+
+### Fixed — Param-type and pre-validation
+
+- **#23 `get_clip_at_position`** — returns `{ found: false, ... }` instead of throwing when no clip overlaps the queried position.
+- **#26 `apply_lut`** — pre-validates LUT file existence with `new File(path).exists` so error message is meaningful.
+- **#33 `set_anti_alias_quality`** — converts boolean to 0/1 integer (25.4 "Anti-flicker Filter" property rejects bool).
+- **#42 / #43 `add_marker`** — switches to `createMarker(seconds)` (Number) form, tries `clip.getMarkers()` before `clip.markers` for clip-level markers.
+- **#44 `get_captions`** — detects missing `seq.captionTracks` and returns empty list with note instead of throwing.
+- **#46 `import_captions`** — pre-validates file existence (was silently succeeding on missing paths via importFiles fallback).
+- **#59 `import_image_sequence`** — same pre-validation pattern.
+- **#62 `add_to_render_queue`** — `preset_path` now effectively required (ENCODE_MATCH_SEQUENCE fallback removed in 25.4); pre-validates preset exists.
+- **#68 `encode_file`** — pre-validates input + preset paths.
+- **#69 `encode_project_item`** — pre-validates preset path.
+- **#6 `list_sequences`** — replaces broken `seq.zeroPoint.ticks` (undefined in 25.4) with direct string-of-ticks form; adds `start`/`end`/`inPoint`/`outPoint` fields properly null when unset.
+
+### Known limitations still pending
+
+- **#12 `get_full_sequence_info` / #22 `get_project_panel_metadata`** — context-window overflow (91KB / 131KB outputs). Need pagination/summary mode — not yet implemented.
+- **#20 `get_track_info.transitions`** — returns clip ranges instead of real transitions (suspect API field shape change). Needs deeper QE investigation.
+- **#25 `get_effect_properties` Lumetri binary garbage** — Lumetri exposes ~25 internal binary-blob properties. JSON sanitization now hides `undefined`/`NaN` but doesn't filter Lumetri's internal-only props.
+- **#28 `set_clip_pan`** — audio-clip detection still wrong; pan API path needs probing.
+- **#30 `set_clip_speed_qe` / #31 `reverse_clip`** — likely cousins of fixed Bug 3c-tris; need signature update.
+- **#34 `set_scale_width_height`** — "Scale Height" property name likely needs probing.
+- **#39 slip/slide/roll** — disabled (not fixed) — need controlled sandbox to verify correct unit.
+- **#48 `step_forward` / `step_backward`** — Illegal Parameter type; needs Time vs Number probing.
+- **#52 / #53 / #58 / #60 / #61 / #65 / #66 / #67** — schema/param mismatches with 25.4 APIs (need individual verification).
+
+### Architecture
+
+- Added to `src/bridge/script-builder.ts`:
+  - `__projectItemType(item)` — unified type-string mapping
+  - `__safeJsonValue(v)` — value-level NaN/Infinity/undefined → null
+  - `__sanitizeForJson(obj)` — recursive sanitization invoked by `__jsonStringify`
+  - `__withDialogsSuppressed(fn)` — runs callback with `app.userInteractionLevel = NEVER_INTERACT` and restores
+
+### Changed
+
+- Version: 1.2.0 → 1.2.1
+
 ## [1.2.0] - 2026-05-10 — Comprehensive effect-wrapping milestone
 
 ### Highlights

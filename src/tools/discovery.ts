@@ -74,7 +74,7 @@ export function getDiscoveryTools(bridgeOptions: BridgeOptions) {
             var entry = {
               nodeId: item.nodeId,
               name: item.name,
-              type: item.type === 1 ? "clip" : item.type === 2 ? "bin" : item.type === 3 ? "sequence" : "unknown",
+              type: __projectItemType(item),
               mediaPath: ""
             };
             try {
@@ -100,13 +100,29 @@ export function getDiscoveryTools(bridgeOptions: BridgeOptions) {
           var sequences = [];
           for (var i = 0; i < project.sequences.numSequences; i++) {
             var seq = project.sequences[i];
+            // 25.4: seq.zeroPoint and seq.end are strings of ticks (no .ticks accessor).
+            var startSec = null;
+            var endSec = null;
+            try { startSec = __ticksToSeconds(seq.zeroPoint); } catch(e) {}
+            try { endSec = __ticksToSeconds(seq.end); } catch(e) {}
+            // getInPoint/getOutPoint return string-of-seconds in 25.4
+            var inPtSec = null;
+            var outPtSec = null;
+            try {
+              var inStr = seq.getInPoint();
+              var outStr = seq.getOutPoint();
+              if (inStr !== "-400000" && inStr !== -400000) inPtSec = parseFloat(inStr);
+              if (outStr !== "-400000" && outStr !== -400000) outPtSec = parseFloat(outStr);
+            } catch(e) {}
             sequences.push({
               name: seq.name,
               id: seq.sequenceID,
               videoTracks: seq.videoTracks.numTracks,
               audioTracks: seq.audioTracks.numTracks,
-              inPoint: __ticksToSeconds(seq.zeroPoint.ticks),
-              end: __ticksToSeconds(seq.end)
+              start: startSec,
+              end: endSec,
+              inPoint: inPtSec,
+              outPoint: outPtSec
             });
           }
           
@@ -305,7 +321,7 @@ export function getDiscoveryTools(bridgeOptions: BridgeOptions) {
           var info = {
             nodeId: item.nodeId,
             name: item.name,
-            type: item.type === 1 ? "clip" : item.type === 2 ? "bin" : item.type === 3 ? "sequence" : "unknown",
+            type: __projectItemType(item),
             mediaPath: ""
           };
           try {
@@ -444,7 +460,13 @@ export function getDiscoveryTools(bridgeOptions: BridgeOptions) {
             }
           }
           
-          return __error("No clip found at position " + ${args.time_seconds} + "s on ${args.track_type} track " + ${args.track_index});
+          // Bug #23: not finding a clip is normal — return null instead of throwing.
+          return __result({
+            found: false,
+            timeSeconds: ${args.time_seconds},
+            trackIndex: ${args.track_index},
+            trackType: "${args.track_type}"
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

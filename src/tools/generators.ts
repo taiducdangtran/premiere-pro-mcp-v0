@@ -53,17 +53,20 @@ export function getGeneratorTools(bridgeOptions: BridgeOptions) {
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
           app.enableQE();
-          try {
-            qe.project.newColorMatte(
-              seq.frameSizeHorizontal,
-              seq.frameSizeVertical,
-              ${r}, ${g}, ${b},
-              "${escapeForExtendScript(name)}"
-            );
-            return __result({ created: true, name: "${escapeForExtendScript(name)}", color: "#${hex}", note: "Color matte created in project panel. Use add_to_timeline to place it." });
-          } catch (ex) {
-            return __error("Failed to create color matte: " + ex.toString());
-          }
+          // Suppress Color Picker modal dialog that 25.4 may pop up (Bug #37 family).
+          return __withDialogsSuppressed(function() {
+            try {
+              qe.project.newColorMatte(
+                seq.frameSizeHorizontal,
+                seq.frameSizeVertical,
+                ${r}, ${g}, ${b},
+                "${escapeForExtendScript(name)}"
+              );
+              return __result({ created: true, name: "${escapeForExtendScript(name)}", color: "#${hex}", note: "Color matte created in project panel. Use add_to_timeline to place it." });
+            } catch (ex) {
+              return __error("Failed to create color matte: " + ex.toString());
+            }
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },
