@@ -532,6 +532,330 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_gaussian_blur: {
+      description:
+        "Apply Gaussian Blur — soft, even blur. Use blurriness 5-20 for subtle softening, 30-80 for strong defocus. " +
+        "Direction: 'Horizontal and Vertical' (default), 'Horizontal', or 'Vertical' for motion-style blur.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          blurriness: { type: "number", description: "Blur amount 0-250 (default: leave Premiere default)" },
+          blur_dimensions: {
+            type: "string",
+            enum: ["Horizontal and Vertical", "Horizontal", "Vertical"],
+            description: "Blur direction (default: 'Horizontal and Vertical')",
+          },
+          repeat_edge_pixels: { type: "boolean", description: "Repeat edge pixels to avoid transparent edges (default: true)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; blurriness?: number; blur_dimensions?: string; repeat_edge_pixels?: boolean }) => {
+        const dirMap: Record<string, number> = { "Horizontal and Vertical": 1, "Horizontal": 2, "Vertical": 3 };
+        const setLines: string[] = [];
+        if (args.blurriness !== undefined) setLines.push(`if (n === "Blurriness") prop.setValue(${args.blurriness}, true);`);
+        if (args.blur_dimensions !== undefined) {
+          const d = dirMap[args.blur_dimensions];
+          if (d) setLines.push(`if (n === "Blur Dimensions") prop.setValue(${d}, true);`);
+        }
+        if (args.repeat_edge_pixels !== undefined) setLines.push(`if (n === "Repeat Edge Pixels") prop.setValue(${args.repeat_edge_pixels}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Gaussian Blur is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Gaussian Blur") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Gaussian Blur");
+            if (!eff || !eff.name) return __error("Gaussian Blur effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Gaussian Blur") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_mosaic: {
+      description:
+        "Apply Mosaic (pixelate) effect — useful for blurring out faces, license plates, sensitive info, or for stylistic chunky-pixel look. " +
+        "Higher block count = finer pixels (less obscured).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          horizontal_blocks: { type: "number", description: "Horizontal block count 1-1000 (lower = chunkier; default 10)" },
+          vertical_blocks: { type: "number", description: "Vertical block count 1-1000 (default 10)" },
+          sharp_colors: { type: "boolean", description: "Sharp colors (no anti-aliasing between blocks) (default false)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; horizontal_blocks?: number; vertical_blocks?: number; sharp_colors?: boolean }) => {
+        const setLines: string[] = [];
+        if (args.horizontal_blocks !== undefined) setLines.push(`if (n === "Horizontal Blocks") prop.setValue(${args.horizontal_blocks}, true);`);
+        if (args.vertical_blocks !== undefined) setLines.push(`if (n === "Vertical Blocks") prop.setValue(${args.vertical_blocks}, true);`);
+        if (args.sharp_colors !== undefined) setLines.push(`if (n === "Sharp Colors") prop.setValue(${args.sharp_colors}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Mosaic is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Mosaic") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Mosaic");
+            if (!eff || !eff.name) return __error("Mosaic effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Mosaic") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_lens_flare: {
+      description:
+        "Apply Lens Flare effect — bright sun/light spot with rays. Default position is center; flare_brightness controls intensity. " +
+        "Lens type changes the optical character (50-300mm zoom = standard, 35mm prime = sharper).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          flare_brightness: { type: "number", description: "Brightness 0-300 (default ~100)" },
+          lens_type: {
+            type: "string",
+            enum: ["50-300mm Zoom", "35mm Prime", "105mm Prime"],
+            description: "Lens optical type (default '50-300mm Zoom')",
+          },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; flare_brightness?: number; lens_type?: string }) => {
+        const lensMap: Record<string, number> = { "50-300mm Zoom": 1, "35mm Prime": 2, "105mm Prime": 3 };
+        const setLines: string[] = [];
+        if (args.flare_brightness !== undefined) setLines.push(`if (n === "Flare Brightness") prop.setValue(${args.flare_brightness}, true);`);
+        if (args.lens_type !== undefined) {
+          const v = lensMap[args.lens_type];
+          if (v) setLines.push(`if (n === "Lens Type") prop.setValue(${v}, true);`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Lens Flare is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Lens Flare") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Lens Flare");
+            if (!eff || !eff.name) return __error("Lens Flare effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Lens Flare") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_skin_tone_smoothing: {
+      description:
+        "Apply skin tone smoothing — combines Camera Blur (light) with optional contrast preservation. " +
+        "Subtle by default (intensity=20). For full beauty work, follow with Lumetri HSL Secondary keyed on skin tone.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          intensity: { type: "number", description: "Smoothing intensity 0-100 (default 20). Higher = more skin smoothing but loses detail." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; intensity?: number }) => {
+        const intensity = args.intensity ?? 20;
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Skin tone smoothing is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Camera Blur") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Camera Blur");
+            if (!eff || !eff.name) return __error("Camera Blur effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Camera Blur") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                if (n === "Percent Blur" || n === "Blur Length" || n === "Blur") prop.setValue(${intensity}, true);
+              }
+              break;
+            }
+          }
+
+          return __result({
+            applied: !already,
+            clipName: clip.name,
+            intensity: ${intensity},
+            note: "Mild smoothing via Camera Blur. For full beauty work, layer with Lumetri HSL Secondary keyed on skin tone."
+          });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_levels: {
+      description:
+        "Apply Levels effect — input/output black/white point control per channel. Use for fast contrast/exposure correction. " +
+        "Channel: 'RGB' (default, all channels), 'Red', 'Green', 'Blue', or 'Alpha'.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          input_black: { type: "number", description: "Input black point 0-255 (default 0)" },
+          input_white: { type: "number", description: "Input white point 0-255 (default 255)" },
+          gamma: { type: "number", description: "Gamma 0.1-9.99 (default 1.0)" },
+          output_black: { type: "number", description: "Output black point 0-255 (default 0)" },
+          output_white: { type: "number", description: "Output white point 0-255 (default 255)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        input_black?: number;
+        input_white?: number;
+        gamma?: number;
+        output_black?: number;
+        output_white?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.input_black !== undefined) setLines.push(`if (n === "(RGB) Input Black" || n === "Input Black") prop.setValue(${args.input_black}, true);`);
+        if (args.input_white !== undefined) setLines.push(`if (n === "(RGB) Input White" || n === "Input White") prop.setValue(${args.input_white}, true);`);
+        if (args.gamma !== undefined) setLines.push(`if (n === "(RGB) Gamma" || n === "Gamma") prop.setValue(${args.gamma}, true);`);
+        if (args.output_black !== undefined) setLines.push(`if (n === "(RGB) Output Black" || n === "Output Black") prop.setValue(${args.output_black}, true);`);
+        if (args.output_white !== undefined) setLines.push(`if (n === "(RGB) Output White" || n === "Output White") prop.setValue(${args.output_white}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Levels is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Levels") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Levels");
+            if (!eff || !eff.name) return __error("Levels effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Levels") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_unsharp_mask: {
       description:
         "Apply Unsharp Mask sharpening to a clip. Higher amount = stronger edge enhancement; threshold prevents sharpening of flat areas (skin, sky). " +

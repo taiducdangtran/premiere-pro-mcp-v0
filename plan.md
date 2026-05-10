@@ -17,6 +17,7 @@
 | `254d917` | Phase 3 partial — 3.7 (3-point/4-point edit) + 3.4 (HDR workflow 5 tools) | **322** | +7 |
 | `884c809` | Phase 4 batch (partial) — 4 effect wrapper tools | **326** | +4 (runtime test pending) |
 | (next) | Phase 4 expansion — 5 more wrappers + edit_subclip_boundaries | **331** | +5 (code-only, CEP hung) |
+| (next) | Phase 4 batch 3 — 5 more wrappers (Gaussian Blur, Mosaic, Lens Flare, Skin Tone, Levels) | **336** | +5 (code-only) |
 
 ### Key discoveries — Premiere 25.4 ExtendScript regressions & limitations
 
@@ -250,6 +251,18 @@ CEP bridge bị hang sau big probe script → end session với code commit. 4 t
 | 9 | `edit_subclip_boundaries` | export.ts | Modify subclip in/out via setInPoint/setOutPoint với mediaType enum |
 
 **Tổng sau expansion:** **331** (326 + 5). Tất cả code-only, chưa test runtime.
+
+### Phase 4 batch 3 (cùng session, code-only — CEP vẫn hang)
+
+| # | Tool | File | Notes |
+|---|---|---|---|
+| 10 | `apply_gaussian_blur` | effects.ts | Blurriness + blur dimensions enum + repeat edge pixels |
+| 11 | `apply_mosaic` | effects.ts | Privacy/pixelate — horizontal/vertical blocks + sharp colors |
+| 12 | `apply_lens_flare` | effects.ts | Flare brightness + lens type enum (50-300mm/35mm/105mm) |
+| 13 | `apply_skin_tone_smoothing` | effects.ts | Camera Blur wrapper với intensity defaults; subtle by default |
+| 14 | `apply_levels` | effects.ts | Levels: input/output black/white + gamma per RGB |
+
+**Tổng sau batch 3:** **336** (331 + 5).
 
 **Pattern:** Mỗi tool wraps `apply_effect` với matchName cụ thể + optional property setters cho sensible defaults. Reuse `__getQEClip(result)` helper từ Phase 0.5 để correct DOM↔QE indexing.
 
