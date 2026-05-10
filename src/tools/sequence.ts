@@ -123,6 +123,213 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    list_sequence_color_spaces: {
+      description:
+        "List the available working color spaces for the sequence (Rec. 709, Rec. 2100 HLG, Rec. 2100 PQ, ACEScct, ...). " +
+        "Returns the index, name, and properties for each entry, plus the currently active color space. " +
+        "Use the index/name with set_sequence_color_space to switch.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          sequence_id: { type: "string", description: "Sequence name or ID. Uses active sequence if omitted." },
+        },
+      },
+      handler: async (args: { sequence_id?: string }) => {
+        const seqLookup = args.sequence_id
+          ? `var seq = __findSequence("${escapeForExtendScript(args.sequence_id)}"); if (!seq) return __error("Sequence not found");`
+          : `var seq = app.project.activeSequence; if (!seq) return __error("No active sequence");`;
+        const script = buildToolScript(`
+          ${seqLookup}
+          var settings = seq.getSettings();
+          var list = settings.workingColorSpaceList;
+          var current = settings.workingColorSpace;
+          var spaces = [];
+          if (list && list.length !== undefined) {
+            for (var i = 0; i < list.length; i++) {
+              var s = list[i];
+              spaces.push({
+                index: i,
+                name: s.name,
+                primaries: s.primaries,
+                transferCharacteristic: s.transferCharacteristic,
+                isSceneReferred: s.isSceneReferred,
+                matrixEquation: s.matrixEquation,
+                isCurrent: current && (current.name === s.name)
+              });
+            }
+          }
+          return __result({ sequence: seq.name, spaces: spaces, current: current ? current.name : null });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    set_sequence_color_space: {
+      description:
+        "Set the working color space of a sequence (HDR workflow). " +
+        "Common values: 'Rec. 709' (SDR default), 'Rec. 2100 HLG' (HDR for broadcast), 'Rec. 2100 PQ' (HDR for streaming/Dolby Vision), 'ACEScct' (color science). " +
+        "Use list_sequence_color_spaces first to see exact names available in your project.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          sequence_id: { type: "string", description: "Sequence name or ID. Uses active sequence if omitted." },
+          color_space_name: {
+            type: "string",
+            description: "Color space name from workingColorSpaceList (e.g. 'Rec. 709', 'Rec. 2100 HLG').",
+          },
+          color_space_index: {
+            type: "number",
+            description: "Alternative to name: 0-based index into workingColorSpaceList.",
+          },
+        },
+        required: [],
+      },
+      handler: async (args: { sequence_id?: string; color_space_name?: string; color_space_index?: number }) => {
+        if (args.color_space_name === undefined && args.color_space_index === undefined) {
+          throw new Error("Provide either color_space_name or color_space_index");
+        }
+        const seqLookup = args.sequence_id
+          ? `var seq = __findSequence("${escapeForExtendScript(args.sequence_id)}"); if (!seq) return __error("Sequence not found");`
+          : `var seq = app.project.activeSequence; if (!seq) return __error("No active sequence");`;
+        const lookup = args.color_space_index !== undefined
+          ? `var picked = list[${args.color_space_index}]; if (!picked) return __error("color_space_index out of range");`
+          : `var wantedName = "${escapeForExtendScript(args.color_space_name!)}"; var picked = null; for (var i = 0; i < list.length; i++) { if (list[i].name === wantedName) { picked = list[i]; break; } } if (!picked) return __error("Color space not found: " + wantedName);`;
+        const script = buildToolScript(`
+          ${seqLookup}
+          var settings = seq.getSettings();
+          var list = settings.workingColorSpaceList;
+          if (!list || list.length === undefined) return __error("workingColorSpaceList not available");
+          ${lookup}
+          var prevName = settings.workingColorSpace ? settings.workingColorSpace.name : null;
+          settings.workingColorSpace = picked;
+          seq.setSettings(settings);
+          var verifySettings = seq.getSettings();
+          return __result({
+            sequence: seq.name,
+            previous: prevName,
+            current: verifySettings.workingColorSpace ? verifySettings.workingColorSpace.name : null
+          });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    set_sequence_hdr_options: {
+      description:
+        "Toggle sequence-level HDR/color rendering options: auto tone mapping, automatic input gamut compression, and linear-light compositing. " +
+        "All parameters are optional; only specified ones are changed. These settings affect how Premiere blends and tone-maps clips with mismatched color ranges (e.g. SDR clips in an HDR sequence).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          sequence_id: { type: "string", description: "Sequence name or ID. Uses active sequence if omitted." },
+          auto_tone_map_enabled: {
+            type: "boolean",
+            description: "Auto-tone-map clips with mismatched dynamic range (e.g. HDR clip into SDR sequence).",
+          },
+          auto_input_gamut_compression_enabled: {
+            type: "boolean",
+            description: "Compress out-of-gamut colors when input clip's gamut exceeds working color space.",
+          },
+          composite_linear_color: {
+            type: "boolean",
+            description: "Compose layers in linear light (correct blending math; recommended for HDR pipelines).",
+          },
+        },
+      },
+      handler: async (args: {
+        sequence_id?: string;
+        auto_tone_map_enabled?: boolean;
+        auto_input_gamut_compression_enabled?: boolean;
+        composite_linear_color?: boolean;
+      }) => {
+        const seqLookup = args.sequence_id
+          ? `var seq = __findSequence("${escapeForExtendScript(args.sequence_id)}"); if (!seq) return __error("Sequence not found");`
+          : `var seq = app.project.activeSequence; if (!seq) return __error("No active sequence");`;
+        const setters: string[] = [];
+        if (args.auto_tone_map_enabled !== undefined) setters.push(`settings.autoToneMapEnabled = ${args.auto_tone_map_enabled}; changes.auto_tone_map_enabled = ${args.auto_tone_map_enabled};`);
+        if (args.auto_input_gamut_compression_enabled !== undefined) setters.push(`settings.autoInputGamutCompressionEnabled = ${args.auto_input_gamut_compression_enabled}; changes.auto_input_gamut_compression_enabled = ${args.auto_input_gamut_compression_enabled};`);
+        if (args.composite_linear_color !== undefined) setters.push(`settings.compositeLinearColor = ${args.composite_linear_color}; changes.composite_linear_color = ${args.composite_linear_color};`);
+
+        const script = buildToolScript(`
+          ${seqLookup}
+          var settings = seq.getSettings();
+          var changes = {};
+          ${setters.join("\n          ")}
+          seq.setSettings(settings);
+          return __result({ sequence: seq.name, changes: changes });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    list_clip_color_space_overrides: {
+      description:
+        "List the color space overrides available for a project item (master clip). " +
+        "These include camera-native spaces (S-Log, V-Log, ARRI, RED, etc.) plus standard SDR/HDR spaces. " +
+        "Use the name with set_clip_color_space_override to override how a clip is interpreted by the sequence.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          item_id: { type: "string", description: "Project item nodeId or name" },
+        },
+        required: ["item_id"],
+      },
+      handler: async (args: { item_id: string }) => {
+        const script = buildToolScript(`
+          var item = __findProjectItem("${escapeForExtendScript(args.item_id)}");
+          if (!item) return __error("Project item not found: ${escapeForExtendScript(args.item_id)}");
+          var list = item.getOverrideColorSpaceList;
+          if (!list || list.length === undefined) return __error("Override color space list not available for this item");
+          var spaces = [];
+          for (var i = 0; i < list.length; i++) {
+            var s = list[i];
+            spaces.push({
+              index: i,
+              name: s.name,
+              primaries: s.primaries,
+              transferCharacteristic: s.transferCharacteristic,
+              isSceneReferred: s.isSceneReferred
+            });
+          }
+          return __result({ item: item.name, count: spaces.length, spaces: spaces });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    set_clip_color_space_override: {
+      description:
+        "Override the color space of a master clip (project item). The override takes precedence over the auto-detected source color space and propagates to all timeline instances of this master clip. " +
+        "Use list_clip_color_space_overrides to see available options for the item (typically includes camera-native spaces and standard SDR/HDR spaces).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          item_id: { type: "string", description: "Project item nodeId or name" },
+          color_space_name: { type: "string", description: "Color space name (use list_clip_color_space_overrides to see options)" },
+          color_space_index: { type: "number", description: "Alternative to name: 0-based index into the override list" },
+        },
+        required: ["item_id"],
+      },
+      handler: async (args: { item_id: string; color_space_name?: string; color_space_index?: number }) => {
+        if (args.color_space_name === undefined && args.color_space_index === undefined) {
+          throw new Error("Provide either color_space_name or color_space_index");
+        }
+        const lookup = args.color_space_index !== undefined
+          ? `var picked = list[${args.color_space_index}]; if (!picked) return __error("color_space_index out of range");`
+          : `var wantedName = "${escapeForExtendScript(args.color_space_name!)}"; var picked = null; for (var i = 0; i < list.length; i++) { if (list[i].name === wantedName) { picked = list[i]; break; } } if (!picked) return __error("Color space not found: " + wantedName);`;
+        const script = buildToolScript(`
+          var item = __findProjectItem("${escapeForExtendScript(args.item_id)}");
+          if (!item) return __error("Project item not found");
+          var list = item.getOverrideColorSpaceList;
+          if (!list || list.length === undefined) return __error("Override color space list not available");
+          ${lookup}
+          item.setOverrideColorSpace(picked);
+          return __result({ item: item.name, override: picked.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     create_subsequence: {
       description: "Create a subsequence (nested sequence) from selected clips or a time range",
       parameters: {

@@ -440,6 +440,183 @@ export function getTimelineTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    three_point_edit: {
+      description:
+        "3-point edit: provide source In/Out + timeline In, Premiere computes timeline Out from source duration. " +
+        "Atomic operation that sets source in/out, then insert or overwrite at timeline_in_seconds. " +
+        "Use insert mode to shift existing clips; overwrite mode replaces overlapping clips in the target track range.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          source_item_id: {
+            type: "string",
+            description: "Project item nodeId or name to edit from (must already be a usable source — usually opened in Source Monitor first). Required.",
+          },
+          source_in_seconds: { type: "number", description: "Source clip in-point in seconds" },
+          source_out_seconds: { type: "number", description: "Source clip out-point in seconds" },
+          timeline_in_seconds: { type: "number", description: "Timeline insert position in seconds" },
+          edit_type: {
+            type: "string",
+            enum: ["insert", "overwrite"],
+            description: "'insert' shifts existing clips right; 'overwrite' replaces (default: overwrite)",
+          },
+          video_track_index: { type: "number", description: "Target video track index (default: 0)" },
+          audio_track_index: { type: "number", description: "Target audio track index (default: 0)" },
+        },
+        required: ["source_item_id", "source_in_seconds", "source_out_seconds", "timeline_in_seconds"],
+      },
+      handler: async (args: {
+        source_item_id: string;
+        source_in_seconds: number;
+        source_out_seconds: number;
+        timeline_in_seconds: number;
+        edit_type?: string;
+        video_track_index?: number;
+        audio_track_index?: number;
+      }) => {
+        const editType = args.edit_type || "overwrite";
+        const vTrack = args.video_track_index ?? 0;
+        const aTrack = args.audio_track_index ?? 0;
+        const editFn = editType === "insert" ? "insertClip" : "overwriteClip";
+
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+
+          var item = __findProjectItem("${escapeForExtendScript(args.source_item_id)}");
+          if (!item) return __error("Source item not found: ${escapeForExtendScript(args.source_item_id)}");
+
+          // Apply source in/out
+          var inT = new Time(); inT.seconds = ${args.source_in_seconds};
+          var outT = new Time(); outT.seconds = ${args.source_out_seconds};
+          item.setInPoint(inT.ticks, 4);
+          item.setOutPoint(outT.ticks, 4);
+
+          // Edit at timeline_in
+          var tlT = new Time(); tlT.seconds = ${args.timeline_in_seconds};
+          seq.${editFn}(item, tlT.ticks, ${vTrack}, ${aTrack});
+
+          var sourceDuration = ${args.source_out_seconds} - ${args.source_in_seconds};
+          return __result({
+            edited: true,
+            mode: "${editType}",
+            item: item.name,
+            sourceIn: ${args.source_in_seconds},
+            sourceOut: ${args.source_out_seconds},
+            timelineIn: ${args.timeline_in_seconds},
+            timelineOut: ${args.timeline_in_seconds} + sourceDuration,
+            duration: sourceDuration,
+            videoTrack: ${vTrack},
+            audioTrack: ${aTrack}
+          });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    four_point_edit: {
+      description:
+        "4-point edit (fit-to-fill): provide source In/Out + timeline In/Out, Premiere stretches/compresses source via speed change to fit the timeline range. " +
+        "Used when you want to lock both source range and timeline range — e.g. fit a 3s shot into a 2s gap (= 150% speed). " +
+        "After the edit, the inserted clip's speed is set so source duration maps to timeline duration.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          source_item_id: { type: "string", description: "Project item nodeId or name. Required." },
+          source_in_seconds: { type: "number", description: "Source clip in-point in seconds" },
+          source_out_seconds: { type: "number", description: "Source clip out-point in seconds" },
+          timeline_in_seconds: { type: "number", description: "Timeline range start in seconds" },
+          timeline_out_seconds: { type: "number", description: "Timeline range end in seconds" },
+          edit_type: {
+            type: "string",
+            enum: ["insert", "overwrite"],
+            description: "'insert' shifts existing clips; 'overwrite' replaces (default: overwrite)",
+          },
+          video_track_index: { type: "number", description: "Target video track index (default: 0)" },
+          audio_track_index: { type: "number", description: "Target audio track index (default: 0)" },
+        },
+        required: ["source_item_id", "source_in_seconds", "source_out_seconds", "timeline_in_seconds", "timeline_out_seconds"],
+      },
+      handler: async (args: {
+        source_item_id: string;
+        source_in_seconds: number;
+        source_out_seconds: number;
+        timeline_in_seconds: number;
+        timeline_out_seconds: number;
+        edit_type?: string;
+        video_track_index?: number;
+        audio_track_index?: number;
+      }) => {
+        const editType = args.edit_type || "overwrite";
+        const vTrack = args.video_track_index ?? 0;
+        const aTrack = args.audio_track_index ?? 0;
+        const editFn = editType === "insert" ? "insertClip" : "overwriteClip";
+
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+
+          var item = __findProjectItem("${escapeForExtendScript(args.source_item_id)}");
+          if (!item) return __error("Source item not found: ${escapeForExtendScript(args.source_item_id)}");
+
+          var sourceDur = ${args.source_out_seconds} - ${args.source_in_seconds};
+          var timelineDur = ${args.timeline_out_seconds} - ${args.timeline_in_seconds};
+          if (sourceDur <= 0) return __error("source_out must be greater than source_in");
+          if (timelineDur <= 0) return __error("timeline_out must be greater than timeline_in");
+          var speedPercent = (sourceDur / timelineDur) * 100;
+
+          // Apply source in/out
+          var inT = new Time(); inT.seconds = ${args.source_in_seconds};
+          var outT = new Time(); outT.seconds = ${args.source_out_seconds};
+          item.setInPoint(inT.ticks, 4);
+          item.setOutPoint(outT.ticks, 4);
+
+          // Edit at timeline_in
+          var tlT = new Time(); tlT.seconds = ${args.timeline_in_seconds};
+          seq.${editFn}(item, tlT.ticks, ${vTrack}, ${aTrack});
+
+          // Find newly inserted clip. Premiere rounds insert position to nearest frame, so the
+          // resulting clip's start may differ from tlInTicks by up to ~1 frame. Use 1-second
+          // tolerance which is well above any reasonable frame rate's frame duration.
+          var targetTrack = seq.videoTracks[${vTrack}];
+          var newClip = null;
+          var newClipIndex = -1;
+          var tlInTicks = parseFloat(tlT.ticks);
+          var TOLERANCE = TICKS_PER_SECOND; // 1 second
+          for (var c = 0; c < targetTrack.clips.numItems; c++) {
+            var cc = targetTrack.clips[c];
+            if (Math.abs(parseFloat(cc.start.ticks) - tlInTicks) < TOLERANCE) {
+              newClip = cc;
+              newClipIndex = c;
+              break;
+            }
+          }
+          if (!newClip) return __error("Newly inserted clip not located on target track");
+
+          var fakeResult = { trackIndex: ${vTrack}, clipIndex: newClipIndex, trackType: "video", clip: newClip };
+          var qeClip = __getQEClip(fakeResult);
+          if (!qeClip) return __error("QE clip not found for fit-to-fill speed adjustment");
+          qeClip.setSpeed(speedPercent, "1", false, false, false);
+
+          return __result({
+            edited: true,
+            mode: "${editType}",
+            item: item.name,
+            sourceIn: ${args.source_in_seconds},
+            sourceOut: ${args.source_out_seconds},
+            timelineIn: ${args.timeline_in_seconds},
+            timelineOut: ${args.timeline_out_seconds},
+            sourceDuration: sourceDur,
+            timelineDuration: timelineDur,
+            speedPercent: speedPercent,
+            videoTrack: ${vTrack},
+            audioTrack: ${aTrack}
+          });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     speed_change: {
       description: "Change the playback speed of a clip",
       parameters: {

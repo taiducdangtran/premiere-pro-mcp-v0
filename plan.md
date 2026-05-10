@@ -102,6 +102,37 @@
 
 ---
 
+## ✅ Phase 3 — In Progress (2026-05-10)
+
+**Tổng tool sau Phase 3 (partial):** **322** (315 → 317 → 322)
+
+| # | Section | Tool(s) | Status |
+|---|---|---|---|
+| 3.7 | 3-point/4-point edit | `three_point_edit`, `four_point_edit` | ✅ Done — 2 tool, e2e logic verified (insert C8021/C8022 vào V3, fit-to-fill speed change) |
+| 3.4 | HDR workflow | `list_sequence_color_spaces`, `set_sequence_color_space`, `set_sequence_hdr_options`, `list_clip_color_space_overrides`, `set_clip_color_space_override` | ✅ Done — 5 tool. Verified: switch Rec.709 ↔ Rec.2100 HLG ↔ ACEScct trên active sequence |
+| 3.9 | Master Clip Effects | (planned: `apply_master_clip_effect`, `list_master_vs_instance_effects`) | ❌ **NOT FEASIBLE** — Premiere 25.4 ExtendScript projectItem không expose components/addEffect/getMasterClip; QE project cũng không có |
+| 3.8 | Render & Replace | (planned) | ⏸️ Pending |
+| 3.6 | Surround pan | (planned) | ⏸️ Pending |
+| 3.1 | Dynamic Link AE | (planned) | ⏸️ Research-heavy |
+| 3.5 | VR/360 | (planned) | ⏸️ Pending |
+| 3.2 | Productions | research-only | ❌ Defer |
+| 3.3 | Frame.io | needs API key + auth flow | ❌ Defer |
+
+**Phase 3.4 HDR — discovery details:**
+- `seq.getSettings().workingColorSpaceList` returns 4 entries: Rec. 709, Rec. 2100 HLG, Rec. 2100 PQ, ACEScct
+- `seq.getSettings().workingColorSpace = picked; seq.setSettings(settings)` switches sequence working color space
+- Per-clip: `projectItem.getOverrideColorSpaceList` (property, not function — returns 32 entries including camera-native S-Log/V-Log/ARRI/RED) + `projectItem.setOverrideColorSpace(spaceObj)` for per-clip override
+- Bonus settings: `autoToneMapEnabled`, `autoInputGamutCompressionEnabled`, `compositeLinearColor` — exposed via `set_sequence_hdr_options`
+- HDR metadata (MaxCLL/MaxFALL, Master Display) likely in encoder presets at export time, not sequence settings — defer
+
+**Phase 3.9 Master Clip Effects — why not feasible:**
+- DOM `projectItem` keys: `children, getOverrideColorSpaceList, interpretedTimebase, name, nodeId, sourceTimebase, timeDisplayFormat, treePath, type` — no `components`, `addEffect`, `getMasterClip`
+- DOM `addEffect`, `applyMasterClipEffect` undefined
+- QE project doesn't expose master clip components either
+- → Master clip effects = UI-only operation. Workaround: apply effect to all instance clips manually.
+
+---
+
 ## ✅ Phase 0.5 — DONE (2026-05-10)
 
 **Outcome:** 2 regression đã plan + 1 regression latent quan trọng hơn (DOM≠QE clipIndex) đều đã fix.
