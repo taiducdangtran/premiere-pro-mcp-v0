@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] - 2026-05-10 — Comprehensive effect-wrapping milestone
+
+### Highlights
+
+- **+136 net tools** since v1.1.1 baseline (307 → 443) — most of which are ergonomic effect wrappers added across 22 batches in this multi-session work.
+- **~100 effect-specific wrappers** for nearly all practical Premiere Pro 25.4 video effects (color/blur/keying/distortion/stylize/generators/wipes/VR/burn-ins).
+- **Phase 3.5 VR/360 + Phase 3.8 Render & Replace** features added (Phase 3.6 Surround pan and Phase 3.9 Master Clip Effects marked NOT FEASIBLE in 25.4 — documented).
+- Multiple **25.4 ExtendScript regression fixes** — DOM↔QE clipIndex mismatch (21 sites), `qeTrack.addTransition` migration, `clip.components[i].remove` migration, sequence in/out point regressions.
+- Five **reusable patterns** documented in plan.md: dup-name flag handling, layer-ref skip, binary-blob skip, normalized vs percent, Adobe quirks.
+
+### Documented limitations (in 25.4)
+
+- `app.saveWorkspace`/`saveWorkspaceAs`/`deleteWorkspace` — undefined.
+- `app.preferences`/`autoSavePrefs`/`userPreferences` — undefined.
+- Mask bezier path APIs — not exposed at any level.
+- Master Clip Effects — `projectItem` doesn't expose components/addEffect.
+- Effects with binary-blob properties (Shape's Path/Appearance, Color Space Transform's Arb Data) — only numeric/enum props settable.
+- Effects with layer-reference properties (Compound Blur's Blur Layer, Texturize's Texture Layer, Compound Arithmetic's Second Source Layer, Calculations's Second Layer, Set Matte's Take Matte From Layer, Difference Matte/Track Matte/Image Matte) — placeholder `4294967295` returned, setValue rejected. Wrappers expose all OTHER props with the limitation documented.
+
+### Changed
+
+- Tool count: 443 (unchanged from v1.1.19; v1.2.0 is a milestone designation)
+- All 19 minor bumps from this session (v1.1.2 through v1.1.19) consolidated under this 1.2.0 line in the changelog.
+
+### Notes
+
+This release closes the long-haul effect-wrapping work that started post-Hetpatel-11/Antipaster merge. From here, future work focuses on Phase 3.1 Dynamic Link AE (research-heavy, requires AE running) and downstream features.
+
 ## [1.1.19] - 2026-05-10 — Phase 4 effect-wrapping complete
 
 ### Added — 6 new tools (437 → 443)

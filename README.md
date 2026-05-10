@@ -6,7 +6,7 @@
 
 **Give AI full control over Adobe Premiere Pro.**
 
-269 tools across 28 modules — the most comprehensive MCP server for video editing.
+**443 tools** across 28+ modules — the most comprehensive MCP server for video editing, including ~100 ergonomic wrappers for Premiere Pro effects.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-green.svg)](https://nodejs.org)
@@ -27,7 +27,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that l
 "Add the B-roll clips to V2, apply a cross dissolve between each, color correct them to match the A-roll, and export a 1080p ProRes."
 ```
 
-The AI handles the entire workflow through 269 tools that cover nearly every ExtendScript and QE DOM API available in Premiere Pro.
+The AI handles the entire workflow through **443 tools** that cover nearly every ExtendScript and QE DOM API available in Premiere Pro 25.4 — including ~100 individual `apply_*` effect wrappers (Lumetri, Ultra Key, Lens Distortion, Cell Pattern, VR Plane to Sphere, Brush Strokes, ASC CDL, …) so the AI can configure effects with named parameters instead of opaque matchNames.
 
 ---
 
@@ -201,7 +201,7 @@ The file-based IPC bridge is simple, reliable, and works across macOS and Window
 
 ---
 
-## Tools (269)
+## Tools (443)
 
 ### Discovery & Inspection (10 + 10)
 
@@ -244,15 +244,39 @@ The file-based IPC bridge is simple, reliable, and works across macOS and Window
 | `set_clip_properties` | Opacity, scale, rotation, position |
 | `link_selection` / `unlink_selection` | Link/unlink A/V |
 
-### Effects & Color (8)
+### Effects & Color — Generic (8)
 
 | Tool | Description |
 |------|-------------|
 | `apply_effect` / `apply_audio_effect` | Apply by name (QE) |
+| `apply_effect_with_properties` | Apply + set initial property values in one call |
 | `remove_effect` / `remove_all_effects` | Remove effects |
 | `color_correct` | Lumetri: exposure, contrast, temperature, etc. |
 | `apply_lut` | Apply LUT files |
 | `stabilize_clip` | Warp Stabilizer with configurable settings |
+| `set_blend_mode` | 27 blend modes |
+
+### Effects — Ergonomic wrappers (~100)
+
+Instead of remembering matchNames and probing property layouts, AI clients call `apply_*` wrappers with named parameters. Each wrapper handles property naming quirks, normalized vs percent ranges, layer-reference limitations, and Adobe spelling typos transparently. Categories:
+
+| Category | Wrappers |
+|---|---|
+| **Color grading** | `apply_lumetri_creative`, `apply_lumetri_vignette`, `apply_lumetri_hsl_secondary`, `apply_asc_cdl`, `apply_color_space_transform`, `apply_cineon_converter`, `apply_color_replace`, `apply_color_pass`, `apply_gamma_correction`, `apply_brightness_contrast`, `apply_proc_amp`, `apply_levels`, `apply_tint`, `apply_black_white`, `apply_invert`, `apply_solid_composite`, `apply_sdr_conform` |
+| **Blur** | `apply_gaussian_blur`, `apply_directional_blur`, `apply_camera_blur`, `apply_channel_blur`, `apply_compound_blur`, `apply_fast_blur`, `apply_pixel_motion_blur` |
+| **Keying** | `apply_ultra_key` + `set_ultra_key_settings`, `apply_color_key`, `apply_luma_key`, `apply_non_red_key`, `apply_extract`, `apply_alpha_adjust`, `apply_remove_matte` |
+| **Distortion** | `apply_mirror`, `apply_spherize`, `apply_twirl`, `apply_wave_warp`, `apply_lens_distortion`, `apply_lens_distortion_correction`, `apply_corner_pin`, `apply_transform`, `apply_offset`, `apply_turbulent_displace`, `apply_magnify` |
+| **Stylize** | `apply_emboss`, `apply_color_emboss`, `apply_brush_strokes`, `apply_find_edges`, `apply_posterize`, `apply_threshold`, `apply_solarize`, `apply_replicate`, `apply_roughen_edges`, `apply_bevel_alpha`, `apply_bevel_edges`, `apply_alpha_glow` |
+| **Time / motion** | `apply_posterize_time`, `apply_timewarp`, `apply_echo`, `apply_strobe_light`, `apply_vector_motion` |
+| **Noise / cleanup** | `apply_noise`, `apply_noise_hls`, `apply_noise_hls_auto`, `apply_noise_alpha`, `apply_dust_and_scratches`, `apply_median_legacy`, `apply_reduce_interlace_flicker`, `apply_sharpen`, `apply_unsharp_mask` |
+| **Generators** | `apply_ramp`, `apply_grid`, `apply_checkerboard`, `apply_4color_gradient`, `apply_cell_pattern`, `apply_lightning`, `apply_lens_flare`, `apply_drop_shadow`, `apply_radial_shadow`, `apply_circle`, `apply_ellipse`, `apply_paint_bucket`, `apply_eyedropper_fill`, `apply_write_on` |
+| **Channel ops** | `apply_arithmetic`, `apply_compound_arithmetic`, `apply_calculations`, `apply_convolution_kernel` |
+| **Wipes (on-clip)** | `apply_linear_wipe`, `apply_radial_wipe`, `apply_venetian_blinds`, `apply_block_dissolve`, `apply_gradient_wipe`, `apply_edge_feather` |
+| **VR/360°** | `apply_vr_plane_to_sphere`, `apply_vr_rotate_sphere`, `apply_vr_blur`, `apply_vr_sharpen`, `apply_vr_glow`, `apply_vr_color_gradients`, `apply_vr_projection`, `apply_vr_digital_glitch`, `apply_vr_chromatic_aberrations`, `apply_vr_fractal_noise`, `apply_vr_de_noise` |
+| **Frame ops** | `apply_vertical_flip`, `apply_horizontal_flip`, `apply_crop_mask`, `apply_mosaic`, `apply_skin_tone_smoothing` |
+| **Burn-in / broadcast** | `apply_clip_name_burn_in`, `apply_timecode_burn_in`, `apply_video_limiter`, `apply_lighting_effects`, `apply_auto_reframe`, `apply_rolling_shutter_repair`, `apply_texturize` |
+| **VR/360° sequence settings** | `get_sequence_vr_settings`, `set_sequence_vr_settings`, `list_vr_effects_and_transitions` |
+| **Render & replace** | `render_clip_in_place`, `render_sequence_range`, `replace_clip_with_file` |
 
 ### Keyframes (8)
 
@@ -327,9 +351,9 @@ The file-based IPC bridge is simple, reliable, and works across macOS and Window
 | `evaluate_expression` | Quick one-line eval |
 | `send_raw_script` | Bypass security validation (advanced) |
 
-### ...and 100+ more
+### ...and 200+ more
 
-Track targeting, batch operations, markers, audio levels, motion/transform, metadata, sequence settings, navigation, project analysis, and more. Run `get_project_info` to get started — the AI will discover what it needs.
+Track targeting, batch operations, markers, audio levels, motion/transform, metadata, sequence settings, navigation, project analysis, scripting, source monitor, captions, workspace, project manager, and more. Run `get_project_info` to get started — the AI will discover what it needs.
 
 ---
 
@@ -413,7 +437,7 @@ premiere-pro-mcp/
 ├── src/
 │   ├── index.ts                 # Entry point — stdio transport setup
 │   ├── http-server.ts           # Entry point — HTTP/SSE transport (Fly.io / remote)
-│   ├── server.ts                # MCP server — registers all 269 tools + 2 resources
+│   ├── server.ts                # MCP server — registers all 443 tools + 2 resources
 │   ├── bridge/
 │   │   ├── file-bridge.ts       # File-based IPC (write .jsx, poll .json)
 │   │   └── script-builder.ts    # ExtendScript generator with ES3 helpers
