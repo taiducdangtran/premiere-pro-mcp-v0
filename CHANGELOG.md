@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.10] - 2026-05-10
+
+### Added — 5 new tools (392 → 397)
+
+#### Phase 4 batch 13 — Wipes / channel ops / motion blur (5 tools, `src/tools/effects.ts`)
+
+- **`apply_venetian_blinds`** — louvre-style wipe-on-clip. Params: transition_completion 0-100, direction deg, width, feather.
+- **`apply_block_dissolve`** — randomized block dissolve. Params: transition_completion, block_width/height, feather, soft_edges.
+- **`apply_convolution_kernel`** — custom 3x3 matrix filter (sharpen/edge/emboss/blur kernels). 9 matrix coefficients M11-M33 + offset + scale + process_alpha.
+- **`apply_compound_arithmetic`** — channel math operators (Add/Subtract/Multiply/Divide/Max/Min). Note: `Second Source Layer` reference NOT settable from API.
+- **`apply_pixel_motion_blur`** — analyzed inter-frame motion blur. Params: shutter_control (Auto/Manual), shutter_angle deg, shutter_samples, vector_detail.
+
+### Changed
+
+- Tool count: 392 → 397
+- Updated `package.json` description
+
+### Verified
+
+- 19 properties round-trip verified.
+- Convolution Kernel default kernel is a 3x3 box blur (sum=6, scale=6 → identity-ish). Sharpen kernel example: M11=-1, M22=9, M33=-1, scale=1 → strong sharpen.
+- Pixel Motion Blur uses analyzed pixel motion vectors; doesn't need keyframes — works on any moving footage.
+
 ## [1.1.9] - 2026-05-10
 
 ### Added — 5 new tools (387 → 392)

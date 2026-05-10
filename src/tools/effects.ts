@@ -3305,6 +3305,351 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_venetian_blinds: {
+      description:
+        "Apply Venetian Blinds effect — louvre-style wipe revealing transparency in horizontal/vertical bands. Acts on a single clip; animate `transition_completion` for the actual blinds-opening motion.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          transition_completion: { type: "number", description: "Wipe progress 0-100 (default 0)" },
+          direction: { type: "number", description: "Blinds direction in degrees (default 0 = horizontal slats)" },
+          width: { type: "number", description: "Slat width in pixels (default 20)" },
+          feather: { type: "number", description: "Edge softness (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        transition_completion?: number; direction?: number; width?: number; feather?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.transition_completion !== undefined) setLines.push(`if (n === "Transition Completion") prop.setValue(${args.transition_completion}, true);`);
+        if (args.direction !== undefined) setLines.push(`if (n === "Direction") prop.setValue(${args.direction}, true);`);
+        if (args.width !== undefined) setLines.push(`if (n === "Width") prop.setValue(${args.width}, true);`);
+        if (args.feather !== undefined) setLines.push(`if (n === "Feather") prop.setValue(${args.feather}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Venetian Blinds is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Venetian Blinds") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Venetian Blinds");
+            if (!eff || !eff.name) return __error("Venetian Blinds effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Venetian Blinds") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_block_dissolve: {
+      description:
+        "Apply Block Dissolve effect — randomized block-style dissolve to transparency. Acts on a single clip; animate `transition_completion`.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          transition_completion: { type: "number", description: "Dissolve progress 0-100 (default 0)" },
+          block_width: { type: "number", description: "Block width in pixels (default 1)" },
+          block_height: { type: "number", description: "Block height in pixels (default 1)" },
+          feather: { type: "number", description: "Edge softness (default 0)" },
+          soft_edges: { type: "boolean", description: "Soft Edges (Best Quality) — default true. Slower but smoother." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        transition_completion?: number; block_width?: number; block_height?: number;
+        feather?: number; soft_edges?: boolean;
+      }) => {
+        const setLines: string[] = [];
+        if (args.transition_completion !== undefined) setLines.push(`if (n === "Transition Completion") prop.setValue(${args.transition_completion}, true);`);
+        if (args.block_width !== undefined) setLines.push(`if (n === "Block Width") prop.setValue(${args.block_width}, true);`);
+        if (args.block_height !== undefined) setLines.push(`if (n === "Block Height") prop.setValue(${args.block_height}, true);`);
+        if (args.feather !== undefined) setLines.push(`if (n === "Feather") prop.setValue(${args.feather}, true);`);
+        if (args.soft_edges !== undefined) setLines.push(`if (n === "Soft Edges (Best Quality)") prop.setValue(${args.soft_edges ? "true" : "false"}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Block Dissolve is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Block Dissolve") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Block Dissolve");
+            if (!eff || !eff.name) return __error("Block Dissolve effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Block Dissolve") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_convolution_kernel: {
+      description:
+        "Apply Convolution Kernel effect — custom 3x3 matrix filter (sharpen, edge-detect, blur, emboss kernels). M11-M33 form the 3x3 kernel; output = (sum of kernel*neighbors + Offset) / Scale.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          m11: { type: "number", description: "Top-left kernel coefficient (default 0)" },
+          m12: { type: "number", description: "Top-center (default 1)" },
+          m13: { type: "number", description: "Top-right (default 0)" },
+          m21: { type: "number", description: "Mid-left (default 1)" },
+          m22: { type: "number", description: "Center (default 2)" },
+          m23: { type: "number", description: "Mid-right (default 1)" },
+          m31: { type: "number", description: "Bottom-left (default 0)" },
+          m32: { type: "number", description: "Bottom-center (default 1)" },
+          m33: { type: "number", description: "Bottom-right (default 0)" },
+          offset: { type: "number", description: "Bias added to result before scaling (default 0)" },
+          scale: { type: "number", description: "Divisor for normalization (default 6 = sum of default kernel)" },
+          process_alpha: { type: "boolean", description: "Apply kernel to alpha channel (default true)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        m11?: number; m12?: number; m13?: number;
+        m21?: number; m22?: number; m23?: number;
+        m31?: number; m32?: number; m33?: number;
+        offset?: number; scale?: number; process_alpha?: boolean;
+      }) => {
+        const setLines: string[] = [];
+        const matrix: [string, number | undefined][] = [
+          ["M11", args.m11], ["M12", args.m12], ["M13", args.m13],
+          ["M21", args.m21], ["M22", args.m22], ["M23", args.m23],
+          ["M31", args.m31], ["M32", args.m32], ["M33", args.m33],
+        ];
+        for (const [label, val] of matrix) {
+          if (val !== undefined) setLines.push(`if (n === "${label}") prop.setValue(${val}, true);`);
+        }
+        if (args.offset !== undefined) setLines.push(`if (n === "Offset") prop.setValue(${args.offset}, true);`);
+        if (args.scale !== undefined) setLines.push(`if (n === "Scale") prop.setValue(${args.scale}, true);`);
+        if (args.process_alpha !== undefined) setLines.push(`if (n === "Process Alpha") prop.setValue(${args.process_alpha ? "true" : "false"}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Convolution Kernel is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Convolution Kernel") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Convolution Kernel");
+            if (!eff || !eff.name) return __error("Convolution Kernel effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Convolution Kernel") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_compound_arithmetic: {
+      description:
+        "Apply Compound Arithmetic effect — combines clip with another layer per-channel using arithmetic operator. Note: 'Second Source Layer' selects external layer reference — NOT settable from API in 25.4. Other params still useful.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          operator: { type: "number", description: "Arithmetic operator enum int (default 0). Common: 0=Add, 1=Subtract, 2=Multiply, 3=Divide, 4=Max, 5=Min." },
+          operate_on_channels: { type: "number", description: "Channel selection enum int (default 0=RGBA). E.g. 1=ARGB, 2=R only, 3=G only, 4=B only." },
+          overflow_behavior: { type: "number", description: "Overflow handling enum int (default 0=Clip)" },
+          stretch_second_source_to_fit: { type: "boolean", description: "Stretch second source to layer bounds (default true)" },
+          blend_with_original: { type: "number", description: "Blend with original 0.0-1.0 (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        operator?: number; operate_on_channels?: number; overflow_behavior?: number;
+        stretch_second_source_to_fit?: boolean; blend_with_original?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.operator !== undefined) setLines.push(`if (n === "Operator") prop.setValue(${Math.round(args.operator)}, true);`);
+        if (args.operate_on_channels !== undefined) setLines.push(`if (n === "Operate on Channels") prop.setValue(${Math.round(args.operate_on_channels)}, true);`);
+        if (args.overflow_behavior !== undefined) setLines.push(`if (n === "Overflow Behavior") prop.setValue(${Math.round(args.overflow_behavior)}, true);`);
+        if (args.stretch_second_source_to_fit !== undefined) setLines.push(`if (n === "Stretch Second Source to Fit") prop.setValue(${args.stretch_second_source_to_fit ? "true" : "false"}, true);`);
+        if (args.blend_with_original !== undefined) setLines.push(`if (n === "Blend With Original") prop.setValue(${args.blend_with_original}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Compound Arithmetic is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Compound Arithmetic") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Compound Arithmetic");
+            if (!eff || !eff.name) return __error("Compound Arithmetic effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Compound Arithmetic") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_pixel_motion_blur: {
+      description:
+        "Apply Pixel Motion Blur effect — analyzes inter-frame pixel motion to add natural-looking motion blur in post. Better than synthesizing blur via animation; doesn't require keyframes.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          shutter_control: { type: "number", description: "0=Auto (default), 1=Manual" },
+          shutter_angle: { type: "number", description: "Virtual shutter angle in degrees (default 180 = standard cinematic)" },
+          shutter_samples: { type: "number", description: "Sample count (default 5). Higher = smoother but slower." },
+          vector_detail: { type: "number", description: "Motion-vector detail percent (default 20). Higher = more accurate vectors but slower." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        shutter_control?: number; shutter_angle?: number;
+        shutter_samples?: number; vector_detail?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.shutter_control !== undefined) setLines.push(`if (n === "Shutter Control") prop.setValue(${Math.round(args.shutter_control)}, true);`);
+        if (args.shutter_angle !== undefined) setLines.push(`if (n === "Shutter Angle") prop.setValue(${args.shutter_angle}, true);`);
+        if (args.shutter_samples !== undefined) setLines.push(`if (n === "Shutter Samples") prop.setValue(${Math.round(args.shutter_samples)}, true);`);
+        if (args.vector_detail !== undefined) setLines.push(`if (n === "Vector Detail") prop.setValue(${args.vector_detail}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Pixel Motion Blur is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Pixel Motion Blur") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Pixel Motion Blur");
+            if (!eff || !eff.name) return __error("Pixel Motion Blur effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Pixel Motion Blur") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_ramp: {
       description:
         "Apply Ramp effect — generates a linear or radial gradient from start_color to end_color. Useful for masks, sky replacement, color overlay sources.",
