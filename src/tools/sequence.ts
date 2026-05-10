@@ -558,5 +558,123 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
         return sendCommand(script, bridgeOptions);
       },
     },
+
+    get_sequence_vr_settings: {
+      description: "Read VR/360 sequence settings (layout, projection, captured view angles). Use this before set_sequence_vr_settings to inspect current values.",
+      parameters: {},
+      handler: async () => {
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          var s = seq.getSettings();
+          return __result({
+            sequenceName: seq.name,
+            vrLayout: s.vrLayout,
+            vrProjection: s.vrProjection,
+            vrHorzCapturedView: s.vrHorzCapturedView,
+            vrVertCapturedView: s.vrVertCapturedView,
+            note: "vrLayout/vrProjection are integer enums. 0 typically means 'monoscopic / not VR'. Set to non-zero values to enable VR. Captured view fields are degrees (e.g. 360 horz / 180 vert for full equirectangular)."
+          });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    set_sequence_vr_settings: {
+      description: "Configure VR/360 settings on the active sequence. Switches a regular sequence into VR mode (or back) by setting layout, projection, and captured view angles. All parameters optional — only provided fields are changed.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          vr_layout: {
+            type: "number",
+            description: "VR layout enum (0 = Monoscopic / not VR, 1 = Stereoscopic Side by Side, 2 = Stereoscopic Top/Bottom). Default unchanged.",
+          },
+          vr_projection: {
+            type: "number",
+            description: "VR projection enum (0 = None / not VR, 1 = Equirectangular). Default unchanged.",
+          },
+          vr_horz_captured_view: {
+            type: "number",
+            description: "Horizontal captured view in degrees (e.g. 360 for full equirectangular, 180 for half-sphere)",
+          },
+          vr_vert_captured_view: {
+            type: "number",
+            description: "Vertical captured view in degrees (e.g. 180 for full equirectangular, 90 for half-sphere)",
+          },
+        },
+      },
+      handler: async (args: {
+        vr_layout?: number;
+        vr_projection?: number;
+        vr_horz_captured_view?: number;
+        vr_vert_captured_view?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.vr_layout !== undefined) setLines.push(`s.vrLayout = ${args.vr_layout};`);
+        if (args.vr_projection !== undefined) setLines.push(`s.vrProjection = ${args.vr_projection};`);
+        if (args.vr_horz_captured_view !== undefined) setLines.push(`s.vrHorzCapturedView = ${args.vr_horz_captured_view};`);
+        if (args.vr_vert_captured_view !== undefined) setLines.push(`s.vrVertCapturedView = ${args.vr_vert_captured_view};`);
+
+        if (setLines.length === 0) {
+          return { success: false, error: "No VR settings provided to update" };
+        }
+
+        const script = buildToolScript(`
+          var seq = app.project.activeSequence;
+          if (!seq) return __error("No active sequence");
+          var s = seq.getSettings();
+          ${setLines.join("\n          ")}
+          var ok = seq.setSettings(s);
+          if (!ok) return __error("setSettings failed");
+          var s2 = seq.getSettings();
+          return __result({
+            sequenceName: seq.name,
+            applied: {
+              vrLayout: s2.vrLayout,
+              vrProjection: s2.vrProjection,
+              vrHorzCapturedView: s2.vrHorzCapturedView,
+              vrVertCapturedView: s2.vrVertCapturedView
+            }
+          });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    list_vr_effects_and_transitions: {
+      description: "List VR/360-specific video effects and transitions available in Premiere. Useful for AI agents working on VR sequences to discover usable effects without scanning the full effects catalog.",
+      parameters: {},
+      handler: async () => {
+        const script = buildToolScript(`
+          app.enableQE();
+          var effectNames = [
+            "VR Plane to Sphere", "VR Rotate Sphere", "VR Sharpen", "VR Glow",
+            "VR Color Gradients", "VR Projection", "VR Digital Glitch",
+            "VR Chromatic Aberrations", "VR Blur", "VR De-Noise", "VR Fractal Noise"
+          ];
+          var transitionNames = [
+            "VR Chroma Leaks", "VR Light Rays", "VR Mobius Zoom",
+            "VR Random Blocks", "VR Iris Wipe", "VR Spherical Blur",
+            "VR Gradient Wipe"
+          ];
+          var availableEffects = [];
+          for (var i = 0; i < effectNames.length; i++) {
+            var e = qe.project.getVideoEffectByName(effectNames[i]);
+            if (e && e.name && e.name.length > 0) availableEffects.push(e.name);
+          }
+          var availableTransitions = [];
+          for (var j = 0; j < transitionNames.length; j++) {
+            var t = qe.project.getVideoTransitionByName(transitionNames[j]);
+            if (t && t.name && t.name.length > 0) availableTransitions.push(t.name);
+          }
+          return __result({
+            videoEffects: availableEffects,
+            videoTransitions: availableTransitions,
+            note: "Apply via apply_effect / add_transition_to_clip with the names above."
+          });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
   };
 }

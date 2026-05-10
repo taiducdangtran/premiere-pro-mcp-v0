@@ -21,6 +21,7 @@
 | (next) | Phase 4 batch 4 — apply_effect_with_properties (architectural) + 3 wrappers (Directional Blur, B&W, Invert) | **340** | +4 (code-only) |
 | `9e89be0` | **Phase 4 runtime verification** — 18 tool wrappers + 1 architectural verified, 4 prop-name bugs fixed (Basic 3D, Levels × 4, Levels gamma, Invert channel enum) | **340** | net 0 (fix-only) |
 | (next) | **Phase 3.8 Render & Replace** — 3 tools (render_clip_in_place, render_sequence_range, replace_clip_with_file) | **343** | +3 (logic dry-run verified, real AME e2e pending) |
+| (next) | **Phase 3.5 VR/360** — 3 tools (get_sequence_vr_settings, set_sequence_vr_settings, list_vr_effects_and_transitions) | **346** | +3 (round-trip verified). 3.6 Surround pan: NOT FEASIBLE (track has no pan API). |
 
 ### 📌 Session continuation note (post-compact, 2026-05-10)
 
@@ -207,9 +208,9 @@
 | 3.4 | HDR workflow | `list_sequence_color_spaces`, `set_sequence_color_space`, `set_sequence_hdr_options`, `list_clip_color_space_overrides`, `set_clip_color_space_override` | ✅ Done — 5 tool. Verified: switch Rec.709 ↔ Rec.2100 HLG ↔ ACEScct trên active sequence |
 | 3.9 | Master Clip Effects | (planned: `apply_master_clip_effect`, `list_master_vs_instance_effects`) | ❌ **NOT FEASIBLE** — Premiere 25.4 ExtendScript projectItem không expose components/addEffect/getMasterClip; QE project cũng không có |
 | 3.8 | Render & Replace | `render_clip_in_place`, `render_sequence_range`, `replace_clip_with_file` | ✅ Done (logic dry-run verified) — 3 tool. Real AME e2e test deferred (tốn CPU + thời gian render). |
-| 3.6 | Surround pan | (planned: `set_surround_pan`, `downmix_to_stereo`) | ⏸️ Pending |
+| 3.6 | Surround pan | (planned: `set_surround_pan`, `downmix_to_stereo`) | ❌ **NOT FEASIBLE** — audio track trong 25.4 chỉ có `setMute/isMuted`, KHÔNG có `setPanDirection/setPan/getPanComponent` hay `components` collection. Per-clip pan đã có sẵn qua `set_clip_pan` (Internal Channel Volume). |
 | 3.1 | Dynamic Link AE | (planned: `replace_with_ae_comp`, `import_ae_project_dynamically`) | ⏸️ Research-heavy (cần AE chạy) |
-| 3.5 | VR/360 | (planned: `convert_to_vr_sequence`, `apply_vr_transition`, `set_vr_view_orientation`) | ⏸️ Pending |
+| 3.5 | VR/360 | `get_sequence_vr_settings`, `set_sequence_vr_settings`, `list_vr_effects_and_transitions` | ✅ Done — 3 tool. Round-trip verified (apply 360×180 equirectangular + restore). |
 | 3.2 | Productions | research-only | ❌ Defer |
 | 3.3 | Frame.io | needs API key + auth flow | ❌ Defer |
 
@@ -312,6 +313,56 @@
   - Set new in/out via clipStart.ticks (string) ✓
   - Restore via `__secondsToTicks(prevSec).toString()` ✓
 - ⏸️ Real AME e2e (start AME + render + replace) — deferred to user-driven test (tốn CPU + thời gian)
+
+---
+
+## ✅ Phase 3.5 VR/360 — DONE (2026-05-10, post-compact)
+
+**Tool count sau Phase 3.5:** **346** (343 + 3)
+
+### Spike findings
+
+`seq.getSettings()` trên 25.4 expose 4 VR fields:
+- `vrLayout` (number enum) — 0 = Monoscopic, 1 = Stereoscopic SbS, 2 = Stereoscopic Top/Bottom
+- `vrProjection` (number enum) — 0 = None (not VR), 1 = Equirectangular
+- `vrHorzCapturedView` (degrees, e.g. 360 for full sphere)
+- `vrVertCapturedView` (degrees, e.g. 180 for full sphere)
+
+Round-trip `seq.setSettings()` returns `true` and changes apply correctly.
+
+**8 VR effects + 4 VR transitions** confirmed available qua `qe.project.getVideoEffectByName`:
+- Effects: VR Plane to Sphere, VR Rotate Sphere, VR Sharpen, VR Glow, VR Color Gradients, VR Projection, VR Digital Glitch, VR Chromatic Aberrations
+- Transitions: VR Chroma Leaks, VR Light Rays, VR Mobius Zoom, VR Random Blocks
+
+### Tools added (sequence.ts)
+
+| # | Tool | Purpose |
+|---|---|---|
+| 1 | `get_sequence_vr_settings` | Read current VR settings of active sequence |
+| 2 | `set_sequence_vr_settings` | Configure VR mode (layout/projection/horz/vert captured view); only provided fields are changed |
+| 3 | `list_vr_effects_and_transitions` | Discovery tool — probe which VR effects/transitions are available, useful cho AI agent on VR sequences |
+
+### Verification
+
+- ✅ TypeScript build zero errors
+- ✅ Round-trip test on Sequence 01 Cắt:
+  - Initial: `{vrLayout:0, vrProjection:0, vrHorzCapturedView:0, vrVertCapturedView:0}` (monoscopic non-VR)
+  - Apply equirectangular monoscopic 360×180 → all 4 fields confirmed via re-read
+  - Restore back to initial → all fields confirmed back
+
+### Phase 3.6 Surround pan — NOT FEASIBLE
+
+Track-level API `seq.audioTracks[i]` chỉ expose: `clips, id, mediaType, name, transitions, setMute(), isMuted()`. Không có:
+- `setPanDirection / setPan / pan` 
+- `getPanComponent / panComponent`
+- `components` collection
+- `audioChannelType`
+
+Clip-level pan đã có qua existing `set_clip_pan` (Panner component, displayName "Balance"/"Pan"). Stereo Channel Volume Left/Right cũng accessible qua `Internal Channel Volume Stereo` component nhưng existing `set_clip_pan` đủ dùng.
+
+**Marked as not feasible:**
+- `set_surround_pan` (5.1/7.1 panner) — track API missing
+- `downmix_to_stereo` (custom coefficients) — track API missing
 
 ---
 
