@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.12] - 2026-05-10
+
+### Added — 5 new tools (402 → 407)
+
+#### Phase 4 batch 15 — Mixed effects (5 tools, `src/tools/effects.ts`)
+
+- **`apply_lightning`** — animated lightning generator. 25 properties — wrapper exposes the most useful subset (start/end points, branching, color, width, speed, random_seed, rerun_at_each_frame).
+- **`apply_vector_motion`** — secondary motion stack (position/scale/rotation/anchor) on top of intrinsic Motion.
+- **`apply_eyedropper_fill`** — fill clip with sampled color from a point (animate sample_point to drive color from moving feature).
+- **`apply_calculations`** — channel math operators between input and second source. Note: `Second Layer` reference NOT settable from API.
+- **`apply_alpha_adjust`** — alpha channel control: opacity multiplier, ignore alpha, invert alpha, mask-only output.
+
+### Skipped from batch 15
+
+- **Shape** — has binary blob `Path` and `Appearance` properties (encoded shape definition); only transform props would be settable, making the wrapper of limited utility. Skipped in favor of Alpha Adjust.
+
+### Changed
+
+- Tool count: 402 → 407
+- Updated `package.json` description
+
+### Verified
+
+- 23 properties round-trip verified.
+- Discovery: Calculations `Second Layer Opacity` is 0.0-1.0 normalized (NOT 0-100 like UI suggests — set 50 clamps to 1.0). Wrapper description updated.
+
 ## [1.1.11] - 2026-05-10
 
 ### Added — 5 new tools (397 → 402)

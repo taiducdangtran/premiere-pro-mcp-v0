@@ -3305,6 +3305,415 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_lightning: {
+      description:
+        "Apply Lightning effect — animated lightning generator with branching, jaggedness, and width. Common for sci-fi/storm scenes. 25 properties — wrapper exposes the most useful subset (start/end points, branching, color, width, speed, random_seed).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          start_x: { type: "number", description: "Start point X 0.0-1.0 (default 0.25)" },
+          start_y: { type: "number", description: "Start point Y 0.0-1.0 (default 0.5)" },
+          end_x: { type: "number", description: "End point X 0.0-1.0 (default 0.75)" },
+          end_y: { type: "number", description: "End point Y 0.0-1.0 (default 0.5)" },
+          segments: { type: "number", description: "Main bolt segments (default 7). More = jaggier." },
+          amplitude: { type: "number", description: "Main bolt amplitude/zigzag (default 10)" },
+          detail_level: { type: "number", description: "Detail level (default 2)" },
+          detail_amplitude: { type: "number", description: "Detail amplitude 0-1 (default 0.3)" },
+          branching: { type: "number", description: "Branching probability 0-1 (default 0.2)" },
+          rebranching: { type: "number", description: "Rebranching probability 0-1 (default 0.1)" },
+          branch_angle: { type: "number", description: "Branch angle in degrees (default 20)" },
+          branch_seg_length: { type: "number", description: "Branch segment length 0-1 (default 0.5)" },
+          branch_segments: { type: "number", description: "Branch segments per branch (default 4)" },
+          branch_width: { type: "number", description: "Branch width 0-1 (default 0.7)" },
+          speed: { type: "number", description: "Animation speed (default 10)" },
+          stability: { type: "number", description: "Stability 0-1 (default 0.3)" },
+          fixed_endpoint: { type: "boolean", description: "Fix endpoint position (default true)" },
+          width: { type: "number", description: "Bolt width in pixels (default 10)" },
+          width_variation: { type: "number", description: "Width variation 0-1 (default 0)" },
+          core_width: { type: "number", description: "Core (bright center) width 0-1 (default 0.4)" },
+          outside_color: { type: "array", items: { type: "number" }, description: "Outer glow color [R,G,B] 0-255. Default green-blue." },
+          inside_color: { type: "array", items: { type: "number" }, description: "Inside (core) color [R,G,B] 0-255. Default white." },
+          random_seed: { type: "number", description: "Random seed (default 1)" },
+          blending_mode: { type: "number", description: "Blend mode int (default 1=Add)" },
+          rerun_at_each_frame: { type: "boolean", description: "Rerun simulation each frame (default false). True = animated lightning." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: any) => {
+        const setLines: string[] = [];
+        if (args.start_x !== undefined || args.start_y !== undefined) {
+          const sx = args.start_x ?? 0.25;
+          const sy = args.start_y ?? 0.5;
+          setLines.push(`if (n === "Start point") prop.setValue([${sx}, ${sy}], true);`);
+        }
+        if (args.end_x !== undefined || args.end_y !== undefined) {
+          const ex = args.end_x ?? 0.75;
+          const ey = args.end_y ?? 0.5;
+          setLines.push(`if (n === "End point") prop.setValue([${ex}, ${ey}], true);`);
+        }
+        const numericMap: [string, number | undefined][] = [
+          ["Segments", args.segments], ["Amplitude", args.amplitude],
+          ["Detail Level", args.detail_level], ["Detail Amplitude", args.detail_amplitude],
+          ["Branching", args.branching], ["Rebranching", args.rebranching],
+          ["Branch Angle", args.branch_angle], ["Branch Seg. Length", args.branch_seg_length],
+          ["Branch Segments", args.branch_segments], ["Branch Width", args.branch_width],
+          ["Speed", args.speed], ["Stability", args.stability],
+          ["Width", args.width], ["Width Variation", args.width_variation], ["Core Width", args.core_width],
+          ["Random Seed", args.random_seed], ["Blending Mode", args.blending_mode],
+        ];
+        for (const [n, v] of numericMap) {
+          if (v !== undefined) setLines.push(`if (n === "${n}") prop.setValue(${v}, true);`);
+        }
+        if (args.fixed_endpoint !== undefined) setLines.push(`if (n === "Fixed Endpoint") prop.setValue(${args.fixed_endpoint ? "true" : "false"}, true);`);
+        if (args.rerun_at_each_frame !== undefined) setLines.push(`if (n === "Rerun At Each Frame") prop.setValue(${args.rerun_at_each_frame ? "true" : "false"}, true);`);
+        if (args.outside_color && args.outside_color.length >= 3) {
+          const [r, g, b] = args.outside_color;
+          const a = args.outside_color[3] ?? 255;
+          setLines.push(`if (n === "Outside Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+        if (args.inside_color && args.inside_color.length >= 3) {
+          const [r, g, b] = args.inside_color;
+          const a = args.inside_color[3] ?? 255;
+          setLines.push(`if (n === "Inside Color") prop.setColorValue(${r}, ${g}, ${b}, ${a});`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Lightning is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Lightning") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Lightning");
+            if (!eff || !eff.name) return __error("Lightning effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Lightning") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_vector_motion: {
+      description:
+        "Apply Vector Motion effect — secondary motion controls (position/scale/rotation/anchor) that stack with the intrinsic Motion. Useful when you want to keyframe two layers of transforms independently — for example, intrinsic Motion drives the camera move, Vector Motion drives a wobble.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          position_x: { type: "number", description: "Position X 0.0-1.0 normalized (default 0.5)" },
+          position_y: { type: "number", description: "Position Y 0.0-1.0 normalized (default 0.5)" },
+          scale: { type: "number", description: "Uniform scale percent (default 100)" },
+          scale_width: { type: "number", description: "Width scale percent when uniform_scale=false (default 100)" },
+          uniform_scale: { type: "boolean", description: "Lock scale_width to scale (default true)" },
+          rotation: { type: "number", description: "Rotation in degrees (default 0)" },
+          anchor_x: { type: "number", description: "Anchor X 0.0-1.0 (default 0.5)" },
+          anchor_y: { type: "number", description: "Anchor Y 0.0-1.0 (default 0.5)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        position_x?: number; position_y?: number;
+        scale?: number; scale_width?: number; uniform_scale?: boolean;
+        rotation?: number;
+        anchor_x?: number; anchor_y?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.position_x !== undefined || args.position_y !== undefined) {
+          const px = args.position_x ?? 0.5;
+          const py = args.position_y ?? 0.5;
+          setLines.push(`if (n === "Position") prop.setValue([${px}, ${py}], true);`);
+        }
+        if (args.scale !== undefined) setLines.push(`if (n === "Scale") prop.setValue(${args.scale}, true);`);
+        if (args.scale_width !== undefined) setLines.push(`if (n === "Scale Width") prop.setValue(${args.scale_width}, true);`);
+        if (args.uniform_scale !== undefined) setLines.push(`if (n === "Uniform Scale") prop.setValue(${args.uniform_scale ? "true" : "false"}, true);`);
+        if (args.rotation !== undefined) setLines.push(`if (n === "Rotation") prop.setValue(${args.rotation}, true);`);
+        if (args.anchor_x !== undefined || args.anchor_y !== undefined) {
+          const ax = args.anchor_x ?? 0.5;
+          const ay = args.anchor_y ?? 0.5;
+          setLines.push(`if (n === "Anchor Point") prop.setValue([${ax}, ${ay}], true);`);
+        }
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Vector Motion is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Vector Motion") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Vector Motion");
+            if (!eff || !eff.name) return __error("Vector Motion effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Vector Motion") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_eyedropper_fill: {
+      description:
+        "Apply Eyedropper Fill effect — fills the entire clip with a color sampled from a single point (or averaged area) of the source. Animate `sample_point` to drive a clip's color from a moving feature in the source.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          sample_x: { type: "number", description: "Sample X 0.0-1.0 (default 0.5)" },
+          sample_y: { type: "number", description: "Sample Y 0.0-1.0 (default 0.5)" },
+          sample_radius: { type: "number", description: "Sample radius in pixels (default 10). Larger = averages more pixels around point." },
+          average_pixel_colors: { type: "number", description: "Averaging mode enum (default 0=Skip Empty/Hidden Pixels)" },
+          maintain_original_alpha: { type: "boolean", description: "Preserve source alpha (default false)" },
+          blend_with_original: { type: "number", description: "Blend with original 0.0-1.0 (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        sample_x?: number; sample_y?: number;
+        sample_radius?: number;
+        average_pixel_colors?: number;
+        maintain_original_alpha?: boolean;
+        blend_with_original?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.sample_x !== undefined || args.sample_y !== undefined) {
+          const sx = args.sample_x ?? 0.5;
+          const sy = args.sample_y ?? 0.5;
+          setLines.push(`if (n === "Sample Point") prop.setValue([${sx}, ${sy}], true);`);
+        }
+        if (args.sample_radius !== undefined) setLines.push(`if (n === "Sample Radius") prop.setValue(${args.sample_radius}, true);`);
+        if (args.average_pixel_colors !== undefined) setLines.push(`if (n === "Average Pixel Colors") prop.setValue(${Math.round(args.average_pixel_colors)}, true);`);
+        if (args.maintain_original_alpha !== undefined) setLines.push(`if (n === "Maintain Original Alpha") prop.setValue(${args.maintain_original_alpha ? "true" : "false"}, true);`);
+        if (args.blend_with_original !== undefined) setLines.push(`if (n === "Blend With Original") prop.setValue(${args.blend_with_original}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Eyedropper Fill is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Eyedropper Fill") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Eyedropper Fill");
+            if (!eff || !eff.name) return __error("Eyedropper Fill effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Eyedropper Fill") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_calculations: {
+      description:
+        "Apply Calculations effect — channel math between input and a second source. Note: 'Second Layer' reference NOT settable from API; second-source numeric/enum/blend params still useful for adjusting an already-set layer.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          input_channel: { type: "number", description: "Input channel enum (default 0=RGBA, 1=RGB, 2=Alpha, 3=Gray, 4=Red/Green/Blue, 5=Hue, 6=Saturation, 7=Lightness)" },
+          invert_input: { type: "boolean", description: "Invert input (default false)" },
+          second_layer_channel: { type: "number", description: "Second layer channel enum int (default 0)" },
+          second_layer_opacity: { type: "number", description: "Second layer opacity 0.0-1.0 normalized (default 0). Note: NOT 0-100 like UI suggests — 50 clamps to 1.0." },
+          invert_second_layer: { type: "boolean", description: "Invert second layer (default false)" },
+          stretch_second_layer_to_fit: { type: "boolean", description: "Stretch second layer (default true)" },
+          blending_mode: { type: "number", description: "Blend mode int (default 0)" },
+          preserve_transparency: { type: "boolean", description: "Preserve transparency (default true)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        input_channel?: number; invert_input?: boolean;
+        second_layer_channel?: number; second_layer_opacity?: number;
+        invert_second_layer?: boolean; stretch_second_layer_to_fit?: boolean;
+        blending_mode?: number; preserve_transparency?: boolean;
+      }) => {
+        const setLines: string[] = [];
+        if (args.input_channel !== undefined) setLines.push(`if (n === "Input Channel") prop.setValue(${Math.round(args.input_channel)}, true);`);
+        if (args.invert_input !== undefined) setLines.push(`if (n === "Invert Input") prop.setValue(${args.invert_input ? "true" : "false"}, true);`);
+        if (args.second_layer_channel !== undefined) setLines.push(`if (n === "Second Layer Channel") prop.setValue(${Math.round(args.second_layer_channel)}, true);`);
+        if (args.second_layer_opacity !== undefined) setLines.push(`if (n === "Second Layer Opacity") prop.setValue(${args.second_layer_opacity}, true);`);
+        if (args.invert_second_layer !== undefined) setLines.push(`if (n === "Invert Second Layer") prop.setValue(${args.invert_second_layer ? "true" : "false"}, true);`);
+        if (args.stretch_second_layer_to_fit !== undefined) setLines.push(`if (n === "Stretch Second Layer to Fit") prop.setValue(${args.stretch_second_layer_to_fit ? "true" : "false"}, true);`);
+        if (args.blending_mode !== undefined) setLines.push(`if (n === "Blending Mode") prop.setValue(${Math.round(args.blending_mode)}, true);`);
+        if (args.preserve_transparency !== undefined) setLines.push(`if (n === "Preserve Transparency") prop.setValue(${args.preserve_transparency ? "true" : "false"}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Calculations is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Calculations") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Calculations");
+            if (!eff || !eff.name) return __error("Calculations effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Calculations") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_alpha_adjust: {
+      description:
+        "Apply Alpha Adjust effect — controls clip's alpha channel: opacity multiplier, ignore alpha, invert alpha, or output as luma matte (Mask Only). Useful when intrinsic Opacity is keyframed and you need a second alpha layer.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          opacity: { type: "number", description: "Alpha multiplier 0-100 (default 100)" },
+          ignore_alpha: { type: "boolean", description: "Ignore source alpha — treat as fully opaque (default false)" },
+          invert_alpha: { type: "boolean", description: "Invert alpha channel (default false)" },
+          mask_only: { type: "boolean", description: "Output the alpha as a luma-only matte (default false)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        opacity?: number; ignore_alpha?: boolean;
+        invert_alpha?: boolean; mask_only?: boolean;
+      }) => {
+        const setLines: string[] = [];
+        if (args.opacity !== undefined) setLines.push(`if (n === "Opacity") prop.setValue(${args.opacity}, true);`);
+        if (args.ignore_alpha !== undefined) setLines.push(`if (n === "Ignore Alpha") prop.setValue(${args.ignore_alpha ? "true" : "false"}, true);`);
+        if (args.invert_alpha !== undefined) setLines.push(`if (n === "Invert Alpha") prop.setValue(${args.invert_alpha ? "true" : "false"}, true);`);
+        if (args.mask_only !== undefined) setLines.push(`if (n === "Mask Only") prop.setValue(${args.mask_only ? "true" : "false"}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Alpha Adjust is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Alpha Adjust") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Alpha Adjust");
+            if (!eff || !eff.name) return __error("Alpha Adjust effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Alpha Adjust") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_color_key: {
       description:
         "Apply Color Key (legacy chroma key) — keys out a single solid color with tolerance. For better results use the existing apply_ultra_key. Color Key remains useful for simple solid-color removals.",

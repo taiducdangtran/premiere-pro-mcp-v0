@@ -34,6 +34,7 @@
 | (next) | **Phase 4 batch 12 + v1.1.9** — 5 generator wrappers (Ramp, Grid, Checkerboard, 4-Color Gradient, Cell Pattern) + dup-name flag pattern | **392** | +5 (runtime verified) |
 | (next) | **Phase 4 batch 13 + v1.1.10** — 5 wipes/channel/motion-blur wrappers (Venetian Blinds, Block Dissolve, Convolution Kernel, Compound Arithmetic, Pixel Motion Blur) | **397** | +5 (runtime verified) |
 | (next) | **Phase 4 batch 14 + v1.1.11** — 5 keyers/shapes (Color Key, Luma Key, Non Red Key, Circle, Ellipse) — passing 400-tool milestone | **402** | +5 (runtime verified) |
+| (next) | **Phase 4 batch 15 + v1.1.12** — 5 mixed (Lightning, Vector Motion, Eyedropper Fill, Calculations, Alpha Adjust). Shape skipped — binary Path/Appearance blobs | **407** | +5 (runtime verified) |
 
 ### 📌 Session continuation note (post-compact, 2026-05-10)
 
