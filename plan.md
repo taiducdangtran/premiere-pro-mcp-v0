@@ -29,6 +29,7 @@
 | (next) | **v1.1.4 release** — package.json 1.1.3→1.1.4, CHANGELOG entry | **367** | net 0 (release) |
 | (next) | **Phase 4 batch 8 + v1.1.5** — 5 effect wrappers (Color Replace, Color Pass, Gamma Correction, Channel Blur, Strobe Light) | **372** | +5 (runtime verified) |
 | (next) | **Phase 4 batch 9 + v1.1.6** — 5 effect wrappers (Lens Distortion, Posterize Time, Edge Feather, Magnify, Compound Blur) | **377** | +5 (runtime verified) |
+| (next) | **Phase 4 batch 10 + v1.1.7** — 5 effect wrappers (Brush Strokes, Emboss, Color Emboss, Linear Wipe, Radial Wipe) | **382** | +5 (runtime verified) |
 
 ### 📌 Session continuation note (post-compact, 2026-05-10)
 

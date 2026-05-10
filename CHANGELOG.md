@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.7] - 2026-05-10
+
+### Added — 5 new tools (377 → 382)
+
+#### Phase 4 batch 10 — Stylize/Wipe wrappers (5 tools, `src/tools/effects.ts`)
+
+- **`apply_brush_strokes`** — painterly look. Params: stroke_angle, brush_size, stroke_length, stroke_density, stroke_randomness, paint_surface (0=Original/1=Transparent/2=White/3=Black), blend_with_original.
+- **`apply_emboss`** — grayscale embossed relief. Params: direction, relief, contrast, blend_with_original.
+- **`apply_color_emboss`** — colored embossed relief (preserves original colors). Same param shape as Emboss.
+- **`apply_linear_wipe`** — directional wipe-on-clip. Params: transition_completion 0-100, wipe_angle deg, feather. Animate transition_completion for the actual wipe.
+- **`apply_radial_wipe`** — clock-style wipe-on-clip. Params: transition_completion, start_angle, center_x/y (0-1), wipe (0=CW, 1=CCW, 2=Both), feather.
+
+### Changed
+
+- Tool count: 377 → 382
+- Updated `package.json` description
+
+### Verified
+
+- 19 properties round-trip verified.
+- Linear Wipe / Radial Wipe are EFFECTS (act on a single clip), distinct from track-level Transitions. Animate `transition_completion` over time for actual wipe motion.
+
 ## [1.1.6] - 2026-05-10
 
 ### Added — 5 new tools (372 → 377)

@@ -3305,6 +3305,356 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_brush_strokes: {
+      description:
+        "Apply Brush Strokes effect — painterly look with configurable angle/size/density. Common stylization for art-style transitions or watercolor look.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          stroke_angle: { type: "number", description: "Brush stroke angle in degrees (default 135)" },
+          brush_size: { type: "number", description: "Brush size 0-10 (default 2). Larger = chunkier strokes." },
+          stroke_length: { type: "number", description: "Stroke length (default 5)" },
+          stroke_density: { type: "number", description: "Stroke density 0-1 (default 1)" },
+          stroke_randomness: { type: "number", description: "Randomness 0-1 (default 1)" },
+          paint_surface: { type: "number", description: "Background: 0=Paint On Original (default), 1=On Transparent, 2=On White, 3=On Black" },
+          blend_with_original: { type: "number", description: "Blend with original 0.0-1.0 (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        stroke_angle?: number;
+        brush_size?: number;
+        stroke_length?: number;
+        stroke_density?: number;
+        stroke_randomness?: number;
+        paint_surface?: number;
+        blend_with_original?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.stroke_angle !== undefined) setLines.push(`if (n === "Stroke Angle") prop.setValue(${args.stroke_angle}, true);`);
+        if (args.brush_size !== undefined) setLines.push(`if (n === "Brush Size") prop.setValue(${args.brush_size}, true);`);
+        if (args.stroke_length !== undefined) setLines.push(`if (n === "Stroke Length") prop.setValue(${args.stroke_length}, true);`);
+        if (args.stroke_density !== undefined) setLines.push(`if (n === "Stroke Density") prop.setValue(${args.stroke_density}, true);`);
+        if (args.stroke_randomness !== undefined) setLines.push(`if (n === "Stroke Randomness") prop.setValue(${args.stroke_randomness}, true);`);
+        if (args.paint_surface !== undefined) setLines.push(`if (n === "Paint Surface") prop.setValue(${Math.round(args.paint_surface)}, true);`);
+        if (args.blend_with_original !== undefined) setLines.push(`if (n === "Blend With Original") prop.setValue(${args.blend_with_original}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Brush Strokes is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Brush Strokes") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Brush Strokes");
+            if (!eff || !eff.name) return __error("Brush Strokes effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Brush Strokes") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_emboss: {
+      description:
+        "Apply Emboss effect — grayscale embossed look (highlights edges as raised relief on a neutral gray). For colored embossing, use apply_color_emboss.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          direction: { type: "number", description: "Light direction in degrees (default 45)" },
+          relief: { type: "number", description: "Relief depth 0-50 (default 1). Larger = more pronounced 3D look." },
+          contrast: { type: "number", description: "Contrast 0-1000 (default 100)" },
+          blend_with_original: { type: "number", description: "Blend with original 0.0-1.0 (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        direction?: number;
+        relief?: number;
+        contrast?: number;
+        blend_with_original?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.direction !== undefined) setLines.push(`if (n === "Direction") prop.setValue(${args.direction}, true);`);
+        if (args.relief !== undefined) setLines.push(`if (n === "Relief") prop.setValue(${args.relief}, true);`);
+        if (args.contrast !== undefined) setLines.push(`if (n === "Contrast") prop.setValue(${args.contrast}, true);`);
+        if (args.blend_with_original !== undefined) setLines.push(`if (n === "Blend With Original") prop.setValue(${args.blend_with_original}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Emboss is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Emboss") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Emboss");
+            if (!eff || !eff.name) return __error("Emboss effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Emboss") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_color_emboss: {
+      description:
+        "Apply Color Emboss effect — preserves original colors while adding embossed edge relief. For grayscale embossing use apply_emboss.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          direction: { type: "number", description: "Light direction in degrees (default 45)" },
+          relief: { type: "number", description: "Relief depth (default 1)" },
+          contrast: { type: "number", description: "Contrast (default 100)" },
+          blend_with_original: { type: "number", description: "Blend with original 0.0-1.0 (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        direction?: number;
+        relief?: number;
+        contrast?: number;
+        blend_with_original?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.direction !== undefined) setLines.push(`if (n === "Direction") prop.setValue(${args.direction}, true);`);
+        if (args.relief !== undefined) setLines.push(`if (n === "Relief") prop.setValue(${args.relief}, true);`);
+        if (args.contrast !== undefined) setLines.push(`if (n === "Contrast") prop.setValue(${args.contrast}, true);`);
+        if (args.blend_with_original !== undefined) setLines.push(`if (n === "Blend With Original") prop.setValue(${args.blend_with_original}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Color Emboss is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Color Emboss") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Color Emboss");
+            if (!eff || !eff.name) return __error("Color Emboss effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Color Emboss") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_linear_wipe: {
+      description:
+        "Apply Linear Wipe effect — directional wipe revealing transparency from one edge. Animate `transition_completion` over time for a wipe-on/wipe-off transition. Acts on the layer (not as a transition between two clips).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          transition_completion: { type: "number", description: "Wipe progress 0-100 (default 0 = fully visible, 100 = fully wiped to transparent). Animate this for the actual wipe." },
+          wipe_angle: { type: "number", description: "Wipe direction in degrees (default 90 = wipe from left). 0=top, 90=left, 180=bottom, 270=right." },
+          feather: { type: "number", description: "Wipe edge softness in pixels (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        transition_completion?: number;
+        wipe_angle?: number;
+        feather?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.transition_completion !== undefined) setLines.push(`if (n === "Transition Completion") prop.setValue(${args.transition_completion}, true);`);
+        if (args.wipe_angle !== undefined) setLines.push(`if (n === "Wipe Angle") prop.setValue(${args.wipe_angle}, true);`);
+        if (args.feather !== undefined) setLines.push(`if (n === "Feather") prop.setValue(${args.feather}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Linear Wipe is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Linear Wipe") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Linear Wipe");
+            if (!eff || !eff.name) return __error("Linear Wipe effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Linear Wipe") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_radial_wipe: {
+      description:
+        "Apply Radial Wipe effect — clock-style wipe revealing transparency around a center point. Acts on the layer (not as a transition between two clips). Animate `transition_completion` over time.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          transition_completion: { type: "number", description: "Wipe progress 0-100 (default 0)" },
+          start_angle: { type: "number", description: "Start angle in degrees (default 0 = top, clockwise)" },
+          center_x: { type: "number", description: "Pivot X 0.0-1.0 normalized (default 0.5 = center)" },
+          center_y: { type: "number", description: "Pivot Y 0.0-1.0 normalized (default 0.5)" },
+          wipe: { type: "number", description: "Direction: 0=Clockwise (default), 1=Counterclockwise, 2=Both (sweeping outward)" },
+          feather: { type: "number", description: "Edge softness in pixels (default 0)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: {
+        node_id: string;
+        transition_completion?: number;
+        start_angle?: number;
+        center_x?: number;
+        center_y?: number;
+        wipe?: number;
+        feather?: number;
+      }) => {
+        const setLines: string[] = [];
+        if (args.transition_completion !== undefined) setLines.push(`if (n === "Transition Completion") prop.setValue(${args.transition_completion}, true);`);
+        if (args.start_angle !== undefined) setLines.push(`if (n === "Start Angle") prop.setValue(${args.start_angle}, true);`);
+        if (args.center_x !== undefined || args.center_y !== undefined) {
+          const cx = args.center_x ?? 0.5;
+          const cy = args.center_y ?? 0.5;
+          setLines.push(`if (n === "Wipe Center") prop.setValue([${cx}, ${cy}], true);`);
+        }
+        if (args.wipe !== undefined) setLines.push(`if (n === "Wipe") prop.setValue(${Math.round(args.wipe)}, true);`);
+        if (args.feather !== undefined) setLines.push(`if (n === "Feather") prop.setValue(${args.feather}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Radial Wipe is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Radial Wipe") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Radial Wipe");
+            if (!eff || !eff.name) return __error("Radial Wipe effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Radial Wipe") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_lens_distortion: {
       description:
         "Apply Lens Distortion effect — simulate or correct lens curvature/decentering/prism aberration. Different from existing apply_lens_distortion_correction (which uses Lens Correction effect).",
