@@ -18,6 +18,7 @@
 | `884c809` | Phase 4 batch (partial) — 4 effect wrapper tools | **326** | +4 (runtime test pending) |
 | (next) | Phase 4 expansion — 5 more wrappers + edit_subclip_boundaries | **331** | +5 (code-only, CEP hung) |
 | (next) | Phase 4 batch 3 — 5 more wrappers (Gaussian Blur, Mosaic, Lens Flare, Skin Tone, Levels) | **336** | +5 (code-only) |
+| (next) | Phase 4 batch 4 — apply_effect_with_properties (architectural) + 3 wrappers (Directional Blur, B&W, Invert) | **340** | +4 (code-only) |
 
 ### Key discoveries — Premiere 25.4 ExtendScript regressions & limitations
 
@@ -263,6 +264,17 @@ CEP bridge bị hang sau big probe script → end session với code commit. 4 t
 | 14 | `apply_levels` | effects.ts | Levels: input/output black/white + gamma per RGB |
 
 **Tổng sau batch 3:** **336** (331 + 5).
+
+### Phase 4 batch 4 (cùng session, code-only)
+
+| # | Tool | File | Notes |
+|---|---|---|---|
+| 15 | `apply_effect_with_properties` | effects.ts | **Architectural**: generic apply effect + set N properties trong 1 call. LLM dùng tool này thay cho chuỗi apply_effect + set_effect_property × N. Match property by FIRST displayName (cảnh báo về duplicate names). |
+| 16 | `apply_directional_blur` | effects.ts | Motion blur direction + length |
+| 17 | `apply_black_white` | effects.ts | B&W conversion (simple toggle) |
+| 18 | `apply_invert` | effects.ts | Channel invert với selector enum (RGB/Red/Green/Blue/Alpha/Hue/Lightness/Sat/CMY) + blend |
+
+**Tổng sau batch 4:** **340** (336 + 4).
 
 **Pattern:** Mỗi tool wraps `apply_effect` với matchName cụ thể + optional property setters cho sensible defaults. Reuse `__getQEClip(result)` helper từ Phase 0.5 để correct DOM↔QE indexing.
 

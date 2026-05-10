@@ -52,6 +52,106 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
       },
     },
 
+    apply_effect_with_properties: {
+      description:
+        "Apply a video effect AND set multiple properties in a single call — convenience over chaining apply_effect + set_effect_property. " +
+        "Use when you know the effect name + property values upfront. For tuning later, use set_effect_property. " +
+        "Properties are matched by displayName; if multiple properties share a name (e.g. 3 'Saturation' in Lumetri), only the FIRST occurrence is set — use set_effect_property with index for precise control.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the clip" },
+          effect_name: { type: "string", description: "Effect display name (e.g. 'Lumetri Color', 'Lens Distortion')" },
+          properties: {
+            type: "object",
+            description: "Object map of property name → value. e.g. { 'Curvature': -50, 'Vertical Decentering': 10 }",
+            additionalProperties: true,
+          },
+          skip_if_already_applied: {
+            type: "boolean",
+            description: "If true and the effect is already on the clip, skip re-applying (just set properties on existing). Default true.",
+          },
+        },
+        required: ["node_id", "effect_name", "properties"],
+      },
+      handler: async (args: {
+        node_id: string;
+        effect_name: string;
+        properties: Record<string, unknown>;
+        skip_if_already_applied?: boolean;
+      }) => {
+        const skipIfApplied = args.skip_if_already_applied !== false;
+        const propsEntries = Object.entries(args.properties);
+        const propsLines = propsEntries.map(([name, value]) => {
+          let valExpr: string;
+          if (typeof value === "boolean") valExpr = value ? "true" : "false";
+          else if (typeof value === "number") valExpr = String(value);
+          else if (typeof value === "string") valExpr = `"${escapeForExtendScript(value)}"`;
+          else throw new Error(`Unsupported property value type for "${name}": ${typeof value}`);
+          return `if (n === "${escapeForExtendScript(name)}") { prop.setValue(${valExpr}, true); applied[n] = true; }`;
+        });
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var effectName = "${escapeForExtendScript(args.effect_name)}";
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === effectName) { already = true; break; }
+          }
+          var didApply = false;
+          if (!already || !${skipIfApplied}) {
+            var eff = qe.project.getVideoEffectByName(effectName);
+            if (!eff || !eff.name) return __error("Effect not found in QE list: " + effectName);
+            qeClip.addVideoEffect(eff);
+            didApply = true;
+          }
+
+          // Find target component (last instance — typically the one we just added)
+          var target = null;
+          for (var k = clip.components.numItems - 1; k >= 0; k--) {
+            if (clip.components[k].displayName === effectName) { target = clip.components[k]; break; }
+          }
+          if (!target) return __error("Effect component not found after apply");
+
+          // Set properties (first matching displayName per name)
+          var applied = {};
+          var seen = {};
+          for (var p = 0; p < target.properties.numItems; p++) {
+            var prop = target.properties[p];
+            var n = prop.displayName;
+            if (seen[n]) continue;
+            ${propsLines.join("\n            ")}
+            seen[n] = true;
+          }
+
+          // Compute set vs unset
+          var requested = ${JSON.stringify(propsEntries.map(([k]) => k))};
+          var unset = [];
+          for (var u = 0; u < requested.length; u++) {
+            if (!applied[requested[u]]) unset.push(requested[u]);
+          }
+
+          return __result({
+            clipName: clip.name,
+            effect: effectName,
+            applied: didApply,
+            propertiesSet: applied,
+            propertiesNotFound: unset
+          });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
     apply_audio_effect: {
       description: "Apply an audio effect to a clip",
       parameters: {
@@ -517,6 +617,164 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
           for (var j = 0; j < clip.components.numItems; j++) {
             var comp = clip.components[j];
             if (comp.displayName === "Basic 3D") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_directional_blur: {
+      description:
+        "Apply Directional Blur — motion-style blur in a specific direction. Use blur_length 5-30 for subtle motion feel, 50-100 for strong streaking.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          direction: { type: "number", description: "Direction in degrees 0-360 (default 0 = horizontal right-to-left motion)" },
+          blur_length: { type: "number", description: "Blur length 0-1000 (default 10)" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; direction?: number; blur_length?: number }) => {
+        const setLines: string[] = [];
+        if (args.direction !== undefined) setLines.push(`if (n === "Direction") prop.setValue(${args.direction}, true);`);
+        if (args.blur_length !== undefined) setLines.push(`if (n === "Blur Length") prop.setValue(${args.blur_length}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Directional Blur is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Directional Blur") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Directional Blur");
+            if (!eff || !eff.name) return __error("Directional Blur effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Directional Blur") {
+              for (var p = 0; p < comp.properties.numItems; p++) {
+                var prop = comp.properties[p];
+                var n = prop.displayName;
+                ${setLines.join("\n                ")}
+              }
+              break;
+            }
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_black_white: {
+      description:
+        "Apply Black & White conversion to a clip. Simple toggle effect — desaturates the image to monochrome. " +
+        "For tonal control over individual color channels, use Lumetri Color → HSL Secondary instead.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string }) => {
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Black & White is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Black & White") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Black & White");
+            if (!eff || !eff.name) return __error("Black & White effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          return __result({ applied: !already, clipName: clip.name });
+        `);
+        return sendCommand(script, bridgeOptions);
+      },
+    },
+
+    apply_invert: {
+      description:
+        "Apply Invert effect — inverts color channels (negative image look). Channel selector controls which channels are inverted (RGB by default; can target individual R/G/B/A or alpha-only).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          node_id: { type: "string", description: "Node ID of the video clip" },
+          channel: {
+            type: "string",
+            enum: ["RGB", "Red", "Green", "Blue", "Alpha", "Hue", "Lightness", "Saturation", "Yellow", "Magenta", "Cyan"],
+            description: "Channel to invert (default 'RGB' = all color channels)",
+          },
+          blend_with_original: { type: "number", description: "Blend with original 0-100 (0 = full inverted, 100 = unchanged). Default 0." },
+        },
+        required: ["node_id"],
+      },
+      handler: async (args: { node_id: string; channel?: string; blend_with_original?: number }) => {
+        const setLines: string[] = [];
+        if (args.channel !== undefined) setLines.push(`if (n === "Channel") prop.setValue("${escapeForExtendScript(args.channel)}", true);`);
+        if (args.blend_with_original !== undefined) setLines.push(`if (n === "Blend With Original") prop.setValue(${args.blend_with_original}, true);`);
+
+        const script = buildToolScript(`
+          app.enableQE();
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var result = __findClip("${escapeForExtendScript(args.node_id)}");
+          if (!result) return __error("Clip not found");
+          if (result.trackType !== "video") return __error("Invert is video-only");
+
+          var qeClip = __getQEClip(result);
+          if (!qeClip) return __error("QE clip not found");
+
+          var clip = result.clip;
+          var already = false;
+          for (var i = 0; i < clip.components.numItems; i++) {
+            if (clip.components[i].displayName === "Invert") { already = true; break; }
+          }
+          if (!already) {
+            var eff = qe.project.getVideoEffectByName("Invert");
+            if (!eff || !eff.name) return __error("Invert effect not found");
+            qeClip.addVideoEffect(eff);
+          }
+
+          for (var j = 0; j < clip.components.numItems; j++) {
+            var comp = clip.components[j];
+            if (comp.displayName === "Invert") {
               for (var p = 0; p < comp.properties.numItems; p++) {
                 var prop = comp.properties[p];
                 var n = prop.displayName;
