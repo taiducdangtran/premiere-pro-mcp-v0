@@ -308,14 +308,16 @@ Examples:
             var props = [];
             var nameCounts = {};
             for (var pc = 0; pc < comp.properties.numItems; pc++) {
-              var nm = comp.properties[pc].displayName;
+              var nm = "";
+              try { nm = comp.properties[pc].displayName; } catch(eNM) {}
               nameCounts[nm] = (nameCounts[nm] || 0) + 1;
             }
             var seenInComp = {};
             var compFiltered = 0;
             for (var p = 0; p < comp.properties.numItems; p++) {
               var prop = comp.properties[p];
-              var dn = prop.displayName;
+              var dn = "";
+              try { dn = prop.displayName; } catch(eDN) {}
               var pv = null;
               try { pv = prop.getValue(0, 0); } catch(e) {}
               if (!includeInternal && __isInternalProp(dn, pv)) {

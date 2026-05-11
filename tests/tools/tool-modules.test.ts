@@ -45,6 +45,7 @@ import { getWorkspaceTools } from "../../src/tools/workspace.js";
 import { getCaptionTools } from "../../src/tools/captions.js";
 import { getPlaybackTools } from "../../src/tools/playback.js";
 import { getProjectManagerTools } from "../../src/tools/project-manager.js";
+import { getGeneratorTools } from "../../src/tools/generators.js";
 
 interface ToolDef {
   description: string;
@@ -88,6 +89,7 @@ const ALL_MODULES: Array<{
   { name: "captions", getter: getCaptionTools, minTools: 1 },
   { name: "playback", getter: getPlaybackTools, minTools: 3 },
   { name: "project-manager", getter: getProjectManagerTools, minTools: 1 },
+  { name: "generators", getter: getGeneratorTools, minTools: 3 },
 ];
 
 describe("Tool Module Structure", () => {
@@ -169,16 +171,16 @@ describe("Tool Module Structure", () => {
 });
 
 describe("Total Tool Count", () => {
-  it("all modules together have 440 tools", () => {
+  it("all modules together have 443 tools", () => {
     let total = 0;
     for (const mod of ALL_MODULES) {
       total += Object.keys(mod.getter(bridgeOptions)).length;
     }
-    expect(total).toBe(440);
+    expect(total).toBe(443);
   });
 
-  it("there are 28 modules", () => {
-    expect(ALL_MODULES.length).toBe(28);
+  it("there are 29 modules", () => {
+    expect(ALL_MODULES.length).toBe(29);
   });
 });
 
