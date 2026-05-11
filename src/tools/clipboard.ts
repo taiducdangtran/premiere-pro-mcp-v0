@@ -480,35 +480,58 @@ export function getClipboardTools(bridgeOptions: BridgeOptions) {
             }
             var clip = track.clips[clipIndex];
 
-            // Bug #86 fix (v1.2.13): previously we'd push a "setValue threw" entry
-            // AND a "not found" entry for the same target when the first match
-            // rejected the value. Track match-found state separately and stop on
-            // first match (don't fall through to next component).
+            // Bug #86 v3 (v1.2.14): time-varying properties reject plain setValue with
+            // "Illegal Parameter type". Probe chain: setValue(val, true) → setValue(val) →
+            // setValueAtKey(clipStart, val, true) → setValueAtTime(clipStart, val).
+            // Most properties (including Opacity when not keyframed) work with the first;
+            // keyframed ones need the time-based variants.
+            var clipStartTicks = null;
+            try { clipStartTicks = String(clip.start.ticks); } catch(eCST) {}
+
             var didSet = false;
             var matchFound = false;
-            var setValueError = null;
+            var setValueErrors = [];
             var matchedPath = null;
+            var matchedIsTimeVarying = null;
             var propsSeen = [];
             for (var i = 0; i < clip.components.numItems && !matchFound; i++) {
               var comp = clip.components[i];
               for (var j = 0; j < comp.properties.numItems; j++) {
-                var pn = comp.properties[j].displayName;
+                var prop86 = comp.properties[j];
+                var pn = prop86.displayName;
                 if (pn && propsSeen.length < 50) propsSeen.push(pn);
                 if (pn && pn.toLowerCase() === prop) {
                   matchFound = true;
                   matchedPath = comp.displayName + "." + pn;
-                  // Try setValue with the standard 2-arg form, then 1-arg fallback
-                  try {
-                    comp.properties[j].setValue(val, true);
-                    updated++;
-                    didSet = true;
-                  } catch (ex1) {
-                    try {
-                      comp.properties[j].setValue(val);
-                      updated++;
-                      didSet = true;
-                    } catch (ex2) {
-                      setValueError = ex1.toString() + " / 1-arg: " + ex2.toString();
+                  try { matchedIsTimeVarying = !!(prop86.isTimeVarying && prop86.isTimeVarying()); } catch(eTV) {}
+
+                  // Path 1: standard setValue(val, true)
+                  try { prop86.setValue(val, true); updated++; didSet = true; }
+                  catch (ex1) {
+                    setValueErrors.push("setValue(val, true): " + ex1.toString());
+                    // Path 2: 1-arg setValue(val)
+                    try { prop86.setValue(val); updated++; didSet = true; }
+                    catch (ex2) {
+                      setValueErrors.push("setValue(val): " + ex2.toString());
+                      // Path 3: setValueAtKey at clip start (Bug #86 v3)
+                      if (clipStartTicks !== null && typeof prop86.setValueAtKey === "function" && typeof prop86.addKey === "function") {
+                        try {
+                          try { prop86.addKey(clipStartTicks); } catch(eAK) {}
+                          prop86.setValueAtKey(clipStartTicks, val, true);
+                          updated++; didSet = true;
+                        } catch (ex3) {
+                          setValueErrors.push("setValueAtKey(clipStart, val, true): " + ex3.toString());
+                        }
+                      }
+                      // Path 4: setValueAtTime at clip start
+                      if (!didSet && clipStartTicks !== null && typeof prop86.setValueAtTime === "function") {
+                        try {
+                          prop86.setValueAtTime(clipStartTicks, val);
+                          updated++; didSet = true;
+                        } catch (ex4) {
+                          setValueErrors.push("setValueAtTime(clipStart, val): " + ex4.toString());
+                        }
+                      }
                     }
                   }
                   break;
@@ -520,8 +543,10 @@ export function getClipboardTools(bridgeOptions: BridgeOptions) {
                 notFound.push({
                   target: tgt,
                   clip: clip.name,
-                  reason: "matched '" + matchedPath + "' but setValue rejected the value: " + setValueError,
-                  matchedPath: matchedPath
+                  reason: "matched '" + matchedPath + "' but all setValue paths rejected the value (tried setValue/setValueAtKey/setValueAtTime)",
+                  matchedPath: matchedPath,
+                  isTimeVarying: matchedIsTimeVarying,
+                  attempts: setValueErrors
                 });
               } else {
                 notFound.push({

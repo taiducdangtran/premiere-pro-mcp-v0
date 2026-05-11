@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.14] - 2026-05-11 — Sweep #8 feedback: #86 setValue chain, BOM filter root fix
+
+Sweep #8 confirmed 3/4 fixes from v1.2.13 PASS but the BOM filter still leaked (Lumetri "﻾" still in output) and the #86 setValue mystery persisted. Both root-caused this release.
+
+### Fixed
+
+- **#86 `batch_set_clip_property`** v3 — `setValue(val, true)` and `setValue(val)` both reject some Lumetri/time-varying props with "Illegal Parameter type" even though `set_clip_opacity` standalone works on the same clip. Expanded the probe chain to also try `setValueAtKey(clipStart, val, true)` (adding a key first if needed) and `setValueAtTime(clipStart, val)`. Most properties still work via path 1; time-varying ones now fall through to the key/time-based variants. Failed entries surface `isTimeVarying` + `attempts: [...4 errors...]`.
+
+- **#25 BOM filter** v3 — root cause was `prop.getValue(0, 0)` returning a **String wrapper object** (typeof "object") instead of a primitive, so `typeof val === "string"` never matched and the filter skipped. New `__sanitizeBlob(v)` coerces via `String(v)` first, strips BOM/zero-width/control chars (U+0000-U+001F), and reports the prop as internal when the result is empty. Also filters strings > 500 chars (Lumetri "Auto Tone Analytics Data" JSON blob). Applied to both `get_effect_properties` and `list_clip_effects`.
+
+- **Response envelope regression** (indirect) — sweep #8 noted `get_effect_properties` / `list_clip_effects` responses wrapped as `"{\"success\":true,\"data\":{...}}"` JSON-string instead of an object. Root cause: BOM/control chars leaked into ExtendScript's JSON output, breaking the CEP plugin's `JSON.parse(result)` and triggering the fallback path that wraps `data: result` as a string. Fixed transitively by the BOM filter — clean JSON now parses on the CEP side, response shape is restored.
+
 ## [1.2.13] - 2026-05-11 — Sweep #7 fixes: #86 dedup, #87 silent-switch, #88 false-positive
 
 Sweep #7 (against v1.2.12) confirmed 13/13 PASS for all prior fixes but surfaced 3 new bugs. All shipped with the patches the tester sketched in `bug.md`.

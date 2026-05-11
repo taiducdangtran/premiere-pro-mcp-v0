@@ -238,13 +238,27 @@ Examples:
           var components = [];
           var includeInternal = ${includeInternal ? "true" : "false"};
 
+          // Bug #25 v3 (v1.2.14): robust filter — see keyframes.ts for full rationale.
+          function __sanitizeBlob(v) {
+            if (v === null || v === undefined) return v;
+            if (typeof v === "number" || typeof v === "boolean") return v;
+            var s;
+            try { s = String(v); } catch(e) { return null; }
+            if (s.length === 0) return s;
+            var stripped = s.replace(/^[\\s\\uFEFF\\u200B-\\u200D\\u0000-\\u001F]+|[\\s\\uFEFF\\u200B-\\u200D\\u0000-\\u001F]+$/g, "");
+            if (stripped.length === 0) return null;
+            return s;
+          }
           function __isInternalProp(name, val) {
-            var clean = String(name || "").replace(/^[\\s\\uFEFF\\u200B-\\u200D]+|[\\s\\uFEFF\\u200B-\\u200D]+$/g, "");
+            var clean = String(name || "").replace(/^[\\s\\uFEFF\\u200B-\\u200D\\u0000-\\u001F]+|[\\s\\uFEFF\\u200B-\\u200D\\u0000-\\u001F]+$/g, "");
             if (!clean) return true;
             if (!/[A-Za-z0-9]/.test(clean)) return true;
             if (typeof val === "number" && (val > 1e15 || val < -1e15)) return true;
-            // Bug #25 polish (v1.2.13): asset-blob strings that are just a BOM char
-            if (typeof val === "string" && val.length > 0 && val.length < 4 && val.charCodeAt(0) === 0xFEFF) return true;
+            if (val !== null && val !== undefined && typeof val !== "number" && typeof val !== "boolean") {
+              var cleanedVal = __sanitizeBlob(val);
+              if (cleanedVal === null) return true;
+              if (typeof cleanedVal === "string" && cleanedVal.length > 500) return true;
+            }
             return false;
           }
 

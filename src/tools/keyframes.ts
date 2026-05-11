@@ -46,16 +46,41 @@ export function getKeyframeTools(bridgeOptions: BridgeOptions) {
 
           if (!comp) return __error("Effect not found: " + effectName);
 
+          // Bug #25 v3 (v1.2.14): robust filter for Lumetri internal/binary props.
+          // Tester confirmed BOM "﻾" still leaked in v1.2.13 — root cause is the
+          // val may be a String wrapper (typeof "object") not a primitive, and
+          // we also need to strip control chars + huge JSON blobs.
+          function __sanitizeBlob(v) {
+            // Returns a "clean" representation: null when value is just BOM/control
+            // garbage, otherwise the stringified value (capped).
+            if (v === null || v === undefined) return v;
+            if (typeof v === "number" || typeof v === "boolean") return v;
+            var s;
+            try { s = String(v); } catch(e) { return null; }
+            if (s.length === 0) return s;
+            // strip BOM, zero-width, control chars (U+0000-U+001F)
+            var stripped = s.replace(/^[\\s\\uFEFF\\u200B-\\u200D\\u0000-\\u001F]+|[\\s\\uFEFF\\u200B-\\u200D\\u0000-\\u001F]+$/g, "");
+            if (stripped.length === 0) return null; // was all garbage
+            return s;
+          }
           function __isInternalProp(name, val) {
-            // strip whitespace and BOM/zero-width chars
-            var clean = String(name || "").replace(/^[\\s\\uFEFF\\u200B-\\u200D]+|[\\s\\uFEFF\\u200B-\\u200D]+$/g, "");
+            // strip whitespace and BOM/zero-width chars from name
+            var clean = String(name || "").replace(/^[\\s\\uFEFF\\u200B-\\u200D\\u0000-\\u001F]+|[\\s\\uFEFF\\u200B-\\u200D\\u0000-\\u001F]+$/g, "");
             if (!clean) return true;
             // pure non-printable garbage
             if (!/[A-Za-z0-9]/.test(clean)) return true;
             // pointer-style numbers (18+ digits)
             if (typeof val === "number" && (val > 1e15 || val < -1e15)) return true;
-            // Bug #25 polish (v1.2.13): asset-blob strings that are just a BOM char
-            if (typeof val === "string" && val.length > 0 && val.length < 4 && val.charCodeAt(0) === 0xFEFF) return true;
+            // value sanitize → null means all-garbage (BOM/control)
+            if (val !== null && val !== undefined && typeof val !== "number" && typeof val !== "boolean") {
+              var cleanedVal = __sanitizeBlob(val);
+              if (cleanedVal === null) return true;
+              // also drop massive JSON blob strings (e.g. Lumetri "Auto Tone Analytics Data")
+              if (typeof cleanedVal === "string" && cleanedVal.length > 500) {
+                // keep visible name but filter out massive value? prefer to filter the whole prop
+                return true;
+              }
+            }
             return false;
           }
 
