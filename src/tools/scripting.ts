@@ -238,36 +238,66 @@ Examples:
           var components = [];
           var includeInternal = ${includeInternal ? "true" : "false"};
 
-          // Bug #25 v4 (v1.2.15): printable-char count — see keyframes.ts for rationale.
           function __countPrintable(s) {
             var n = 0;
-            for (var i = 0; i < s.length; i++) {
-              var c = s.charCodeAt(i);
-              if (c >= 0x20 && c <= 0x7E) { n++; continue; }
-              if (c >= 0x00A1 && c <= 0x1FFF) { n++; continue; }
-              if (c >= 0x3000 && c <= 0xFFEF) { n++; continue; }
-            }
+            try {
+              for (var i = 0; i < s.length; i++) {
+                var c = s.charCodeAt(i);
+                var bad = false;
+                if (c <= 0x1F) bad = true;
+                else if (c >= 0x7F && c <= 0x9F) bad = true;
+                else if (c >= 0x200B && c <= 0x200F) bad = true;
+                else if (c >= 0x2028 && c <= 0x202F) bad = true;
+                else if (c >= 0x2060 && c <= 0x206F) bad = true;
+                else if (c === 0xFEFF) bad = true;
+                else if (c >= 0xFFF0) bad = true;
+                if (!bad) n++;
+              }
+            } catch(eCP) {}
             return n;
+          }
+          function __coercePrimitive(v) {
+            if (v === null || v === undefined) return v;
+            if (typeof v !== "object") return v;
+            try {
+              if (typeof v.valueOf === "function") {
+                var p = v.valueOf();
+                if (typeof p !== "object") return p;
+              }
+            } catch(eCV) {}
+            try {
+              if (typeof v.toString === "function") {
+                var ts = v.toString();
+                if (typeof ts === "string") return ts;
+              }
+            } catch(eCT) {}
+            return null;
           }
           function __sanitizeBlob(v) {
             if (v === null || v === undefined) return v;
             if (typeof v === "number" || typeof v === "boolean") return v;
+            var prim = __coercePrimitive(v);
+            if (prim === null || prim === undefined) return null;
+            if (typeof prim === "number" || typeof prim === "boolean") return prim;
             var s;
-            try { s = String(v); } catch(e) { return null; }
-            if (s.length === 0) return null;
+            try { s = String(prim); } catch(eSB1) { return null; }
+            if (!s || s.length === 0) return null;
             if (__countPrintable(s) === 0) return null;
             return s;
           }
           function __isInternalProp(name, val) {
-            var cleanName = String(name || "");
+            var cleanName;
+            try { cleanName = String(name || ""); } catch(eIN) { return true; }
             if (cleanName.length === 0) return true;
             if (__countPrintable(cleanName) === 0) return true;
             if (!/[A-Za-z0-9]/.test(cleanName)) return true;
             if (typeof val === "number" && (val > 1e15 || val < -1e15)) return true;
             if (val !== null && val !== undefined && typeof val !== "number" && typeof val !== "boolean") {
-              var cleanedVal = __sanitizeBlob(val);
-              if (cleanedVal === null) return true;
-              if (typeof cleanedVal === "string" && cleanedVal.length > 200) return true;
+              try {
+                var cleanedVal = __sanitizeBlob(val);
+                if (cleanedVal === null) return true;
+                if (typeof cleanedVal === "string" && cleanedVal.length > 200) return true;
+              } catch(eIPV) { return true; }
             }
             return false;
           }

@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.16] - 2026-05-11 — Sweep #10 hotfix: regression + denylist filter + wrapper coercion
+
+Sweep #10 hit a hard regression: `get_effect_properties` threw `"EvalScript error."` on every Lumetri Color call. `list_clip_effects` worked on the same clip — pointing to a difference between the two handlers. Also BOM `﻿` still leaked at 5 indices and partial fixes (empty string, 250-char blob) confirmed working.
+
+### Fixed
+
+- **CRITICAL regression — `get_effect_properties` EvalScript error** — root cause: when I wrote the v1.2.15 filter, the explanatory comments inside the ExtendScript template literal contained **literal control characters** (NUL 0x00, DEL 0x7F, etc.) embedded between the dashes when I tried to spell out the excluded codepoint ranges. Those control bytes went into the cmd_*.jsx file written to disk and ExtendScript refused to parse the script. Comments inside the template literal are now restricted to printable ASCII; the explanatory range text moved out. Verified via `grep -PR "[\x00-\x08\x0e-\x1f\x7f]"` against `src/tools/keyframes.ts` and the compiled dist.
+
+- **#25 BOM filter** v5 — switched from allowlist of "printable" ranges to **denylist of garbage codepoints**. Allowed by default; bad codepoints explicitly listed: `0x00-0x1F` (control), `0x7F-0x9F` (DEL + extra control), `0x200B-0x200F` (zero-width + LRM/RLM), `0x2028-0x202F` (line/paragraph separators), `0x2060-0x206F` (word joiner + format), `0xFEFF` (BOM), `0xFFF0+` (specials block). This preserves smart quotes / em-dashes / general Unicode punctuation that the old allowlist rejected.
+
+- **#25 wrapper-object coercion** — sweep #10 hypothesis: leaked BOM values might be String wrapper objects rather than primitives, escaping `typeof === "string"` checks. New `__coercePrimitive(v)` tries `v.valueOf()` then `v.toString()` before stringifying — peels wrappers in two passes before deciding the value is empty.
+
+- **Defensive try/catch** — `__countPrintable`, `__sanitizeBlob`, `__isInternalProp`, and the wrapper-coercion path all wrap any operation that could throw against host objects, falling back to "treat as internal" rather than throwing through.
+
 ## [1.2.15] - 2026-05-11 — Sweep #9 feedback: BOM filter via printable-char count
 
 Sweep #9 confirmed 2/3 PASS from v1.2.14 (#86 setValue chain works, response envelope fixed transitively). BOM filter was PARTIAL — control chars `/` were filtered (5 props gone) but BOM `﻿` still leaked at 5 Lumetri indices. This release replaces the regex anchor strip with a codepoint counting approach.

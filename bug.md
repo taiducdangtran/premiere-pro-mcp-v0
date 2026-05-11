@@ -608,6 +608,55 @@ Expected: `filteredInternalCount` jumps from ~49 to ~55+ (7 more props gone). Ou
 
 ---
 
+## 🚨 v1.2.16 HOTFIX — Sweep #10 regression + BOM filter v5
+
+Sweep #10 hit critical regression: `get_effect_properties` throw `"EvalScript error."` trên Lumetri Color. Đồng thời confirm v1.2.15 partial fixes work (empty + 200-char blob filtered) nhưng BOM `﻿` vẫn leak ở 5 indexes.
+
+### Root cause regression
+
+Khi tôi viết v1.2.15 filter, comments giải thích bên trong template literal có chứa **literal control characters** (NUL 0x00, DEL 0x7F, etc.) — khi tôi cố spell ra exclusion range bằng cách "control [NUL]-[U+1F], DEL [DEL]-[U+9F]". Control bytes đó đi thẳng vào file `cmd_*.jsx` được write to disk → ExtendScript refuse to parse script → throw "EvalScript error." cho mọi Lumetri call.
+
+Verified bằng `grep -PR "[\x00-\x08\x0e-\x1f\x7f]"` — không còn control chars trong cả `src/` và `dist/`.
+
+### Fix table
+
+| Issue | Patch | LOC |
+|-------|-------|----:|
+| 🔥 Regression `get_effect_properties` EvalScript error | Strip control chars khỏi comments inside template literal; comments giờ ASCII printable only | ~5 |
+| 🟢 BOM filter (5 indexes still leak) | Switch allowlist→**denylist** of bad codepoints. Allowed by default; chỉ filter: `0x00-0x1F`, `0x7F-0x9F`, `0x200B-0x200F`, `0x2028-0x202F`, `0x2060-0x206F`, `0xFEFF`, `0xFFF0+`. Preserves smart quotes/em-dashes/general Unicode | ~10 |
+| 🟢 Wrapper-object coercion | New `__coercePrimitive(v)` tries `.valueOf()` then `.toString()` to peel String wrapper objects before stringifying (covers tester hypothesis #5) | ~15 |
+| 🟢 Defensive try/catch | Wrap all host-object operations; fall back to "treat as internal" rather than throw | ~5 |
+
+**Build:** PASS. **Version:** v1.2.16
+
+### Notes cho tester sweep #11
+
+**Regression fix verify:** `get_effect_properties(node, "Lumetri Color")` giờ phải return object trực tiếp (not throw). Confirm `filteredInternalCount` field present.
+
+**BOM filter:** denylist approach + wrapper coercion cover 2 hypotheses tester nêu:
+- Hypothesis A (codepoint khác U+FEFF): denylist còn extra ranges (zero-width 0x200B-F, separators 0x2028-F, word joiner 0x2060-F, specials 0xFFF0+)
+- Hypothesis B (String wrapper object): `__coercePrimitive` peels via valueOf/toString trước khi đo
+
+Nếu BOM "﻾" vẫn leak sau v1.2.16, suggest tester probe live:
+```jsx
+var p = clip.components[X].properties[0]; // X = Lumetri index
+var v = p.getValue(0, 0);
+$.writeln("typeof: " + typeof v);
+$.writeln("isString wrapper: " + (v instanceof String));
+$.writeln("constructor: " + (v && v.constructor && v.constructor.name));
+if (typeof v === "string" || v instanceof String) {
+  var s = String(v);
+  $.writeln("length: " + s.length);
+  for (var i = 0; i < Math.min(s.length, 10); i++) {
+    $.writeln("[" + i + "] 0x" + s.charCodeAt(i).toString(16));
+  }
+}
+```
+
+Output codepoint sẽ tell us exact char để filter chính xác.
+
+---
+
 # 🔁 RETEST RESULTS — v1.2.14 (2026-05-11, sweep #9)
 
 CEP panel + Claude Code đều đã restart để load commit `5303c29`.
@@ -769,3 +818,183 @@ Còn 1 partial (BOM leak, ~5 props in Lumetri output). Production-ready cho mọ
 - Foundation for v1.2.15 trivial polish path
 
 **Pipeline-readiness: 🟢 PRODUCTION-READY.** Mọi tool chính đã PASS, chỉ còn cosmetic Lumetri property output cần polish nhỏ.
+
+---
+
+# 🔁 RETEST RESULTS — v1.2.15 (2026-05-11, sweep #10)
+
+CEP panel reloaded sau commit `3945814` v1.2.15 ("BOM filter via printable-char count").
+
+## 📊 SCORE
+
+| Issue | Status | Notes |
+|-------|--------|-------|
+| 🔥 `get_effect_properties` | 🔴 **REGRESSION** | EvalScript error — completely broken trên Lumetri Color |
+| 🟢 `list_clip_effects` empty filter | ✅ PASS | Empty string `""` ở index 123 đã filtered |
+| 🟢 `list_clip_effects` long-string filter | ✅ PASS | 250-char "Auto Tone Analytics Data" đã filtered |
+| 🔴 BOM filter | 🔴 **STILL FAIL** | BOM `"﻾"` vẫn leak ở 5 indexes |
+| 🟢 #86/#87/#88 (carry-over) | ✅ Still PASS | Không bị regression bởi v1.2.15 |
+
+---
+
+## 🔥 CRITICAL REGRESSION — `get_effect_properties` throws `"EvalScript error."`
+
+**Repro:**
+```
+apply_effect({node_id: "000f4311", effect_name: "Lumetri Color"}) → OK
+get_effect_properties({node_id: "000f4311", effect_name: "Lumetri Color"})
+→ Error: "EvalScript error."
+```
+
+**Trước (v1.2.14):** trả full properties list (bao gồm BOM leak).
+**Sau (v1.2.15):** raw EvalScript exception thrown — tool hoàn toàn không trả output.
+
+`list_clip_effects` trên cùng clip (cùng có Lumetri Color) WORK fine. → 2 tools dùng code paths khác nhau, v1.2.15 chỉ break `get_effect_properties`.
+
+**Likely root cause:** `__countPrintable` helper (mới ở v1.2.15) có thể throw exception khi xử lý 1 type of value đặc biệt — ExtendScript exception bubble up ra EvalScript layer. Có thể:
+1. `String(prop.getValue())` cho 1 property nào đó returns object có toString throwing
+2. `charCodeAt(i)` invoked trên Array (Position/Anchor Point) thay vì on String
+3. Try/catch không bao quanh `__countPrintable` call inside `get_effect_properties`
+
+**Suggested fix:**
+```javascript
+function __sanitizeBlob(v) {
+  try {
+    if (v === null || v === undefined) return null;
+    // Only sanitize strings — bail early on non-string types
+    if (typeof v !== "string") return v;
+    if (v.length === 0) return null;
+    if (__countPrintable(v) === 0) return null;
+    if (v.length > 200) return "[truncated: " + v.length + " chars]";
+    return v;
+  } catch (e) {
+    // Defensive: any failure → pass-through original value
+    return v;
+  }
+}
+```
+
+**Test command cho dev:**
+```jsx
+// Run get_effect_properties code path in ExtendScript Toolkit
+var clip = app.project.activeSequence.videoTracks[0].clips[0];
+// Apply Lumetri first manually
+var lumetri = clip.components[2];
+for (var i = 0; i < lumetri.properties.numItems; i++) {
+  var p = lumetri.properties[i];
+  var v;
+  try { v = p.getValue(); } catch(e) { v = "<err>"; }
+  $.writeln("[" + i + "] " + p.displayName + " type=" + typeof v + " val=" + String(v).substring(0,30));
+}
+// Look for property whose value isn't a primitive string/number/boolean
+// (e.g., Array, Object) — those are what break __countPrintable
+```
+
+---
+
+## 🟢 PARTIAL WINS — `list_clip_effects`
+
+`filteredInternalCount`: 49 → 51 (+2 in v1.2.15)
+
+**Fix-confirmed cases:**
+
+```
+Before (v1.2.14):
+  {"index": 123, "displayName": "Media Embedded LUT type", "value": ""}                     ← empty
+  {"index": 126, "displayName": "Auto Tone Analytics Data", "value": "{...250 chars JSON}"} ← long string
+
+After (v1.2.15): both GONE from output ✅
+```
+
+→ Empty-string filter và long-string truncate threshold (>200 chars) hoạt động.
+
+---
+
+## 🔴 BOM `"﻾"` STILL leaks at 5 indexes
+
+```json
+{"index": 0,   "displayName": "Blob",                    "value": "﻾"}  ← STILL leak
+{"index": 122, "displayName": "Embedded LUTs",           "value": "﻾"}  ← STILL leak
+{"index": 124, "displayName": "Media Embedded Lut blob", "value": "﻾"}  ← STILL leak
+{"index": 128, "displayName": "LUTAsset",                "value": "﻾"}  ← STILL leak
+{"index": 129, "displayName": "LookAsset",               "value": "﻾"}  ← STILL leak
+```
+
+Dev's `__countPrintable` logic: chars in 0x20-0x7E + 0xA1-0x1FFF + 0x3000-0xFFEF count as printable; BOM (0xFEFF) excluded → count 0 → filter.
+
+**Reality:** value `"﻾"` vẫn xuất hiện in output. Hypothesis:
+
+1. **ExtendScript `charCodeAt(0)` cho U+FEFF**: Có thể return non-65279 value do encoding quirk. Test in EST:
+```jsx
+var s = "﻾";
+$.writeln("length: " + s.length);
+$.writeln("charCodeAt(0): " + s.charCodeAt(0));
+$.writeln("Hex: 0x" + s.charCodeAt(0).toString(16));
+```
+Nếu charCodeAt return 0xFFFE (BOM reverse) hoặc 0xFFE0 hoặc 0x200B → filter logic missing case.
+
+2. **Multi-codepoint blob**: ExtendScript display BOM-prefix string as just BOM char in JSON output, but actual string có nhiều char (e.g., BOM + spaces + control chars). __countPrintable counts past BOM and finds printable chars → not filtered.
+
+3. **`displayName` filter not `value` filter**: Dev applied __countPrintable on displayName (which is "Blob" — has printable chars → kept) but NOT on `value`. Need to apply on `value` field too.
+
+**Strongly suggested test verify:**
+```jsx
+// In get_effect_properties or list_clip_effects code path:
+var blobProp = lumetri.properties[0]; // "Blob"
+var v = blobProp.getValue();
+$.writeln("Type: " + typeof v);
+$.writeln("Length: " + String(v).length);
+$.writeln("Chars:");
+for (var i = 0; i < String(v).length; i++) {
+  var cc = String(v).charCodeAt(i);
+  $.writeln("  [" + i + "] 0x" + cc.toString(16) + " (" + cc + ")");
+}
+```
+
+Nếu output cho thấy multiple codepoints (e.g., FEFF + something else), dev biết string là multi-char blob → __countPrintable counts the "something else" as printable.
+
+---
+
+## 🎯 PRIORITY cho v1.2.16
+
+| Priority | Issue | LOC |
+|----------|-------|----:|
+| 🔥 Critical | `get_effect_properties` EvalScript error | Add try/catch around `__countPrintable` call in get_effect_properties code path |
+| 🟢 Polish | BOM `"﻾"` filter leak | Verify which codepoint `charCodeAt(0)` returns for the leaked BOM; may need additional exclusion ranges |
+
+**Estimated v1.2.16 work:** ~10 LOC (1 critical fix + 1 polish).
+
+---
+
+## 📊 Project state sau v1.2.15
+
+- **Regression:** 1 critical (`get_effect_properties` broken) — temporary, easy fix
+- **Cumulative pass rate:** ~96% (-1% so với v1.2.14 do regression)
+- **Pipeline-readiness:** 🟡 BLOCKED cho workflow dùng `get_effect_properties` trên Lumetri. Workaround: dùng `list_clip_effects` thay vì `get_effect_properties` cho đến khi v1.2.16.
+
+**Other tools (#86/#87/#88):** Vẫn PASS, không bị regression.
+
+---
+
+## 📁 Session metadata sweep #10
+
+- **Build:** v1.2.15 (`3945814`)
+- **Project:** Lò nướng.prproj
+- **Active sequence:** Sequence 01 Cắt
+- **NodeIds tested:** V1c0=000f4311
+- **Test date:** 2026-05-11
+- **Cleanup:** Removed Lumetri Color test effect (via list_clip_effects path)
+
+---
+
+## 🟢 What v1.2.15 got right
+
+- ✅ Empty-string filter (Media Embedded LUT type)
+- ✅ Long-string truncate (Auto Tone Analytics Data ~250 chars now filtered)
+- ✅ Vietnamese diacritics preserved (project name "Lò nướng" intact)
+- ✅ `list_clip_effects` path stable
+
+## 🔴 What needs follow-up
+
+- 🔥 `get_effect_properties` regression — add defensive try/catch in __sanitizeBlob OR __countPrintable
+- 🟢 BOM (U+FEFF) char leak — need live probe in ExtendScript Toolkit to verify exact codepoint stored
