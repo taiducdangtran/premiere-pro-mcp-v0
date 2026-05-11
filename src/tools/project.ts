@@ -525,13 +525,53 @@ export function getProjectTools(bridgeOptions: BridgeOptions) {
     },
 
     get_project_panel_metadata: {
-      description: "Get the current project panel metadata/column configuration as XML",
-      parameters: {},
-      handler: async () => {
+      description:
+        "Get the current project panel metadata/column configuration as XML. " +
+        "Bug #22 fix (v1.2.10): raw XML can be 130KB+ on large projects and overflow context. " +
+        "Default mode `summary` returns size + a count of `<MetadataEntry>` rows + a 2KB head/tail preview. " +
+        "Pass `format: 'raw'` to get the full XML (use only when you really need to set_project_panel_metadata back).",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          format: {
+            type: "string",
+            enum: ["summary", "raw"],
+            description: "'summary' (default): compact size + preview; 'raw': full XML.",
+          },
+        },
+      },
+      handler: async (args: { format?: string }) => {
+        const fmt = args.format === "raw" ? "raw" : "summary";
         const script = buildToolScript(`
           var meta = app.project.getProjectPanelMetadata();
           if (!meta) return __error("Could not retrieve project panel metadata");
-          return __result({ metadata: meta });
+
+          var fmt = "${fmt}";
+          if (fmt === "raw") {
+            return __result({ metadata: meta, format: "raw", byteSize: meta.length });
+          }
+
+          // summary mode
+          var entryCount = 0;
+          try {
+            var re = /<MetadataEntry/g;
+            var match;
+            while ((match = re.exec(meta)) !== null) entryCount++;
+          } catch(eRE) {}
+
+          var headLen = 1024;
+          var tailLen = 1024;
+          var head = meta.length > headLen ? meta.substring(0, headLen) : meta;
+          var tail = meta.length > headLen + tailLen ? meta.substring(meta.length - tailLen) : "";
+
+          return __result({
+            format: "summary",
+            byteSize: meta.length,
+            metadataEntryCount: entryCount,
+            headPreview: head,
+            tailPreview: tail,
+            _note: "Pass format='raw' to get full XML. Default summary avoids 130KB+ context overflow."
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

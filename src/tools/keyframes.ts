@@ -4,7 +4,10 @@ import { sendCommand, BridgeOptions } from "../bridge/file-bridge.js";
 export function getKeyframeTools(bridgeOptions: BridgeOptions) {
   return {
     get_effect_properties: {
-      description: "List all properties of a specific effect on a clip, including current values",
+      description:
+        "List all properties of a specific effect on a clip, including current values. " +
+        "Bug #25 fix (v1.2.10): Lumetri Color exposes ~25 internal binary-blob properties (empty/whitespace/BOM displayNames + out-of-range numeric values). " +
+        "Tool now filters these by default. Pass `include_internal: true` to see the raw unfiltered list.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -16,46 +19,76 @@ export function getKeyframeTools(bridgeOptions: BridgeOptions) {
             type: "string",
             description: "Display name of the effect (e.g., 'Motion', 'Opacity', 'Lumetri Color')",
           },
+          include_internal: {
+            type: "boolean",
+            description: "Include internal/binary properties (empty names, BOM chars, ridiculous numbers). Default: false.",
+          },
         },
         required: ["node_id", "effect_name"],
       },
-      handler: async (args: { node_id: string; effect_name: string }) => {
+      handler: async (args: { node_id: string; effect_name: string; include_internal?: boolean }) => {
+        const includeInternal = args.include_internal === true;
         const script = buildToolScript(`
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found");
-          
+
           var clip = result.clip;
           var effectName = "${escapeForExtendScript(args.effect_name)}";
+          var includeInternal = ${includeInternal ? "true" : "false"};
           var comp = null;
-          
+
           for (var i = 0; i < clip.components.numItems; i++) {
             if (clip.components[i].displayName === effectName || clip.components[i].matchName === effectName) {
               comp = clip.components[i];
               break;
             }
           }
-          
+
           if (!comp) return __error("Effect not found: " + effectName);
-          
+
+          function __isInternalProp(name, val) {
+            // strip whitespace and BOM/zero-width chars
+            var clean = String(name || "").replace(/^[\\s\\uFEFF\\u200B-\\u200D]+|[\\s\\uFEFF\\u200B-\\u200D]+$/g, "");
+            if (!clean) return true;
+            // pure non-printable garbage
+            if (!/[A-Za-z0-9]/.test(clean)) return true;
+            // pointer-style numbers (18+ digits)
+            if (typeof val === "number" && (val > 1e15 || val < -1e15)) return true;
+            return false;
+          }
+
           var props = [];
+          var filteredCount = 0;
           for (var p = 0; p < comp.properties.numItems; p++) {
             var prop = comp.properties[p];
+            var dn = "";
+            try { dn = prop.displayName; } catch(eDN) {}
+            var pv = null;
+            try { pv = prop.getValue(0, 0); } catch(eGV) {}
+
+            if (!includeInternal && __isInternalProp(dn, pv)) {
+              filteredCount++;
+              continue;
+            }
+
             var info = {
               index: p,
-              displayName: prop.displayName,
+              displayName: dn,
               isTimeVarying: false,
-              keyframesSupported: false
+              keyframesSupported: false,
+              value: pv
             };
-            try { info.isTimeVarying = prop.isTimeVarying(); } catch(e) {}
-            try { info.keyframesSupported = prop.areKeyframesSupported(); } catch(e) {}
-            try { info.value = prop.getValue(0, 0); } catch(e) {}
+            try { info.isTimeVarying = prop.isTimeVarying(); } catch(eTV) {}
+            try { info.keyframesSupported = prop.areKeyframesSupported(); } catch(eKS) {}
             props.push(info);
           }
-          
+
           return __result({
             effect: comp.displayName,
             matchName: comp.matchName,
-            properties: props
+            properties: props,
+            filteredInternalCount: filteredCount,
+            _note: filteredCount > 0 ? "Filtered " + filteredCount + " internal/binary properties. Pass include_internal=true to see them." : undefined
           });
         `);
         return sendCommand(script, bridgeOptions);

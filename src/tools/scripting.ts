@@ -212,7 +212,8 @@ Examples:
     list_clip_effects: {
       description:
         "List all effects/components on a clip with their properties and current values. Essential for debugging effect issues. " +
-        "Bug #79 fix: when a component has multiple properties with the same displayName (e.g., Opacity component has 2x 'Blend Mode' in 25.4), each property now carries `duplicateGroup` + `dupIndex`. Pair with `set_effect_property`'s `property_index` param to target exactly one.",
+        "Bug #79: when a component has multiple properties with the same displayName, each property carries `duplicateGroup` + `dupIndex`. " +
+        "Bug #25 fix (v1.2.10): Lumetri Color internal binary-blob properties (empty/whitespace names, pointer numbers) are filtered by default. Pass `include_internal: true` to see them.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -220,53 +221,78 @@ Examples:
             type: "string",
             description: "Node ID of the clip to inspect",
           },
+          include_internal: {
+            type: "boolean",
+            description: "Include internal/binary properties (empty/whitespace/BOM names, out-of-range numbers). Default: false.",
+          },
         },
         required: ["node_id"],
       },
-      handler: async (args: { node_id: string }) => {
+      handler: async (args: { node_id: string; include_internal?: boolean }) => {
+        const includeInternal = args.include_internal === true;
         const script = buildToolScript(`
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found: ${escapeForExtendScript(args.node_id)}");
 
           var clip = result.clip;
           var components = [];
+          var includeInternal = ${includeInternal ? "true" : "false"};
 
+          function __isInternalProp(name, val) {
+            var clean = String(name || "").replace(/^[\\s\\uFEFF\\u200B-\\u200D]+|[\\s\\uFEFF\\u200B-\\u200D]+$/g, "");
+            if (!clean) return true;
+            if (!/[A-Za-z0-9]/.test(clean)) return true;
+            if (typeof val === "number" && (val > 1e15 || val < -1e15)) return true;
+            return false;
+          }
+
+          var totalFiltered = 0;
           for (var i = 0; i < clip.components.numItems; i++) {
             var comp = clip.components[i];
             var props = [];
-            // Pre-pass: count displayName occurrences inside this component.
             var nameCounts = {};
             for (var pc = 0; pc < comp.properties.numItems; pc++) {
               var nm = comp.properties[pc].displayName;
               nameCounts[nm] = (nameCounts[nm] || 0) + 1;
             }
             var seenInComp = {};
+            var compFiltered = 0;
             for (var p = 0; p < comp.properties.numItems; p++) {
               var prop = comp.properties[p];
+              var dn = prop.displayName;
+              var pv = null;
+              try { pv = prop.getValue(0, 0); } catch(e) {}
+              if (!includeInternal && __isInternalProp(dn, pv)) {
+                compFiltered++;
+                totalFiltered++;
+                continue;
+              }
               var info = {
                 index: p,
-                displayName: prop.displayName,
-                matchName: ""
+                displayName: dn,
+                matchName: "",
+                value: pv
               };
               try { info.matchName = prop.matchName; } catch(e) {}
-              try { info.value = prop.getValue(0, 0); } catch(e) {}
               try { info.isTimeVarying = prop.isTimeVarying(); } catch(e) {}
               try { info.keyframesSupported = prop.areKeyframesSupported(); } catch(e) {}
-              if (nameCounts[prop.displayName] > 1) {
-                seenInComp[prop.displayName] = (seenInComp[prop.displayName] || 0);
-                info.duplicateGroup = prop.displayName;
-                info.dupIndex = seenInComp[prop.displayName];
-                info.dupCount = nameCounts[prop.displayName];
-                seenInComp[prop.displayName]++;
+              if (nameCounts[dn] > 1) {
+                seenInComp[dn] = (seenInComp[dn] || 0);
+                info.duplicateGroup = dn;
+                info.dupIndex = seenInComp[dn];
+                info.dupCount = nameCounts[dn];
+                seenInComp[dn]++;
               }
               props.push(info);
             }
-            components.push({
+            var compInfo = {
               index: i,
               displayName: comp.displayName,
               matchName: comp.matchName,
               properties: props
-            });
+            };
+            if (compFiltered > 0) compInfo.filteredInternalCount = compFiltered;
+            components.push(compInfo);
           }
 
           return __result({
@@ -275,7 +301,9 @@ Examples:
             trackType: result.trackType,
             trackIndex: result.trackIndex,
             componentCount: components.length,
-            components: components
+            components: components,
+            filteredInternalCount: totalFiltered,
+            _note: totalFiltered > 0 ? "Filtered " + totalFiltered + " internal/binary properties. Pass include_internal=true to see them." : undefined
           });
         `);
         return sendCommand(script, bridgeOptions);

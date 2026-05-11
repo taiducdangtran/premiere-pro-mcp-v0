@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.10] - 2026-05-11 — Context-overflow guards + Lumetri filter + batch diagnostics
+
+Four bugs that had been deferred since v1.2.1 ("never attempted" per audit): three DX context-overflow issues + one batch-validation bug.
+
+### Fixed — Context-overflow guards
+
+- **#12 `get_full_sequence_info`** — on an 88-clip sequence the response was ~91KB. Added `summary_only`, `tracks_limit`, `clips_per_track_limit`, and `include_effects` params. Default still returns full detail (no breaking change); `summary_only: true` collapses to counts + totals; per-track `clipsTruncated` flag exposes when capping happens. Effects list is the heaviest field and can now be dropped with `include_effects: false`.
+- **#22 `get_project_panel_metadata`** — raw XML was 130KB+ on large projects. Default mode is now `summary` (size + `<MetadataEntry>` row count + 1KB head/tail preview). Pass `format: 'raw'` to get the full XML (use when round-tripping back to `set_project_panel_metadata`).
+
+### Fixed — Lumetri binary-blob noise
+
+- **#25 `get_effect_properties`** & **`list_clip_effects`** — Lumetri Color exposes ~25 internal binary-blob properties (whitespace/BOM-only displayNames + pointer-style 18-digit numbers). Both tools now filter these by default via `__isInternalProp(name, val)` and surface a `filteredInternalCount` field. Pass `include_internal: true` to see the unfiltered list. Per-component `filteredInternalCount` in `list_clip_effects` shows where the noise lives.
+
+### Fixed — Batch validation
+
+- **#35 `batch_set_clip_property`** — when a target was missing `trackType`/`trackIndex` (e.g. `{clipIndex:1}` shorthand) the tool silently mis-resolved to audio track 0. Each target is now validated: missing `trackType`/`trackIndex` inherits from the previous valid target; per-target `notFound` entries carry a `reason` (missing field, out-of-range track/clip, property-not-found) plus `availableProps` when the property name doesn't match anything on the clip.
+
 ## [1.2.9] - 2026-05-11 — Expanded probe matrices for #61 and #65
 
 Tester sweep #6 dev report flagged `scene_edit_detection` and `auto_reframe_sequence` as "needs Adobe docs" because prior probes exhausted obvious bool/string variants. This release adds the two probe shapes that were missing from the matrix per ExtendScript convention.

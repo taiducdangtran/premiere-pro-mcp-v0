@@ -221,7 +221,11 @@ export function getInspectionTools(bridgeOptions: BridgeOptions) {
     },
 
     get_full_sequence_info: {
-      description: "Get exhaustive information about a sequence: settings, all tracks with lock/mute/target state, all clips with positions/effects/speed/enabled state, all markers, transitions, in/out points, and work area.",
+      description:
+        "Get exhaustive information about a sequence: settings, tracks, clips, markers, transitions, in/out points, work area. " +
+        "Bug #12 fix (v1.2.10): on large sequences (88+ clips) this used to overflow context at 90KB+. " +
+        "Pass `summary_only: true` for a compact count-only view, or `tracks_limit` / `clips_per_track_limit` to cap output. " +
+        "Pass `include_effects: false` to drop the per-clip effects array (the heaviest field).",
       parameters: {
         type: "object" as const,
         properties: {
@@ -229,14 +233,44 @@ export function getInspectionTools(bridgeOptions: BridgeOptions) {
             type: "string",
             description: "Sequence name or ID. Uses active sequence if omitted.",
           },
+          summary_only: {
+            type: "boolean",
+            description: "Return only counts and top-level fields (no per-track/per-clip detail). Default: false.",
+          },
+          tracks_limit: {
+            type: "number",
+            description: "Cap the number of video AND audio tracks returned (default: unlimited).",
+          },
+          clips_per_track_limit: {
+            type: "number",
+            description: "Cap the number of clips returned per track (default: unlimited).",
+          },
+          include_effects: {
+            type: "boolean",
+            description: "Include the per-clip effects array (default: true). Set false to shrink output on effect-heavy clips.",
+          },
         },
       },
-      handler: async (args: { sequence_id?: string }) => {
+      handler: async (args: {
+        sequence_id?: string;
+        summary_only?: boolean;
+        tracks_limit?: number;
+        clips_per_track_limit?: number;
+        include_effects?: boolean;
+      }) => {
         const seqLookup = args.sequence_id
           ? `var seq = __findSequence("${escapeForExtendScript(args.sequence_id)}"); if (!seq) return __error("Sequence not found");`
           : `var seq = app.project.activeSequence; if (!seq) return __error("No active sequence");`;
+        const summaryOnly = args.summary_only === true;
+        const tracksLimit = typeof args.tracks_limit === "number" ? args.tracks_limit : -1;
+        const clipsPerTrackLimit = typeof args.clips_per_track_limit === "number" ? args.clips_per_track_limit : -1;
+        const includeEffects = args.include_effects !== false;
 
         const script = buildToolScript(`
+          var __summaryOnly = ${summaryOnly ? "true" : "false"};
+          var __tracksLimit = ${tracksLimit};
+          var __clipsPerTrackLimit = ${clipsPerTrackLimit};
+          var __includeEffects = ${includeEffects ? "true" : "false"};
           ${seqLookup}
 
           // Settings
@@ -295,9 +329,24 @@ export function getInspectionTools(bridgeOptions: BridgeOptions) {
           info.markers = markers;
           info.markerCount = markers.length;
 
+          // Summary mode: stop here with counts only
+          info.videoTrackCount = seq.videoTracks.numTracks;
+          info.audioTrackCount = seq.audioTracks.numTracks;
+          if (__summaryOnly) {
+            var totalVClips = 0, totalAClips = 0;
+            try { for (var st = 0; st < seq.videoTracks.numTracks; st++) totalVClips += seq.videoTracks[st].clips.numItems; } catch(eS1) {}
+            try { for (var sat = 0; sat < seq.audioTracks.numTracks; sat++) totalAClips += seq.audioTracks[sat].clips.numItems; } catch(eS2) {}
+            info.totalVideoClips = totalVClips;
+            info.totalAudioClips = totalAClips;
+            info._note = "summary_only: pass summary_only=false to get per-track/per-clip detail";
+            return __result(info);
+          }
+
           // Video tracks
           info.videoTracks = [];
-          for (var t = 0; t < seq.videoTracks.numTracks; t++) {
+          var __vTrackCount = seq.videoTracks.numTracks;
+          if (__tracksLimit >= 0 && __vTrackCount > __tracksLimit) __vTrackCount = __tracksLimit;
+          for (var t = 0; t < __vTrackCount; t++) {
             var track = seq.videoTracks[t];
             var trackInfo = {
               index: t,
@@ -309,7 +358,13 @@ export function getInspectionTools(bridgeOptions: BridgeOptions) {
 
             // Clips
             trackInfo.clips = [];
-            for (var c = 0; c < track.clips.numItems; c++) {
+            var __vClipCount = track.clips.numItems;
+            if (__clipsPerTrackLimit >= 0 && __vClipCount > __clipsPerTrackLimit) {
+              trackInfo.clipsTruncated = true;
+              trackInfo.totalClips = track.clips.numItems;
+              __vClipCount = __clipsPerTrackLimit;
+            }
+            for (var c = 0; c < __vClipCount; c++) {
               var clip = track.clips[c];
               var ci = {
                 index: c,
@@ -341,9 +396,11 @@ export function getInspectionTools(bridgeOptions: BridgeOptions) {
               // Effect count
               try {
                 ci.effectCount = clip.components.numItems;
-                ci.effects = [];
-                for (var e = 0; e < clip.components.numItems; e++) {
-                  ci.effects.push(clip.components[e].displayName);
+                if (__includeEffects) {
+                  ci.effects = [];
+                  for (var e = 0; e < clip.components.numItems; e++) {
+                    ci.effects.push(clip.components[e].displayName);
+                  }
                 }
               } catch(e) {}
 
@@ -371,7 +428,9 @@ export function getInspectionTools(bridgeOptions: BridgeOptions) {
 
           // Audio tracks
           info.audioTracks = [];
-          for (var t = 0; t < seq.audioTracks.numTracks; t++) {
+          var __aTrackCount = seq.audioTracks.numTracks;
+          if (__tracksLimit >= 0 && __aTrackCount > __tracksLimit) __aTrackCount = __tracksLimit;
+          for (var t = 0; t < __aTrackCount; t++) {
             var track = seq.audioTracks[t];
             var trackInfo = {
               index: t,
@@ -382,7 +441,13 @@ export function getInspectionTools(bridgeOptions: BridgeOptions) {
             try { trackInfo.isTargeted = track.isTargeted(); } catch(e) {}
 
             trackInfo.clips = [];
-            for (var c = 0; c < track.clips.numItems; c++) {
+            var __aClipCount = track.clips.numItems;
+            if (__clipsPerTrackLimit >= 0 && __aClipCount > __clipsPerTrackLimit) {
+              trackInfo.clipsTruncated = true;
+              trackInfo.totalClips = track.clips.numItems;
+              __aClipCount = __clipsPerTrackLimit;
+            }
+            for (var c = 0; c < __aClipCount; c++) {
               var clip = track.clips[c];
               var ci = {
                 index: c,
@@ -406,9 +471,11 @@ export function getInspectionTools(bridgeOptions: BridgeOptions) {
               } catch(e) {}
               try {
                 ci.effectCount = clip.components.numItems;
-                ci.effects = [];
-                for (var e = 0; e < clip.components.numItems; e++) {
-                  ci.effects.push(clip.components[e].displayName);
+                if (__includeEffects) {
+                  ci.effects = [];
+                  for (var e = 0; e < clip.components.numItems; e++) {
+                    ci.effects.push(clip.components[e].displayName);
+                  }
                 }
               } catch(e) {}
               trackInfo.clips.push(ci);
@@ -431,8 +498,12 @@ export function getInspectionTools(bridgeOptions: BridgeOptions) {
             info.audioTracks.push(trackInfo);
           }
 
-          info.videoTrackCount = info.videoTracks.length;
-          info.audioTrackCount = info.audioTracks.length;
+          // counts already populated at summary check; expose returned-vs-total
+          info.videoTracksReturned = info.videoTracks.length;
+          info.audioTracksReturned = info.audioTracks.length;
+          if (__tracksLimit >= 0 && (info.videoTrackCount > __tracksLimit || info.audioTrackCount > __tracksLimit)) {
+            info.tracksTruncated = true;
+          }
 
           return __result(info);
         `);

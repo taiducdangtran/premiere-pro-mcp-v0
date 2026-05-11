@@ -403,14 +403,16 @@ export function getClipboardTools(bridgeOptions: BridgeOptions) {
 
     batch_set_clip_property: {
       description:
-        "Set the same property value across multiple timeline clips in one call. Searches all components for the named property (case-insensitive).",
+        "Set the same property value across multiple timeline clips in one call. " +
+        "Bug #35 fix (v1.2.10): each target now validated for required `trackType` + `trackIndex` + `clipIndex` up front; per-target `reason` returned in `notFound` so caller can tell whether it was a missing field, out-of-range track/clip, or property-not-found. " +
+        "If `trackType` or `trackIndex` is missing, the target inherits from the previous valid target.",
       parameters: {
         type: "object" as const,
         properties: {
           property_name: {
             type: "string",
             description:
-              "Display name of the property to set (e.g., 'Opacity', 'Scale', 'Position')",
+              "Display name of the property to set (e.g., 'Opacity', 'Scale', 'Position'). Case-insensitive match.",
           },
           value: {
             description:
@@ -419,7 +421,7 @@ export function getClipboardTools(bridgeOptions: BridgeOptions) {
           targets: {
             type: "array",
             description:
-              "Array of {trackType: 'video'|'audio', trackIndex: number, clipIndex: number}",
+              "Array of {trackType: 'video'|'audio', trackIndex: number, clipIndex: number}. Missing trackType/trackIndex inherits from previous target.",
           },
         },
         required: ["property_name", "value", "targets"],
@@ -427,7 +429,7 @@ export function getClipboardTools(bridgeOptions: BridgeOptions) {
       handler: async (args: {
         property_name: string;
         value: any;
-        targets: Array<{ trackType: string; trackIndex: number; clipIndex: number }>;
+        targets: Array<{ trackType?: string; trackIndex?: number; clipIndex: number }>;
       }) => {
         const valueLiteral = JSON.stringify(args.value);
         const targetsLiteral = JSON.stringify(args.targets);
@@ -440,30 +442,66 @@ export function getClipboardTools(bridgeOptions: BridgeOptions) {
           var targets = ${targetsLiteral};
           var updated = 0;
           var notFound = [];
+          var lastTrackType = null;
+          var lastTrackIndex = null;
 
           for (var t = 0; t < targets.length; t++) {
             var tgt = targets[t];
-            var tracks = tgt.trackType === "video" ? seq.videoTracks : seq.audioTracks;
-            if (tgt.trackIndex >= tracks.numTracks) { notFound.push(tgt); continue; }
-            var track = tracks[tgt.trackIndex];
-            if (tgt.clipIndex >= track.clips.numItems) { notFound.push(tgt); continue; }
-            var clip = track.clips[tgt.clipIndex];
+            // Inherit trackType/trackIndex from previous target if missing
+            var trackType = (tgt.trackType === "video" || tgt.trackType === "audio") ? tgt.trackType : lastTrackType;
+            var trackIndex = (typeof tgt.trackIndex === "number") ? tgt.trackIndex : lastTrackIndex;
+            var clipIndex = tgt.clipIndex;
+
+            if (trackType !== "video" && trackType !== "audio") {
+              notFound.push({ target: tgt, reason: "missing trackType (must be 'video' or 'audio')" });
+              continue;
+            }
+            if (typeof trackIndex !== "number" || trackIndex < 0) {
+              notFound.push({ target: tgt, reason: "missing or invalid trackIndex" });
+              continue;
+            }
+            if (typeof clipIndex !== "number" || clipIndex < 0) {
+              notFound.push({ target: tgt, reason: "missing or invalid clipIndex" });
+              continue;
+            }
+
+            lastTrackType = trackType;
+            lastTrackIndex = trackIndex;
+
+            var tracks = trackType === "video" ? seq.videoTracks : seq.audioTracks;
+            if (trackIndex >= tracks.numTracks) {
+              notFound.push({ target: tgt, resolved: { trackType: trackType, trackIndex: trackIndex }, reason: "trackIndex out of range (" + tracks.numTracks + " tracks)" });
+              continue;
+            }
+            var track = tracks[trackIndex];
+            if (clipIndex >= track.clips.numItems) {
+              notFound.push({ target: tgt, resolved: { trackType: trackType, trackIndex: trackIndex, clipIndex: clipIndex }, reason: "clipIndex out of range (" + track.clips.numItems + " clips on " + trackType + " " + trackIndex + ")" });
+              continue;
+            }
+            var clip = track.clips[clipIndex];
 
             var didSet = false;
+            var propsSeen = [];
             for (var i = 0; i < clip.components.numItems; i++) {
               for (var j = 0; j < clip.components[i].properties.numItems; j++) {
-                if (clip.components[i].properties[j].displayName.toLowerCase() === prop) {
+                var pn = clip.components[i].properties[j].displayName;
+                if (pn) propsSeen.push(pn);
+                if (pn && pn.toLowerCase() === prop) {
                   try {
                     clip.components[i].properties[j].setValue(val, true);
                     updated++;
                     didSet = true;
-                  } catch (ex) {}
+                  } catch (ex) {
+                    notFound.push({ target: tgt, clip: clip.name, reason: "setValue threw: " + ex.toString() });
+                  }
                   break;
                 }
               }
               if (didSet) break;
             }
-            if (!didSet) notFound.push(tgt);
+            if (!didSet && propsSeen.length > 0) {
+              notFound.push({ target: tgt, clip: clip.name, reason: "property '${escapeForExtendScript(args.property_name)}' not found on this clip", availableProps: propsSeen.slice(0, 20) });
+            }
           }
           return __result({ property: "${escapeForExtendScript(args.property_name)}", updated: updated, notFound: notFound });
         `);
