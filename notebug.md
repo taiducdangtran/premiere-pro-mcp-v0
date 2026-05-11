@@ -1534,4 +1534,125 @@ Sau khi đọc lại implementation, 4 tools này dùng **DOM API**, KHÔNG dùn
 
 **Critical regression block đã được giải quyết.** Khi user gọi `add_color_matte` v1.2.2, không còn ai bị stuck 30s + dismiss dialog manual nữa.
 
+---
+
+# 📋 RETEST CHECKLIST cho Tester — v1.2.2 + v1.2.3 (2026-05-11)
+
+Dev đã push 2 release follow-up cho retest v1.2.1. Tester chạy lại theo checklist dưới đây trên project sandbox cũ (`Lò nướng.prproj`, Premiere 25.4.1). Mỗi tool có **expected behavior** rõ ràng — nếu khác thì note lại.
+
+## 🎯 Highest priority — Critical regression fixes
+
+### ✅ Bug #37 `add_color_matte` (v1.2.2)
+**Cách test:**
+```
+add_color_matte(color_hex="#FF0000", name="Test Red")
+```
+**Expected:** Return error trong **dưới 2 giây** với nội dung như:
+> "add_color_matte: no working DOM-level API in Premiere 25.4. The QE path (qe.project.newColorMatte) is disabled because it spawns a Color Picker dialog that blocks the bridge until manually dismissed. Workarounds: (1) add_black_video...; (2) add_adjustment_layer...; (3) create the matte manually..."
+
+**❌ FAIL nếu:** Color Picker dialog xuất hiện trong Premiere, hoặc bridge hang 30s.
+**✅ PASS nếu:** error trả về nhanh (<2s), KHÔNG có dialog nào pop lên, bridge tiếp tục nhận lệnh khác bình thường.
+
+### ✅ Bug #19 `inspect_dom_object` (v1.2.2)
+**Cách test:**
+```
+inspect_dom_object(object_path="app.project.activeSequence")
+```
+**Expected:** Trong output JSON, các function reference trả về **`"[function]"`** (chứ không phải `"[object]"`):
+```json
+"getOverrideColorSpaceList": "[function]",
+"setOverrideColorSpace": "[function]",
+"getProjectColorSpaceList": "[function]"
+```
+
+**❌ FAIL nếu:** vẫn thấy `"[object]"` cho function methods.
+**✅ PASS nếu:** tất cả method/function đều thành `"[function]"`.
+
+### ✅ NEW v1.2.3 — `add_text_overlay`
+**Cách test:**
+```
+add_text_overlay(text="Hello World", duration_seconds=3)
+```
+**Expected:** Return error nhanh (không spawn Title Designer dialog) với nội dung:
+> "add_text_overlay: Adobe removed the legacy Title Designer in Premiere 2024+ and provides no DOM API to create a text graphic. Workarounds: (1) Author a text .mogrt in After Effects, then use import_mogrt(mogrt_path, ...) + set_mogrt_property(track_index, clip_index, 'Source Text', 'Hello World'); (2) import_mogrt_from_library(...); (3) add_caption(...) if you wanted subtitles..."
+
+**❌ FAIL nếu:** Title Designer dialog xuất hiện, HOẶC tool tạo caption track trên timeline (như v1.2.1 đã làm sai), HOẶC bridge hang.
+**✅ PASS nếu:** error trả về nhanh, KHÔNG tạo caption track, KHÔNG tạo gì trên timeline.
+
+## 🟢 Lower priority — Verify-as-passing (chưa test ở v1.2.1)
+
+Cả 4 tools này dùng DOM API (không phải QE), `__withDialogsSuppressed` đã đủ. Sau khi `add_color_matte` không còn block bridge, có thể test được:
+
+### Bug #40 `replace_clip_media`
+**Cách test:** load 2 footage vào project, đặt 1 clip lên timeline, gọi:
+```
+replace_clip_media(clip_node_id="<clip_nodeId>", new_item_id="<other_footage_nodeId>")
+```
+**Expected PASS:** clip trên timeline đổi source thành footage mới, giữ nguyên position/duration. Không có "Replace Media?" dialog xuất hiện.
+**Note nếu fail:** nếu thấy dialog hoặc bridge hang → confirm là QE-native dialog (cần dev investigate sâu hơn như #37).
+
+### Bug #41 `four_point_edit`
+**Cách test:**
+```
+four_point_edit(source_item_id="<footage_id>", source_in_seconds=0, source_out_seconds=3,
+                timeline_in_seconds=10, timeline_out_seconds=12)
+```
+**Expected PASS:** clip insert vào timeline với speed 150% (3s source vừa 2s timeline). Không dialog fit-to-fill.
+
+### Bug #56 `set_workspace`
+**Cách test:** thay đổi workspace hiện tại 1 chút (mở/đóng panel), rồi:
+```
+set_workspace(name="Editing")
+```
+**Expected PASS:** workspace chuyển không có dialog "Save Workspace Changes?" pop lên.
+
+### Bug #70 `close_project`
+**Cách test:** (cuối cùng, vì sẽ đóng project)
+```
+close_project(save_first=false)
+```
+**Expected PASS:** project đóng không có dialog "Save Before Closing?" pop lên.
+
+## 📝 Format kết quả retest
+
+Sau khi test xong, vui lòng note lại theo format cũ:
+```markdown
+### Bug #XX `tool_name` — PASS / PARTIAL / FAIL
+**Triệu chứng:** (mô tả ngắn)
+**Khác biệt với expected:** (nếu có)
+**Reproducibility:** (consistent / intermittent)
+```
+
+## 🔄 Nếu tester muốn test sâu hơn — 17 bugs pending từ v1.2.1
+
+Các bugs này dev đã defer cho v1.2.4+, nhưng nếu tester có thời gian retest để confirm chúng vẫn fail, có thể giúp prioritize:
+
+- #12 / #22 — context overflow (pagination)
+- #20 `get_track_info.transitions` — sai range
+- #25 Lumetri binary filter
+- #28 `set_clip_pan` audio detection
+- #30 / #31 `set_clip_speed_qe` / `reverse_clip`
+- #34 `set_scale_width_height` "Scale Height" probe
+- #35 `batch_set_clip_property` index lookup
+- #38 `trim_clip` nodeId stale
+- #45 `add_caption` auto-create track
+- #48 `step_forward/backward` Time vs Number
+- #51 `link_audio_video` lookup scope
+- #52 `set_sequence_pixel_aspect_ratio` struct
+- #53 `create_sequence` preset required
+- #58 `import_folder` media filter
+- #60 `import_fcp_xml` signature
+- #61 `scene_edit_detection` signature
+- #65 `auto_reframe_sequence` schema
+- #66 `import_mogrt_from_library`
+- #67 `set_mogrt_property` non-MOGRT detect
+
+---
+
+**Commits liên quan:**
+- `cbffcc0` v1.2.2: Fix #19 inspect_dom_object + #37 add_color_matte
+- `401fcc5` v1.2.3: Fix add_text_overlay — honest disable với MOGRT redirect
+
+**Tester contact:** report lại trong file này (`notebug.md`), append section mới `# 🔁 RETEST RESULTS — v1.2.2/v1.2.3` để dev follow up.
+
 
