@@ -810,11 +810,25 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
           var applyCuts = ${applyCuts ? "true" : "false"};
           var createMarkers = ${createMarkers ? "true" : "false"};
           var sensitivity = ${sensitivity};
+          // Bug #61 v2 (v1.2.8): ExtendScript often requires bool-as-int (0/1).
+          // Also Adobe API may want sensitivity as int (0..100) not float.
+          var applyCutsInt = applyCuts ? 1 : 0;
+          var createMarkersInt = createMarkers ? 1 : 0;
+          var sensInt = Math.round(sensitivity);
+
           var sigs = [
+            // 3-arg all-int form
+            { args: [applyCutsInt, createMarkersInt, sensInt], label: "3-arg all-int (1/0, 1/0, sensInt)" },
+            { args: [applyCutsInt, createMarkersInt, sensitivity], label: "3-arg (1/0, 1/0, sensFloat)" },
+            // 4-arg with sensitivity as range 0..1
+            { args: [applyCutsInt, createMarkersInt, sensitivity / 100, 0], label: "4-arg (1/0, 1/0, sens01, 0)" },
+            // Original bool variants
             { args: [{ applyCuts: applyCuts, createMarkers: createMarkers, sensitivity: sensitivity }], label: "object {applyCuts,createMarkers,sensitivity}" },
             { args: [applyCuts, createMarkers, sensitivity], label: "3-arg (bool,bool,num)" },
             { args: [applyCuts, createMarkers], label: "2-arg (bool,bool)" },
+            { args: [applyCutsInt, createMarkersInt], label: "2-arg all-int (1/0, 1/0)" },
             { args: [applyCuts], label: "1-arg (bool)" },
+            { args: [applyCutsInt], label: "1-arg (int 1/0)" },
             { args: [], label: "no args" }
           ];
           var ok = false;
@@ -827,6 +841,7 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
               else if (a.length === 1) seq.performSceneEditDetectionOnSelection(a[0]);
               else if (a.length === 2) seq.performSceneEditDetectionOnSelection(a[0], a[1]);
               else if (a.length === 3) seq.performSceneEditDetectionOnSelection(a[0], a[1], a[2]);
+              else if (a.length === 4) seq.performSceneEditDetectionOnSelection(a[0], a[1], a[2], a[3]);
               ok = true; via = sigs[s].label;
             } catch(eS) { att.thrown = true; att.error = eS.toString(); }
             __probeState.attempts.push(att);

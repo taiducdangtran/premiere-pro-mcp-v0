@@ -448,15 +448,25 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
           var den = h / g;
           var motion = "${motion}";
           var nest = ${nest ? "true" : "false"};
-          __probeState.target = { w: w, h: h, num: num, den: den, motion: motion, nest: nest };
+          // Adobe docs (older builds): motionPreset int 0=SlowerMotion, 1=Default, 2=FasterMotion
+          // nestSelectionType int 0=DisableNesting, 1=NestFull, 2=NestClipsWithMotion
+          var motionInt = (motion === "slowerMotion") ? 0 : (motion === "fastMotion") ? 2 : 1;
+          var nestInt = nest ? 1 : 0;
+          __probeState.target = { w: w, h: h, num: num, den: den, motion: motion, motionInt: motionInt, nest: nest, nestInt: nestInt };
 
+          // Bug #65 v3 (v1.2.8): expand probe to include 5-arg all-int form per Adobe ExtendScript ref
           var sigs = [
-            { args: [num, den, motion, nest], label: "(num, den, motion, nest)" },
-            { args: [num, den, motion], label: "(num, den, motion)" },
+            // All-int 5-arg form (most likely correct per Adobe API)
+            { args: [num, den, motionInt, nestInt, 1], label: "5-arg all-int (num, den, motionInt, nestInt, useUndo=1)" },
+            { args: [num, den, motionInt, nestInt, 0], label: "5-arg all-int (num, den, motionInt, nestInt, useUndo=0)" },
+            // All-int 4-arg form
+            { args: [num, den, motionInt, nestInt], label: "4-arg all-int (num, den, motionInt, nestInt)" },
+            // Existing variants kept as fallbacks
+            { args: [num, den, motion, nest], label: "(num, den, motionString, nestBool)" },
+            { args: [num, den, motion], label: "(num, den, motionString)" },
             { args: [num, den], label: "(num, den)" },
-            { args: [w, h, motion, nest], label: "(w, h, motion, nest)" },
-            { args: [w, h, motion], label: "(w, h, motion)" },
-            { args: [w, h, nest], label: "(w, h, nest) — original" },
+            { args: [w, h, motionInt, nestInt], label: "(w, h, motionInt, nestInt)" },
+            { args: [w, h, motion, nest], label: "(w, h, motionString, nestBool)" },
             { args: [w, h], label: "(w, h)" }
           ];
           var ok = false;
@@ -465,7 +475,8 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
             var att = { signature: sigs[s].label, thrown: false };
             try {
               var a = sigs[s].args;
-              if (a.length === 4) seq.autoReframeSequence(a[0], a[1], a[2], a[3]);
+              if (a.length === 5) seq.autoReframeSequence(a[0], a[1], a[2], a[3], a[4]);
+              else if (a.length === 4) seq.autoReframeSequence(a[0], a[1], a[2], a[3]);
               else if (a.length === 3) seq.autoReframeSequence(a[0], a[1], a[2]);
               else if (a.length === 2) seq.autoReframeSequence(a[0], a[1]);
               ok = true; via = sigs[s].label;

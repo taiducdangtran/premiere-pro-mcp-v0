@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.9] - 2026-05-11 — Expanded probe matrices for #61 and #65
+
+Tester sweep #6 dev report flagged `scene_edit_detection` and `auto_reframe_sequence` as "needs Adobe docs" because prior probes exhausted obvious bool/string variants. This release adds the two probe shapes that were missing from the matrix per ExtendScript convention.
+
+### Probing — expanded signature matrices
+
+- **#65 `auto_reframe_sequence`** — added 5-arg all-int form `(num, den, motionInt, nestInt, useUndoLog)` per older Adobe ExtendScript reference. `motionInt` maps `"slowerMotion"→0`, `"default"→1`, `"fastMotion"→2`; `nestInt` maps `false→0`, `true→1`. Also added 4-arg all-int and `(w,h, motionInt, nestInt)` variants. Existing string/bool variants kept as fallbacks. 9 total signatures probed.
+- **#61 `scene_edit_detection`** — added bool-as-int variants per ExtendScript convention (Premiere often refuses `true`/`false` and requires `1`/`0`). New probes: 3-arg `(1/0, 1/0, sensInt)`, `(1/0, 1/0, sensFloat)`, 4-arg `(1/0, 1/0, sens01, 0)`, 2-arg `(1/0, 1/0)`, 1-arg `(1/0)`. Sensitivity also probed as both int and 0..1 normalized. 10 total signatures probed.
+
 ## [1.2.8] - 2026-05-11 — Sweep #6 dev-report fixes: dbToLinear, Channel Volume, graceful disables
 
 Sweep #6 tester ran live ExtendScript probes in Premiere 25.4.1 to gather concrete fix data (rather than guesses). Each finding shipped with a proven test sequence; this release applies those patches.
