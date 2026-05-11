@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.11] - 2026-05-11 — Final cleanup: #36 graceful disable + #53 preset_path guard
+
+Two cleanup fixes — both were in the codebase but the wrong shape (success-with-`added:false`, or letting Premiere throw a raw "Not Enough Parameters" instead of pre-validating).
+
+### Fixed
+
+- **#36 `add_adjustment_layer`** — previously returned `__result({added: false, available: false, note: ...})` when both QE and DOM paths were unavailable in 25.4, which looks like a success to callers. Now returns proper `__error({reason, _probe})` with workaround hints (import .prproj fragment, manual UI creation, or `add_black_video` + Lumetri).
+- **#53 `create_sequence`** — Premiere 25.4 removed the 1-arg `createNewSequence(name)` overload; calling it without `preset_path` threw a raw "Not Enough Parameters". Tool now pre-validates `preset_path` and returns a clear error pointing to common preset locations + `create_sequence_from_clips` / `create_sequence_from_preset` as higher-level alternatives.
+
 ## [1.2.10] - 2026-05-11 — Context-overflow guards + Lumetri filter + batch diagnostics
 
 Four bugs that had been deferred since v1.2.1 ("never attempted" per audit): three DX context-overflow issues + one batch-validation bug.

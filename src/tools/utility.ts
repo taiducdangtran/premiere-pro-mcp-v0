@@ -271,10 +271,12 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
               }
             } catch(e2) {}
           }
-          return __result({
-            added: false,
-            available: false,
-            note: "add_adjustment_layer API removed in 25.4 — qeSeq.addAdjustmentLayer and rootItem.createNewAdjustmentLayer both undefined. Workaround: import an adjustment layer template (.prproj fragment) via import_media, or create one via UI (File > New > Adjustment Layer) then add_to_timeline by name."
+          return __error({
+            reason: "add_adjustment_layer: API removed in Premiere 25.4 — both qeSeq.addAdjustmentLayer and rootItem.createNewAdjustmentLayer are undefined. Workarounds: (1) Import an adjustment layer template (.prproj fragment) via import_media; (2) Create one via Premiere UI (File > New > Adjustment Layer) then add_to_timeline by name; (3) Use add_black_video + Lumetri color override for color-grade overlays.",
+            _probe: {
+              "qeSeq.addAdjustmentLayer": typeof qeSeq.addAdjustmentLayer,
+              "rootItem.createNewAdjustmentLayer": typeof (rootItem && rootItem.createNewAdjustmentLayer)
+            }
           });
         `);
         return sendCommand(script, bridgeOptions);

@@ -4,7 +4,10 @@ import { sendCommand, BridgeOptions } from "../bridge/file-bridge.js";
 export function getSequenceTools(bridgeOptions: BridgeOptions) {
   return {
     create_sequence: {
-      description: "Create a new sequence in the project",
+      description:
+        "Create a new sequence in the project. " +
+        "Bug #53 fix (v1.2.10): Premiere 25.4 removed the 1-arg `createNewSequence(name)` overload — `preset_path` is now effectively required. " +
+        "Tool now pre-validates and returns an actionable error if preset_path is missing, with hints for common presets.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -14,15 +17,21 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
           },
           preset_path: {
             type: "string",
-            description: "Optional path to a sequence preset file (.sqpreset). Uses default if omitted.",
+            description: "Path to a sequence preset file (.sqpreset). Required in Premiere 25.4. Common locations: ~/Documents/Adobe/Premiere Pro/25.0/Profile-<user>/Settings/Custom/*.sqpreset, or installed presets under Premiere Pro/Settings/SequencePresets/. Or use create_sequence_from_clips / create_sequence_from_preset for higher-level helpers.",
           },
         },
         required: ["name"],
       },
       handler: async (args: { name: string; preset_path?: string }) => {
-        const presetCode = args.preset_path
-          ? `app.project.createNewSequenceFromPreset("${escapeForExtendScript(args.name)}", "${escapeForExtendScript(args.preset_path)}");`
-          : `app.project.createNewSequence("${escapeForExtendScript(args.name)}");`;
+        if (!args.preset_path) {
+          return {
+            success: false,
+            error:
+              "create_sequence: preset_path is required in Premiere 25.4 (Adobe removed the no-preset overload — calling createNewSequence(name) throws 'Not Enough Parameters'). " +
+              "Workarounds: (1) Pass an explicit preset_path to a .sqpreset file; (2) Use create_sequence_from_clips(...) which derives settings from a source clip; (3) Use create_sequence_from_preset(...) for built-in presets.",
+          };
+        }
+        const presetCode = `app.project.createNewSequenceFromPreset("${escapeForExtendScript(args.name)}", "${escapeForExtendScript(args.preset_path)}");`;
 
         const script = buildToolScript(`
           ${presetCode}
