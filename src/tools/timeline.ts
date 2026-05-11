@@ -131,7 +131,9 @@ export function getTimelineTools(bridgeOptions: BridgeOptions) {
     },
 
     trim_clip: {
-      description: "Trim a clip's in or out point",
+      description:
+        "Trim a clip's in or out point. " +
+        "Bug #38 fix: previously assigned `clip.inPoint = ticksString` which silently no-ops in Premiere 25.4 (property is read-only). Now uses `setInPoint(ticks, mediaType)` method with mediaType derived from track type, validates the trim by reading back values, and reports the post-trim nodeId in case Premiere re-indexed the clip.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -151,19 +153,78 @@ export function getTimelineTools(bridgeOptions: BridgeOptions) {
         required: ["node_id"],
       },
       handler: async (args: { node_id: string; new_in_seconds?: number; new_out_seconds?: number }) => {
+        const setIn = args.new_in_seconds !== undefined;
+        const setOut = args.new_out_seconds !== undefined;
         const script = buildToolScript(`
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found: ${escapeForExtendScript(args.node_id)}");
-          
+
           var clip = result.clip;
-          ${args.new_in_seconds !== undefined ? `clip.inPoint = __secondsToTicks(${args.new_in_seconds}).toString();` : ""}
-          ${args.new_out_seconds !== undefined ? `clip.outPoint = __secondsToTicks(${args.new_out_seconds}).toString();` : ""}
-          
+          // mediaType for setInPoint/setOutPoint: 1=video, 2=audio, 4=any (most common in 25.4)
+          var mediaType = result.trackType === "video" ? 1 : 2;
+          var origInTicks = parseFloat(clip.inPoint.ticks);
+          var origOutTicks = parseFloat(clip.outPoint.ticks);
+          var origNodeId = clip.nodeId;
+
+          var setResults = {};
+          var errors = [];
+
+          ${setIn ? `
+          var inTicks = __secondsToTicks(${args.new_in_seconds}).toString();
+          var inSet = false;
+          // Probe API variants
+          try {
+            if (typeof clip.setInPoint === "function") {
+              clip.setInPoint(inTicks, mediaType); inSet = true; setResults.inViaMethod = "setInPoint(ticks, mediaType)";
+            }
+          } catch(eI1) { errors.push("setInPoint(2): " + eI1.toString()); }
+          if (!inSet) {
+            try { if (typeof clip.setInPoint === "function") { clip.setInPoint(inTicks); inSet = true; setResults.inViaMethod = "setInPoint(ticks)"; } }
+            catch(eI2) { errors.push("setInPoint(1): " + eI2.toString()); }
+          }
+          if (!inSet) {
+            try { clip.inPoint = inTicks; inSet = true; setResults.inViaMethod = "direct assignment (may no-op in 25.4)"; }
+            catch(eI3) { errors.push("inPoint assign: " + eI3.toString()); }
+          }
+          setResults.inPointAttempted = ${args.new_in_seconds};
+          setResults.inPointBefore = __ticksToSeconds(origInTicks);
+          setResults.inPointAfter = __ticksToSeconds(clip.inPoint.ticks);
+          setResults.inPointChanged = (Math.abs(parseFloat(clip.inPoint.ticks) - origInTicks) > 1);
+          ` : ""}
+
+          ${setOut ? `
+          var outTicks = __secondsToTicks(${args.new_out_seconds}).toString();
+          var outSet = false;
+          try {
+            if (typeof clip.setOutPoint === "function") {
+              clip.setOutPoint(outTicks, mediaType); outSet = true; setResults.outViaMethod = "setOutPoint(ticks, mediaType)";
+            }
+          } catch(eO1) { errors.push("setOutPoint(2): " + eO1.toString()); }
+          if (!outSet) {
+            try { if (typeof clip.setOutPoint === "function") { clip.setOutPoint(outTicks); outSet = true; setResults.outViaMethod = "setOutPoint(ticks)"; } }
+            catch(eO2) { errors.push("setOutPoint(1): " + eO2.toString()); }
+          }
+          if (!outSet) {
+            try { clip.outPoint = outTicks; outSet = true; setResults.outViaMethod = "direct assignment (may no-op in 25.4)"; }
+            catch(eO3) { errors.push("outPoint assign: " + eO3.toString()); }
+          }
+          setResults.outPointAttempted = ${args.new_out_seconds};
+          setResults.outPointBefore = __ticksToSeconds(origOutTicks);
+          setResults.outPointAfter = __ticksToSeconds(clip.outPoint.ticks);
+          setResults.outPointChanged = (Math.abs(parseFloat(clip.outPoint.ticks) - origOutTicks) > 1);
+          ` : ""}
+
+          // Bug #38: re-find clip post-trim in case nodeId stale (rare but documented).
+          var nodeIdNow = clip.nodeId;
+          if (nodeIdNow !== origNodeId) setResults.nodeIdChanged = { before: origNodeId, after: nodeIdNow };
+
           return __result({
             trimmed: true,
             clipName: clip.name,
-            inPoint: __ticksToSeconds(clip.inPoint.ticks),
-            outPoint: __ticksToSeconds(clip.outPoint.ticks)
+            nodeId: nodeIdNow,
+            trackType: result.trackType,
+            details: setResults,
+            errors: errors.length > 0 ? errors : null
           });
         `);
         return sendCommand(script, bridgeOptions);

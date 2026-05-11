@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.6] - 2026-05-11 — Deferred bugs from v1.2.4 (10 bugs, signature probing)
+
+Addresses the 10 deferred bugs from v1.2.4 retest. Each tool now probes multiple signature variants and surfaces probe results in the error when nothing works — so tester can directly tell dev what API surface is actually exposed in their Premiere build.
+
+### Fixed — signature probe family
+
+- **#30 `set_clip_speed_qe`** — `qeClip.setSpeed(speed)` (1-arg) throws "Not Enough Parameters" in 25.4. Tool probes 5/4/3/2/1-arg variants of `setSpeed(speed, frameRate, maintainAudioPitch, reverse, rippleEdit)`. Returns `signatureUsed`.
+- **#31 `reverse_clip`** — `qeClip.setReverse(bool)` throws "Unknown error exception" in 25.4. Falls back to `qeClip.setSpeed(currentSpeed, "1", false, reverse, false)` (the 5-arg form), preserving the clip's current speed. Probes 3 paths total.
+- **#61 `scene_edit_detection`** — `performSceneEditDetectionOnSelection()` (no-arg) throws "Not Enough Parameters" in 25.4. Probes 5 signature shapes (object with flags, 3-arg bool+bool+num, 2-arg, 1-arg, no-arg). Adds new `apply_cuts` / `create_markers` / `sensitivity` params.
+- **#65 `auto_reframe_sequence`** — `autoReframeSequence(w, h, false)` throws "Illegal Parameter type" in 25.4. Tool now computes the GCD of width/height and probes 7 variants including the new `(numerator, denominator, motionPreset, nest)` signature. Adds `motion_preset` / `nest_clips` params.
+- **#66 `import_mogrt_from_library`** — `importMGTFromLibrary(name, ticks, v, a)` throws "Not Enough Parameters" in 25.4. Adobe added a required `libraryName` first arg in 25.4. Tool now accepts `library_name` and probes both new and legacy signatures.
+
+### Fixed — Param type / property assignment
+
+- **#48 `step_forward` / `step_backward`** — `player.step(1)` threw "Illegal Parameter type" in 25.4. Replaced with pure DOM approach: read sequence frame rate via `getSettings().videoFrameRate.ticks`, compute new playhead position, call `seq.setPlayerPosition(ticks)`. No QE dependency.
+- **#52 `set_sequence_pixel_aspect_ratio`** — `settings.videoPixelAspectRatio = float` threw "Illegal Parameter type" in 25.4. Tool probes number → string → parseFloat formats; reports the original value's type in the response so caller can pick the right form.
+- **#38 `trim_clip`** — `clip.inPoint = ticksString` is read-only in 25.4 (silent no-op). Now uses `setInPoint(ticks, mediaType)` method (where mediaType=1 for video, 2 for audio), probes 1-arg fallback, then direct assignment. Validates by comparing before/after ticks and reports `inPointChanged` / `outPointChanged` flags.
+
+### Fixed — Component / iteration logic
+
+- **#28 `set_clip_pan`** — "Could not set pan - is this an audio clip?" was false-negative because the panner component name varies in 25.4 ("Panner" / "Panner › Balance" / "Channel Volume"). Tool now does case-insensitive substring match across multiple hint names; probes "Balance" / "Pan" / "Pan/Balance" property names. Returns track type validation up front; surfaces full component list on miss.
+- **#20 `get_track_info.transitions`** — DOM `track.transitions` enumerates clip-adjacent slots in 25.4 (caller saw clip range pairs, not transitions). Replaced with QE `qeTrack.getTransitionAt(i)` iteration, which only yields real transition objects. Adds `name`, `duration`, `alignment` to the response. `transitionsSource: "qe"` indicates path.
+
 ## [1.2.5] - 2026-05-11 — `delete_project_item` proper fallback chain (Bug #82 v2)
 
 The v1.2.4 fix for Bug #82 was incomplete — it used `item.clearOut()` (which doesn't exist on `ProjectItem` — that was confused with `clearOutPoint()`) and a hardcoded `executeCommand(20012)` cmdId that varies across Premiere builds.

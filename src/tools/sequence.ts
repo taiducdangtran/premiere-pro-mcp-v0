@@ -394,7 +394,9 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
     },
 
     auto_reframe_sequence: {
-      description: "Auto-reframe a sequence for a different aspect ratio",
+      description:
+        "Auto-reframe a sequence for a different aspect ratio. " +
+        "Bug #65 fix: `autoReframeSequence(w, h, false)` threw 'Illegal Parameter type' in Premiere 25.4 — the signature changed to expect numerator/denominator integers for the aspect ratio plus motion preset string. Tool now probes documented signature shapes.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -404,24 +406,82 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
           },
           target_width: {
             type: "number",
-            description: "Target frame width in pixels",
+            description: "Target frame width in pixels (e.g. 1080 for square/9:16)",
           },
           target_height: {
             type: "number",
-            description: "Target frame height in pixels",
+            description: "Target frame height in pixels (e.g. 1080 for square, 1920 for 9:16)",
+          },
+          motion_preset: {
+            type: "string",
+            enum: ["default", "fastMotion", "slowerMotion"],
+            description: "Motion tracking preset (default: 'default')",
+          },
+          nest_clips: {
+            type: "boolean",
+            description: "Nest clips during reframe (default: false)",
           },
         },
         required: ["target_width", "target_height"],
       },
-      handler: async (args: { sequence_id?: string; target_width: number; target_height: number }) => {
+      handler: async (args: { sequence_id?: string; target_width: number; target_height: number; motion_preset?: string; nest_clips?: boolean }) => {
         const seqLookup = args.sequence_id
           ? `var seq = __findSequence("${escapeForExtendScript(args.sequence_id)}"); if (!seq) return __error("Sequence not found");`
           : `var seq = app.project.activeSequence; if (!seq) return __error("No active sequence");`;
+        const motion = args.motion_preset || "default";
+        const nest = args.nest_clips === true;
 
         const script = buildToolScript(`
           ${seqLookup}
-          seq.autoReframeSequence(${args.target_width}, ${args.target_height}, false);
-          return __result({ reframed: true, name: seq.name, targetSize: "${args.target_width}x${args.target_height}" });
+          if (typeof seq.autoReframeSequence !== "function") {
+            return __error("auto_reframe_sequence: API not exposed in this Premiere build");
+          }
+
+          var w = ${args.target_width};
+          var h = ${args.target_height};
+          // Compute GCD for numerator/denominator representation.
+          function gcd(a, b) { return b ? gcd(b, a % b) : a; }
+          var g = gcd(w, h);
+          var num = w / g;
+          var den = h / g;
+          var motion = "${motion}";
+          var nest = ${nest ? "true" : "false"};
+
+          var sigs = [
+            { args: [num, den, motion, nest], label: "(num, den, motion, nest)" },
+            { args: [num, den, motion], label: "(num, den, motion)" },
+            { args: [num, den], label: "(num, den)" },
+            { args: [w, h, motion, nest], label: "(w, h, motion, nest)" },
+            { args: [w, h, motion], label: "(w, h, motion)" },
+            { args: [w, h, nest], label: "(w, h, nest) — original" },
+            { args: [w, h], label: "(w, h)" }
+          ];
+          var ok = false;
+          var via = null;
+          var errors = [];
+          for (var s = 0; s < sigs.length && !ok; s++) {
+            try {
+              var a = sigs[s].args;
+              if (a.length === 4) seq.autoReframeSequence(a[0], a[1], a[2], a[3]);
+              else if (a.length === 3) seq.autoReframeSequence(a[0], a[1], a[2]);
+              else if (a.length === 2) seq.autoReframeSequence(a[0], a[1]);
+              ok = true; via = sigs[s].label;
+            } catch(eS) { errors.push(sigs[s].label + ": " + eS.toString()); }
+          }
+          if (!ok) {
+            return __error(
+              "auto_reframe_sequence: no signature worked. " +
+              "Target: " + w + "x" + h + " (aspect " + num + ":" + den + "). " +
+              "Errors: " + errors.join(" | ")
+            );
+          }
+          return __result({
+            reframed: true,
+            name: seq.name,
+            targetSize: w + "x" + h,
+            aspectRatio: num + ":" + den,
+            signatureUsed: via
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

@@ -424,7 +424,10 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
     },
 
     set_sequence_pixel_aspect_ratio: {
-      description: "Change the pixel aspect ratio of the active sequence.",
+      description:
+        "Change the pixel aspect ratio of the active sequence. " +
+        "Bug #52 fix: previously threw 'Illegal Parameter type' because `videoPixelAspectRatio` may require a string/enum in Premiere 25.4 rather than a raw float. " +
+        "Tool now probes value formats (number → string → fraction) and surfaces the original type if all fail.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -443,10 +446,42 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
           var settings = seq.getSettings();
           if (!settings) return __error("Could not get sequence settings");
 
-          settings.videoPixelAspectRatio = ${args.ratio};
-          seq.setSettings(settings);
+          // Bug #52: probe the original value's type so we can match it.
+          var origVal = null;
+          var origType = null;
+          try { origVal = settings.videoPixelAspectRatio; origType = typeof origVal; } catch(eO) {}
 
-          return __result({ ratio: ${args.ratio}, sequence: seq.name });
+          var candidates = [
+            { v: ${args.ratio}, label: "number" },
+            { v: String(${args.ratio}), label: "string" },
+            { v: parseFloat(${args.ratio}), label: "float" }
+          ];
+
+          var ok = false;
+          var via = null;
+          var errors = [];
+          for (var i = 0; i < candidates.length && !ok; i++) {
+            try {
+              settings.videoPixelAspectRatio = candidates[i].v;
+              seq.setSettings(settings);
+              ok = true; via = candidates[i].label;
+            } catch(eC) { errors.push(candidates[i].label + ": " + eC.toString()); }
+          }
+
+          if (!ok) {
+            return __error(
+              "set_sequence_pixel_aspect_ratio: no value format accepted. " +
+              "Original type: " + origType + " (value=" + origVal + "). " +
+              "Errors: " + errors.join(" | ")
+            );
+          }
+          return __result({
+            ratio: ${args.ratio},
+            sequence: seq.name,
+            via: via,
+            originalType: origType,
+            originalValue: origVal
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

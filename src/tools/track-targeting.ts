@@ -210,16 +210,34 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
             info.clips.push(ci);
           }
 
+          // Bug #20: track.transitions in 25.4 enumerates clip-adjacent slots, not
+          // actual transitions — caller was seeing clip range pairs. Use the QE
+          // track's getTransitionAt iterator, which only returns real transition objects.
           info.transitions = [];
+          info.transitionsSource = null;
           try {
-            for (var t = 0; t < track.transitions.numItems; t++) {
-              info.transitions.push({
-                index: t,
-                startSeconds: __ticksToSeconds(track.transitions[t].start.ticks),
-                endSeconds: __ticksToSeconds(track.transitions[t].end.ticks)
-              });
+            app.enableQE();
+            var qeSeq = qe.project.getActiveSequence();
+            if (qeSeq) {
+              var qeTrack = "${args.track_type}" === "video"
+                ? qeSeq.getVideoTrackAt(${args.track_index})
+                : qeSeq.getAudioTrackAt(${args.track_index});
+              if (qeTrack && typeof qeTrack.numTransitions !== "undefined") {
+                info.transitionsSource = "qe";
+                for (var tx = 0; tx < qeTrack.numTransitions; tx++) {
+                  var tr = qeTrack.getTransitionAt(tx);
+                  if (!tr) continue;
+                  var trInfo = { index: tx };
+                  try { trInfo.name = tr.name; } catch(eN) {}
+                  try { trInfo.startSeconds = __ticksToSeconds(parseFloat(tr.start.ticks)); } catch(eS) {}
+                  try { trInfo.endSeconds = __ticksToSeconds(parseFloat(tr.end.ticks)); } catch(eE) {}
+                  try { trInfo.durationSeconds = __ticksToSeconds(parseFloat(tr.duration.ticks)); } catch(eD) {}
+                  try { trInfo.alignment = tr.alignment; } catch(eA) {}
+                  info.transitions.push(trInfo);
+                }
+              }
             }
-          } catch(e) {}
+          } catch(eQE) { info.transitionsError = eQE.toString(); }
 
           return __result(info);
         `);
@@ -743,21 +761,55 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
           if (!result) return __error("Clip not found");
 
           var clip = result.clip;
-          var set = false;
-          for (var i = 0; i < clip.components.numItems; i++) {
-            if (clip.components[i].displayName === "Panner") {
-              for (var p = 0; p < clip.components[i].properties.numItems; p++) {
-                if (clip.components[i].properties[p].displayName === "Balance" || clip.components[i].properties[p].displayName === "Pan") {
-                  clip.components[i].properties[p].setValue(${args.pan}, true);
-                  set = true;
-                  break;
-                }
-              }
-              break;
-            }
+          if (result.trackType !== "audio") {
+            return __error("set_clip_pan: clip is on a " + result.trackType + " track, pan only works on audio clips");
           }
-          if (!set) return __error("Could not set pan - is this an audio clip?");
-          return __result({ pan: ${args.pan}, clip: clip.name });
+
+          // Bug #28: in Premiere 25.4 the audio panner component is named one of several
+          // variants — "Panner", "Panner › Balance", "Channel Volume" or similar, and the
+          // property inside is "Balance" / "Pan" / "Pan/Balance". Probe broadly.
+          function lower(s) { return String(s || "").toLowerCase(); }
+          var panNameHints = ["panner", "balance", "pan/balance", "channel volume"];
+          var propNameHints = ["balance", "pan", "pan/balance"];
+
+          var set = false;
+          var compNamesProbe = [];
+          var matchedComp = null;
+          var matchedPropName = null;
+
+          for (var i = 0; i < clip.components.numItems; i++) {
+            var comp = clip.components[i];
+            var cn = lower(comp.displayName);
+            compNamesProbe.push(comp.displayName);
+            var compIsPanner = false;
+            for (var h = 0; h < panNameHints.length; h++) {
+              if (cn.indexOf(panNameHints[h]) !== -1) { compIsPanner = true; break; }
+            }
+            if (!compIsPanner) continue;
+
+            for (var p = 0; p < comp.properties.numItems; p++) {
+              var prop = comp.properties[p];
+              var pn = lower(prop.displayName);
+              var match = false;
+              for (var hh = 0; hh < propNameHints.length; hh++) {
+                if (pn === propNameHints[hh]) { match = true; break; }
+              }
+              if (match) {
+                try { prop.setValue(${args.pan}, true); set = true; matchedComp = comp.displayName; matchedPropName = prop.displayName; break; }
+                catch(eSV) {}
+              }
+            }
+            if (set) break;
+          }
+
+          if (!set) {
+            return __error(
+              "set_clip_pan: no Panner/Balance component found on this audio clip. " +
+              "Premiere 25.4 may have renamed the component — please report this clip's component list. " +
+              "Components: " + compNamesProbe.join(" | ")
+            );
+          }
+          return __result({ pan: ${args.pan}, clip: clip.name, component: matchedComp, property: matchedPropName });
         `);
         return sendCommand(script, bridgeOptions);
       },

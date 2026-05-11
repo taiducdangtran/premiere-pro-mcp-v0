@@ -74,7 +74,10 @@ export function getPlaybackTools(bridgeOptions: BridgeOptions) {
     },
 
     step_forward: {
-      description: "Step the playhead forward by N frames. Uses QE DOM.",
+      description:
+        "Step the playhead forward by N frames. " +
+        "Bug #48 fix: previously called `player.step(1)` which throws 'Illegal Parameter type' in Premiere 25.4. " +
+        "Now computes the frame duration from sequence frame rate and uses DOM-level `seq.setPlayerPosition(ticks)` (frame-accurate, no QE).",
       parameters: {
         type: "object" as const,
         properties: {
@@ -86,22 +89,44 @@ export function getPlaybackTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          app.enableQE();
+
+          // Bug #48: derive frame duration in ticks from sequence frame rate.
+          // seq.getSettings().videoFrameRate is a Time object (ticks property).
+          var frameTicks = null;
           try {
-            for (var i = 0; i < ${frames}; i++) {
-              qe.project.getActiveSequence().player.step(1);
+            var settings = seq.getSettings();
+            if (settings && settings.videoFrameRate && settings.videoFrameRate.ticks) {
+              frameTicks = parseFloat(settings.videoFrameRate.ticks);
             }
-            return __result({ stepped: ${frames} });
-          } catch (ex) {
-            return __error("Step failed: " + ex.toString());
+          } catch(eS) {}
+          if (!frameTicks || frameTicks <= 0) {
+            // Fallback: 1/30 sec
+            frameTicks = TICKS_PER_SECOND / 30;
           }
+
+          var curTicks = null;
+          try { curTicks = parseFloat(seq.getPlayerPosition().ticks); } catch(eGP) {}
+          if (curTicks === null) return __error("step_forward: cannot read current playhead position");
+
+          var newTicks = curTicks + (frameTicks * ${frames});
+          try { seq.setPlayerPosition(String(newTicks)); }
+          catch(eSP) { return __error("step_forward setPlayerPosition failed: " + eSP.toString()); }
+
+          return __result({
+            stepped: ${frames},
+            frameTicks: frameTicks,
+            fromTicks: curTicks,
+            toTicks: newTicks
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },
     },
 
     step_backward: {
-      description: "Step the playhead backward by N frames. Uses QE DOM.",
+      description:
+        "Step the playhead backward by N frames. " +
+        "Bug #48 fix: same as step_forward — uses DOM `setPlayerPosition` instead of broken QE `player.step()`.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -113,15 +138,31 @@ export function getPlaybackTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          app.enableQE();
+
+          var frameTicks = null;
           try {
-            for (var i = 0; i < ${frames}; i++) {
-              qe.project.getActiveSequence().player.step(-1);
+            var settings = seq.getSettings();
+            if (settings && settings.videoFrameRate && settings.videoFrameRate.ticks) {
+              frameTicks = parseFloat(settings.videoFrameRate.ticks);
             }
-            return __result({ stepped: -${frames} });
-          } catch (ex) {
-            return __error("Step failed: " + ex.toString());
-          }
+          } catch(eS) {}
+          if (!frameTicks || frameTicks <= 0) frameTicks = TICKS_PER_SECOND / 30;
+
+          var curTicks = null;
+          try { curTicks = parseFloat(seq.getPlayerPosition().ticks); } catch(eGP) {}
+          if (curTicks === null) return __error("step_backward: cannot read current playhead position");
+
+          var newTicks = curTicks - (frameTicks * ${frames});
+          if (newTicks < 0) newTicks = 0;
+          try { seq.setPlayerPosition(String(newTicks)); }
+          catch(eSP) { return __error("step_backward setPlayerPosition failed: " + eSP.toString()); }
+
+          return __result({
+            stepped: -${frames},
+            frameTicks: frameTicks,
+            fromTicks: curTicks,
+            toTicks: newTicks
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

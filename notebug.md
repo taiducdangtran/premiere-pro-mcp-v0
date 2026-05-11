@@ -2415,3 +2415,102 @@ delete_project_item({item_id: "C7994_Subclip1"})
 
 **Nếu tất cả fail:** error sẽ kèm `_probe` object cho dev debug.
 
+
+---
+
+# 🛠️ FIX LOG — v1.2.6 (2026-05-11, deferred bugs cleanup)
+
+Fix 10 deferred bugs từ v1.2.4 — chiến lược chính: **probe multiple signatures**, surface probe results trong error message để tester có data debug khi gặp signature mismatch trong build cụ thể.
+
+## ✅ Signature probe family (5 bugs)
+
+### #30 `set_clip_speed_qe` — probe 5/4/3/2/1-arg
+- Root: `qeClip.setSpeed(speed)` (1-arg) throws "Not Enough Parameters" trong 25.4
+- Fix: probe 5 variants của `setSpeed(speed, frameRate, maintainAudioPitch, reverse, rippleEdit)`. Return `signatureUsed`
+- File: [src/tools/advanced.ts:176-235](src/tools/advanced.ts#L176-L235)
+
+### #31 `reverse_clip` — fall back to setSpeed 5-arg
+- Root: `qeClip.setReverse(bool)` throws "Unknown error exception" trong 25.4
+- Fix: chain `setReverse` → `setSpeed(curSpeed, "1", false, rev, false)` → DOM `clip.setSpeed(ratio, rev)`. Preserve current speed
+- File: [src/tools/advanced.ts:237-310](src/tools/advanced.ts#L237-L310)
+
+### #61 `scene_edit_detection` — probe 5 signature shapes
+- Root: `performSceneEditDetectionOnSelection()` no-arg throws "Not Enough Parameters"
+- Fix: probe object `{applyCuts, createMarkers, sensitivity}` → 3-arg → 2-arg → 1-arg → no-arg. Thêm params `apply_cuts`, `create_markers`, `sensitivity`
+- File: [src/tools/advanced.ts:749-810](src/tools/advanced.ts#L749-L810)
+
+### #65 `auto_reframe_sequence` — GCD + 7 variants
+- Root: `autoReframeSequence(w, h, false)` throws "Illegal Parameter type" — signature đã change sang numerator/denominator
+- Fix: compute GCD của W×H, probe `(num, den, motion, nest)` / `(w, h, motion, nest)` / 7 variants. Thêm `motion_preset` + `nest_clips` params
+- File: [src/tools/sequence.ts:396-485](src/tools/sequence.ts#L396-L485)
+
+### #66 `import_mogrt_from_library` — new library_name first arg
+- Root: Adobe added required `libraryName` first arg trong 25.4
+- Fix: accept `library_name` param. Probe both new `(library, name, ticks, v, a)` và legacy `(name, ticks, v, a)` signatures
+- File: [src/tools/text.ts:170-260](src/tools/text.ts#L170-L260)
+
+## ✅ Param type / property assignment (3 bugs)
+
+### #48 `step_forward` / `step_backward` — pure DOM, no QE
+- Root: `player.step(1)` throws "Illegal Parameter type" trong 25.4
+- Fix: read `getSettings().videoFrameRate.ticks`, compute new ticks position, call `seq.setPlayerPosition(ticks)`. Bỏ QE dependency hoàn toàn
+- File: [src/tools/playback.ts:76-167](src/tools/playback.ts#L76-L167)
+
+### #52 `set_sequence_pixel_aspect_ratio` — probe value formats
+- Root: `videoPixelAspectRatio = float` throws "Illegal Parameter type"
+- Fix: probe number → string → parseFloat. Report `originalType` + `originalValue` để caller debug
+- File: [src/tools/utility.ts:426-495](src/tools/utility.ts#L426-L495)
+
+### #38 `trim_clip` — setInPoint method instead of property assignment
+- Root: `clip.inPoint = ticksString` is read-only trong 25.4 (silent no-op)
+- Fix: chain `setInPoint(ticks, mediaType)` → `setInPoint(ticks)` → direct assign. mediaType derive từ trackType (video=1, audio=2). Validate by comparing before/after ticks, report `inPointChanged` / `outPointChanged` flags + post-trim nodeId
+- File: [src/tools/timeline.ts:133-225](src/tools/timeline.ts#L133-L225)
+
+## ✅ Component / iteration logic (2 bugs)
+
+### #28 `set_clip_pan` — multi-name component probe
+- Root: "Could not set pan - is this an audio clip?" false-negative vì panner component name varies trong 25.4
+- Fix: track type validation up front (audio only). Multi-hint probe — case-insensitive substring match across "panner" / "balance" / "pan/balance" / "channel volume". Surface component list trong error
+- File: [src/tools/track-targeting.ts:724-790](src/tools/track-targeting.ts#L724-L790)
+
+### #20 `get_track_info.transitions` — QE iteration
+- Root: DOM `track.transitions` enumerates clip-adjacent slots, không phải real transitions
+- Fix: dùng QE `qeTrack.getTransitionAt(i)` iteration. Add `name`, `duration`, `alignment` fields. `transitionsSource: "qe"` indicates path
+- File: [src/tools/track-targeting.ts:213-242](src/tools/track-targeting.ts#L213-L242)
+
+## 📊 v1.2.6 SCORE
+
+| Category | Bugs Fixed |
+|----------|-----------:|
+| Signature probe | 5 |
+| Param type | 3 |
+| Component logic | 2 |
+| **TOTAL** | **10** |
+
+**Cumulative across v1.2.1 → v1.2.6:** ~70 bugs fixed.
+
+## 📋 RETEST cho tester — v1.2.6
+
+Mỗi tool giờ trả `signatureUsed` / `via` / probe info trong response — nếu fail, error message kèm probe data dev có thể dùng để refine.
+
+```
+# Signature probe family
+set_clip_speed_qe({node_id, speed_percent: 150})           → expect signatureUsed
+reverse_clip({node_id, reverse: true})                     → expect via
+scene_edit_detection({})                                   → expect signatureUsed
+auto_reframe_sequence({target_width: 1080, target_height: 1920}) → expect signatureUsed
+import_mogrt_from_library({mogrt_name: "X", library_name: "Y"})  → expect signatureUsed
+
+# Param type
+step_forward({frames: 5})              → expect fromTicks + toTicks
+step_backward({frames: 5})             → expect stepped: -5
+set_sequence_pixel_aspect_ratio({ratio: 1.4222})  → expect via
+trim_clip({node_id, new_in_seconds: 1.5})         → expect details.inPointChanged: true
+
+# Component logic
+set_clip_pan({node_id: <audio>, pan: 50})  → expect component + property fields
+get_track_info({track_type: "video", track_index: 0})  → expect transitions[] với name/duration/alignment
+```
+
+**Nếu vẫn fail:** error sẽ có probe data — gửi lại cho dev refine signature thêm.
+

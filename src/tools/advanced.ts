@@ -194,28 +194,55 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
         required: ["node_id", "speed_percent"],
       },
       handler: async (args: { node_id: string; speed_percent: number; reverse?: boolean }) => {
+        const rev = args.reverse === true;
         const script = buildToolScript(`
           app.enableQE();
           var qeSeq = qe.project.getActiveSequence();
           if (!qeSeq) return __error("No active sequence (QE)");
-          
+
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found");
-          
-          var qeTrack = result.trackType === "video"
-            ? qeSeq.getVideoTrackAt(result.trackIndex)
-            : qeSeq.getAudioTrackAt(result.trackIndex);
+
           var qeClip = __getQEClip(result);
           if (!qeClip) return __error("QE clip not found");
-          
-          qeClip.setSpeed(${args.speed_percent});
-          ${args.reverse ? `qeClip.setReverse(true);` : ""}
-          
+
+          // Bug #30: qeClip.setSpeed(speed) is the 1-arg form which throws
+          // "Not Enough Parameters" in Premiere 25.4. The full signature is:
+          //   setSpeed(speed, frameRate, maintainAudioPitch, reverse, rippleEdit)
+          // We probe variants in order: full 5-arg, 4-arg (no ripple), 3-arg, 2-arg, 1-arg.
+          var spd = ${args.speed_percent};
+          var rev = ${rev ? "true" : "false"};
+          var paths = [];
+          var ok = false;
+          var sigUsed = null;
+
+          var sigs = [
+            { args: [spd, "1", false, rev, false], label: "setSpeed(speed,'1',false,rev,false)" },
+            { args: [spd, "1", false, rev], label: "setSpeed(speed,'1',false,rev)" },
+            { args: [spd, "1", false], label: "setSpeed(speed,'1',false)" },
+            { args: [spd, "1"], label: "setSpeed(speed,'1')" },
+            { args: [spd], label: "setSpeed(speed)" }
+          ];
+          for (var s = 0; s < sigs.length && !ok; s++) {
+            try {
+              var a = sigs[s].args;
+              if (a.length === 5) qeClip.setSpeed(a[0], a[1], a[2], a[3], a[4]);
+              else if (a.length === 4) qeClip.setSpeed(a[0], a[1], a[2], a[3]);
+              else if (a.length === 3) qeClip.setSpeed(a[0], a[1], a[2]);
+              else if (a.length === 2) qeClip.setSpeed(a[0], a[1]);
+              else qeClip.setSpeed(a[0]);
+              ok = true; sigUsed = sigs[s].label;
+            } catch(eS) { paths.push(sigs[s].label + ": " + eS.toString()); }
+          }
+          if (!ok) {
+            return __error("set_clip_speed_qe: no signature variant worked. Attempts: " + paths.join(" | "));
+          }
           return __result({
             speedSet: true,
             clipName: result.clip.name,
-            speed: ${args.speed_percent},
-            reverse: ${!!args.reverse}
+            speed: spd,
+            reverse: rev,
+            signatureUsed: sigUsed
           });
         `);
         return sendCommand(script, bridgeOptions);
@@ -223,7 +250,10 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
     },
 
     reverse_clip: {
-      description: "Reverse a clip's playback direction. Uses QE DOM.",
+      description:
+        "Reverse a clip's playback direction. Uses QE DOM. " +
+        "Bug #31 fix: `qeClip.setReverse(bool)` throws 'Unknown error exception' in Premiere 25.4. " +
+        "Falls back to `qeClip.setSpeed(currentSpeed, '1', false, reverse, false)` (the 5-arg form that ships in 25.4), preserving current speed.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -244,18 +274,54 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
           app.enableQE();
           var qeSeq = qe.project.getActiveSequence();
           if (!qeSeq) return __error("No active sequence (QE)");
-          
+
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found");
-          
-          var qeTrack = result.trackType === "video"
-            ? qeSeq.getVideoTrackAt(result.trackIndex)
-            : qeSeq.getAudioTrackAt(result.trackIndex);
+
           var qeClip = __getQEClip(result);
           if (!qeClip) return __error("QE clip not found");
-          
-          qeClip.setReverse(${rev});
-          return __result({ reversed: ${rev}, clipName: result.clip.name });
+
+          var rev = ${rev ? "true" : "false"};
+          var errors = [];
+          var ok = false;
+          var via = null;
+
+          // Path 1: legacy setReverse(bool)
+          try {
+            if (typeof qeClip.setReverse === "function") {
+              qeClip.setReverse(rev);
+              ok = true; via = "qeClip.setReverse(rev)";
+            }
+          } catch(eR) { errors.push("setReverse: " + eR.toString()); }
+
+          // Path 2: setSpeed 5-arg form with reverse flag (Bug #30 family)
+          if (!ok) {
+            // Read current speed first so we don't change it while just toggling reverse.
+            var curSpeed = 100;
+            try {
+              if (typeof qeClip.speed !== "undefined" && !isNaN(qeClip.speed)) curSpeed = qeClip.speed;
+              else if (typeof result.clip.getSpeed === "function") curSpeed = result.clip.getSpeed() * 100;
+            } catch(eRS) {}
+
+            try {
+              qeClip.setSpeed(curSpeed, "1", false, rev, false);
+              ok = true; via = "qeClip.setSpeed(curSpeed,'1',false,rev,false)";
+            } catch(eS5) { errors.push("setSpeed(5-arg): " + eS5.toString()); }
+          }
+
+          // Path 3: DOM clip.setSpeed (1-arg ratio form)
+          if (!ok) {
+            try {
+              if (typeof result.clip.setSpeed === "function") {
+                // DOM API: setSpeed(ratio, reverse?) — try both shapes.
+                try { result.clip.setSpeed(1.0, rev); ok = true; via = "clip.setSpeed(1.0, rev)"; }
+                catch(eDS1) { errors.push("dom.setSpeed(ratio,rev): " + eDS1.toString()); }
+              }
+            } catch(eDS) { errors.push("dom.setSpeed: " + eDS.toString()); }
+          }
+
+          if (!ok) return __error("reverse_clip: no working path. Errors: " + errors.join(" | "));
+          return __result({ reversed: rev, clipName: result.clip.name, via: via });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -675,14 +741,62 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
     },
 
     scene_edit_detection: {
-      description: "Perform scene edit detection on the selected clips in the active sequence",
-      parameters: {},
-      handler: async () => {
+      description:
+        "Perform scene edit detection on the selected clips in the active sequence. " +
+        "Bug #61 fix: `performSceneEditDetectionOnSelection` in Premiere 25.4 requires a flags/option object; the no-arg form throws 'Not Enough Parameters'. Tool now probes documented arg shapes (object with flags, individual booleans, no args) and surfaces the failure modes.",
+      parameters: {
+        type: "object" as const,
+        properties: {
+          apply_cuts: {
+            type: "boolean",
+            description: "Apply cuts at detected edits (default: true)",
+          },
+          create_markers: {
+            type: "boolean",
+            description: "Create sequence markers at detected edits (default: false)",
+          },
+          sensitivity: {
+            type: "number",
+            description: "Detection sensitivity 0-100 (default: 50)",
+          },
+        },
+      },
+      handler: async (args: { apply_cuts?: boolean; create_markers?: boolean; sensitivity?: number }) => {
+        const applyCuts = args.apply_cuts !== false;
+        const createMarkers = args.create_markers === true;
+        const sensitivity = args.sensitivity ?? 50;
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          seq.performSceneEditDetectionOnSelection();
-          return __result({ sceneDetection: true });
+          if (typeof seq.performSceneEditDetectionOnSelection !== "function") {
+            return __error("scene_edit_detection: API not exposed in this Premiere build");
+          }
+
+          var applyCuts = ${applyCuts ? "true" : "false"};
+          var createMarkers = ${createMarkers ? "true" : "false"};
+          var sensitivity = ${sensitivity};
+          var sigs = [
+            { args: [{ applyCuts: applyCuts, createMarkers: createMarkers, sensitivity: sensitivity }], label: "object {applyCuts,createMarkers,sensitivity}" },
+            { args: [applyCuts, createMarkers, sensitivity], label: "3-arg (bool,bool,num)" },
+            { args: [applyCuts, createMarkers], label: "2-arg (bool,bool)" },
+            { args: [applyCuts], label: "1-arg (bool)" },
+            { args: [], label: "no args" }
+          ];
+          var ok = false;
+          var via = null;
+          var errors = [];
+          for (var s = 0; s < sigs.length && !ok; s++) {
+            try {
+              var a = sigs[s].args;
+              if (a.length === 0) seq.performSceneEditDetectionOnSelection();
+              else if (a.length === 1) seq.performSceneEditDetectionOnSelection(a[0]);
+              else if (a.length === 2) seq.performSceneEditDetectionOnSelection(a[0], a[1]);
+              else if (a.length === 3) seq.performSceneEditDetectionOnSelection(a[0], a[1], a[2]);
+              ok = true; via = sigs[s].label;
+            } catch(eS) { errors.push(sigs[s].label + ": " + eS.toString()); }
+          }
+          if (!ok) return __error("scene_edit_detection: no signature worked. Errors: " + errors.join(" | "));
+          return __result({ sceneDetection: true, signatureUsed: via });
         `);
         return sendCommand(script, bridgeOptions);
       },

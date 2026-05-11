@@ -168,13 +168,19 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
     },
 
     import_mogrt_from_library: {
-      description: "Import a MOGRT from an Adobe Library by name",
+      description:
+        "Import a MOGRT from an Adobe Creative Cloud Library by name. " +
+        "Bug #66 fix: previously called `importMGTFromLibrary(name, ticks, v, a)` which threw 'Not Enough Parameters' in 25.4 — Adobe added a required `libraryName` first argument. Tool now accepts `library_name` and probes documented signature shapes.",
       parameters: {
         type: "object" as const,
         properties: {
           mogrt_name: {
             type: "string",
-            description: "Name of the MOGRT in the library",
+            description: "Name of the MOGRT template inside the library",
+          },
+          library_name: {
+            type: "string",
+            description: "Name of the Adobe Creative Cloud library containing the MOGRT. Required in Premiere 25.4+ — pass the library's display name as shown in the CC Libraries panel.",
           },
           track_index: {
             type: "number",
@@ -187,21 +193,67 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
         },
         required: ["mogrt_name"],
       },
-      handler: async (args: { mogrt_name: string; track_index?: number; start_seconds?: number }) => {
+      handler: async (args: {
+        mogrt_name: string;
+        library_name?: string;
+        track_index?: number;
+        start_seconds?: number;
+      }) => {
         const trackIndex = args.track_index ?? 0;
         const startSeconds = args.start_seconds ?? 0;
+        const libraryName = args.library_name ?? "";
 
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          
-          var mogrtName = "${escapeForExtendScript(args.mogrt_name)}";
-          var startTicks = __secondsToTicks(${startSeconds}).toString();
-          
-          var success = seq.importMGTFromLibrary(mogrtName, startTicks, ${trackIndex}, ${trackIndex});
-          if (!success) return __error("Failed to import MOGRT from library: " + mogrtName);
+          if (typeof seq.importMGTFromLibrary !== "function") {
+            return __error("import_mogrt_from_library: API not exposed in this Premiere build");
+          }
 
-          return __result({ imported: true, mogrtName: mogrtName, trackIndex: ${trackIndex} });
+          var mogrtName = "${escapeForExtendScript(args.mogrt_name)}";
+          var libraryName = "${escapeForExtendScript(libraryName)}";
+          var startTicks = __secondsToTicks(${startSeconds}).toString();
+          var tIdx = ${trackIndex};
+
+          // Probe documented signature variants for 25.4.
+          // Likely shape (new): importMGTFromLibrary(libraryName, mogrtName, startTicks, vTrack, aTrack)
+          // Legacy shape: importMGTFromLibrary(mogrtName, startTicks, vTrack, aTrack)
+          var sigs = [];
+          if (libraryName) {
+            sigs.push({ args: [libraryName, mogrtName, startTicks, tIdx, tIdx], label: "(library, name, ticks, v, a)" });
+            sigs.push({ args: [libraryName, mogrtName, startTicks, tIdx], label: "(library, name, ticks, vTrack)" });
+          }
+          sigs.push({ args: [mogrtName, startTicks, tIdx, tIdx], label: "legacy: (name, ticks, v, a)" });
+          sigs.push({ args: [mogrtName, startTicks, tIdx], label: "legacy: (name, ticks, vTrack)" });
+
+          var ok = false;
+          var via = null;
+          var errors = [];
+          for (var s = 0; s < sigs.length && !ok; s++) {
+            try {
+              var a = sigs[s].args;
+              var ret = null;
+              if (a.length === 5) ret = seq.importMGTFromLibrary(a[0], a[1], a[2], a[3], a[4]);
+              else if (a.length === 4) ret = seq.importMGTFromLibrary(a[0], a[1], a[2], a[3]);
+              else if (a.length === 3) ret = seq.importMGTFromLibrary(a[0], a[1], a[2]);
+              if (ret !== false) { ok = true; via = sigs[s].label; }
+              else errors.push(sigs[s].label + ": returned false");
+            } catch(eS) { errors.push(sigs[s].label + ": " + eS.toString()); }
+          }
+          if (!ok) {
+            return __error(
+              "import_mogrt_from_library: no signature worked. " +
+              (libraryName ? "" : "Hint: in Premiere 25.4 you likely need to pass library_name. ") +
+              "Errors: " + errors.join(" | ")
+            );
+          }
+          return __result({
+            imported: true,
+            mogrtName: mogrtName,
+            libraryName: libraryName || null,
+            trackIndex: tIdx,
+            signatureUsed: via
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },
