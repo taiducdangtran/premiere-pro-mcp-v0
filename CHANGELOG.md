@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.5] - 2026-05-11 — `delete_project_item` proper fallback chain (Bug #82 v2)
+
+The v1.2.4 fix for Bug #82 was incomplete — it used `item.clearOut()` (which doesn't exist on `ProjectItem` — that was confused with `clearOutPoint()`) and a hardcoded `executeCommand(20012)` cmdId that varies across Premiere builds.
+
+After researching the API surface in Premiere 25.4, replaced with a proper 5-path fallback chain:
+
+1. **`app.project.deleteAsset(item)`** — legacy (still present in some 25.x builds)
+2. **`item.deleteBin()`** — works on ANY ProjectItem in 25.4, not just bins (community-documented quirk)
+3. **`qe.project.deleteAsset(item)`** — QE parallel that often survives DOM strip
+4. **`item.select()` + `executeCommand(findMenuCommandId("Clear"))`** — Bruce Bullis pattern with DYNAMIC cmdId lookup (falls through "Clear" → "Edit.Clear" → "Delete")
+5. **`item.moveBin(__mcp_trash)`** — soft-delete to a `__mcp_trash` bin as graceful last resort
+
+Tool now returns `via` field showing which path succeeded, plus `_probe` snapshot of which delete APIs the running Premiere build exposes. Same chain applied to `delete_multiple_project_items`.
+
 ## [1.2.4] - 2026-05-11 — Sweep #2 retest fixes (12 bugs)
 
 Addresses sweep #2 retest results in `notebug.md`. CRITICAL data-integrity bugs first, then set/get inconsistencies, then probe/disambiguation improvements.

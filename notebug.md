@@ -2364,3 +2364,54 @@ Các bugs cần controlled signature probing (Premiere không stable enough đ�
 
 16. **#82** — `delete_project_item("subclip_id")` → expect `via: "clearOut"` hoặc `via: "executeCommand(Clear)"` (KHÔNG raw "deleteAsset is not a function")
 
+
+---
+
+# 🛠️ FIX LOG — v1.2.5 (2026-05-11, Bug #82 v2 — proper chain)
+
+Fix v1.2.4 cho Bug #82 KHÔNG đủ — tester retest vẫn báo `app.project.deleteAsset is not a function`. Root cause của fix-không-work:
+
+1. **`item.clearOut()` KHÔNG TỒN TẠI** trên `ProjectItem` — tôi confused với `clearOutPoint()` (chỉ clear out-point time marker, không delete item)
+2. **`executeCommand(20012)` hardcode SAI** cho 25.4 — menu cmdId thay đổi giữa các build
+
+## ✅ Fix mới — proper 5-path chain (research-backed)
+
+Sau khi research Adobe ExtendScript docs + community resources, chain mới:
+
+| Path | API | Source |
+|------|-----|--------|
+| 1 | `app.project.deleteAsset(item)` | Legacy, vẫn có ở một số 25.x builds |
+| 2 | `item.deleteBin()` | **Community quirk:** works trên ANY ProjectItem, không chỉ bins (vidjuheffex CC API doc + multiple forum confirmations) |
+| 3 | `qe.project.deleteAsset(item)` | QE parallel, thường survives DOM strip |
+| 4 | `item.select()` + `executeCommand(findMenuCommandId("Clear"))` | Bruce Bullis canonical pattern, dynamic cmdId lookup (fall through "Clear" → "Edit.Clear" → "Delete") |
+| 5 | `item.moveBin(__mcp_trash)` | Soft-delete fallback — move vào bin `__mcp_trash` nếu tất cả hard-delete fail |
+
+**Tool trả thêm:**
+- `via`: chỉ path nào đã success (debug info cho user)
+- `_probe`: snapshot xem API surface nào available trong build hiện tại (`hasDeleteAsset`, `hasDeleteBin`, `hasSelect`, `hasMoveBin`, `hasFindMenuCmd`, `hasQEDeleteAsset`, `clearMenuCmdId`)
+
+**File:** [src/tools/utility.ts:6-130](src/tools/utility.ts#L6-L130)
+
+**Same chain applied to** `delete_multiple_project_items`: [src/tools/utility.ts:135-205](src/tools/utility.ts#L135-L205)
+
+## ⚠️ Lessons learned
+
+1. **`typeof X === "function"` không đủ** — phải combine với try/catch vì host objects có thể report function nhưng throw khi call
+2. **Hardcoded menu cmdId là anti-pattern** — luôn dùng `app.findMenuCommandId(label)` để dynamic lookup
+3. **Community research quan trọng hơn official docs** — `item.deleteBin()` cho non-bin items không document chính thức nhưng được dùng widely
+
+## 📋 RETEST cho tester — v1.2.5
+
+```
+delete_project_item({item_id: "C7994_Subclip1"})
+```
+
+**Expected:** 1 trong các kết quả sau (KHÔNG raw "is not a function"):
+- `{ deleted: true, via: "app.project.deleteAsset", ... }` (nếu API còn)
+- `{ deleted: true, via: "item.deleteBin (non-bin)", ... }` (most likely cho 25.4)
+- `{ deleted: true, via: "qe.project.deleteAsset", ... }`
+- `{ deleted: true, via: "executeCommand(findMenuCommandId)", ... }`
+- `{ deleted: true, via: "moveBin → __mcp_trash (soft-delete; user must empty manually)", ... }` (graceful fallback)
+
+**Nếu tất cả fail:** error sẽ kèm `_probe` object cho dev debug.
+

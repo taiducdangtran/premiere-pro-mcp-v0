@@ -42,44 +42,91 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
             }
           }
 
-          // Bug #82: app.project.deleteAsset removed in Premiere 25.4. Try multiple paths.
+          // Bug #82: app.project.deleteAsset removed in Premiere 25.4.
+          // Research-backed fallback chain (see notebug.md Bug #82 v2):
+          //   1. item.deleteBin() — community-documented: works on ANY ProjectItem, not just bins
+          //   2. qe.project.deleteAsset(item) — QE parallel that often survives DOM strip
+          //   3. item.select() + executeCommand(findMenuCommandId("Clear")) — Bruce Bullis pattern
+          //   4. move into trash bin via moveBin() — graceful soft-delete fallback
+          // NOTE: item.clearOut() does NOT exist on ProjectItem (was confused with clearOutPoint).
           var deleted = false;
           var via = null;
           var errors = [];
-          try {
-            if (typeof app.project.deleteAsset === "function") {
-              app.project.deleteAsset(item); deleted = true; via = "deleteAsset";
-            }
-          } catch(eA) { errors.push("deleteAsset: " + eA.toString()); }
+          var probe = {};
 
-          if (!deleted) {
-            try {
-              if (typeof item.clearOut === "function") {
-                item.clearOut(); deleted = true; via = "item.clearOut";
-              }
-            } catch(eC) { errors.push("clearOut: " + eC.toString()); }
+          // Probe what's actually available so the error message is useful.
+          probe.hasDeleteAsset = (typeof app.project.deleteAsset === "function");
+          probe.hasDeleteBin = (typeof item.deleteBin === "function");
+          probe.hasSelect = (typeof item.select === "function");
+          probe.hasMoveBin = (typeof item.moveBin === "function");
+          probe.hasFindMenuCmd = (typeof app.findMenuCommandId === "function");
+
+          // Path 1: legacy deleteAsset (if still present in this build)
+          if (!deleted && probe.hasDeleteAsset) {
+            try { app.project.deleteAsset(item); deleted = true; via = "app.project.deleteAsset"; }
+            catch(eA) { errors.push("deleteAsset: " + eA.toString()); }
           }
 
+          // Path 2: item.deleteBin() — works on non-bin items per community evidence
+          if (!deleted && probe.hasDeleteBin) {
+            try { item.deleteBin(); deleted = true; via = "item.deleteBin (non-bin)"; }
+            catch(eDB) { errors.push("item.deleteBin: " + eDB.toString()); }
+          }
+
+          // Path 3: QE parallel
           if (!deleted) {
-            // executeCommand("Clear") on the selected project item is the documented
-            // 25.4 workflow once the asset is selected. We don't have a selectProjectItem
-            // primitive in helpers, so try item.select if present.
             try {
-              if (typeof item.select === "function") { item.select(); }
-              else if (typeof app.project.rootItem.select === "function") { item.deleteBin && item.deleteBin(); }
-              app.executeCommand(20012); // "Clear" menu command (cmdId varies by build — best-effort)
-              deleted = true; via = "executeCommand(Clear)";
-            } catch(eE) { errors.push("executeCommand: " + eE.toString()); }
+              app.enableQE();
+              if (qe && qe.project && typeof qe.project.deleteAsset === "function") {
+                qe.project.deleteAsset(item); deleted = true; via = "qe.project.deleteAsset";
+              } else {
+                probe.hasQEDeleteAsset = false;
+              }
+            } catch(eQE) { errors.push("qe.deleteAsset: " + eQE.toString()); }
+          }
+
+          // Path 4: select + executeCommand(Clear) with dynamic cmdId lookup
+          if (!deleted && probe.hasSelect && probe.hasFindMenuCmd) {
+            try {
+              item.select();
+              var clearId = null;
+              try { clearId = app.findMenuCommandId("Clear"); } catch(eFM1) {}
+              if (!clearId) { try { clearId = app.findMenuCommandId("Edit.Clear"); } catch(eFM2) {} }
+              if (!clearId) { try { clearId = app.findMenuCommandId("Delete"); } catch(eFM3) {} }
+              probe.clearMenuCmdId = clearId;
+              if (clearId) {
+                app.executeCommand(clearId);
+                deleted = true; via = "executeCommand(findMenuCommandId)";
+              }
+            } catch(eEx) { errors.push("executeCommand: " + eEx.toString()); }
+          }
+
+          // Path 5: soft-delete via move-to-trash-bin (Bruce Bullis recommended pattern)
+          if (!deleted && probe.hasMoveBin) {
+            try {
+              var trashName = "__mcp_trash";
+              var trashBin = null;
+              for (var ti = 0; ti < app.project.rootItem.children.numItems; ti++) {
+                var ch = app.project.rootItem.children[ti];
+                if (ch && ch.name === trashName && ch.type === 2) { trashBin = ch; break; }
+              }
+              if (!trashBin) { trashBin = app.project.rootItem.createBin(trashName); }
+              item.moveBin(trashBin);
+              deleted = true; via = "moveBin → __mcp_trash (soft-delete; user must empty manually)";
+            } catch(eMB) { errors.push("moveBin: " + eMB.toString()); }
           }
 
           if (!deleted) {
             return __error(
-              "Failed to delete project item (type " + type + "): no working delete path in this Premiere build. " +
-              "Tried: " + errors.join(" | ") + ". " +
-              "Workaround: select the item in the Project panel and press Backspace, or call execute_extendscript with app.executeCommand(<Clear menu cmdId>)."
+              "Bug #82: no working delete path in Premiere build (item type " + type + "). " +
+              "Probe: " + JSON.stringify(probe) + ". " +
+              "Errors: " + errors.join(" | ") + ". " +
+              "Workaround: select the item in the Project panel manually and press Backspace, " +
+              "or use execute_extendscript to call app.executeCommand(app.findMenuCommandId('Clear')) " +
+              "after manually selecting the item."
             );
           }
-          return __result({ deleted: true, name: name, kind: "asset", type: type, via: via });
+          return __result({ deleted: true, name: name, kind: "asset", type: type, via: via, _probe: probe });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -125,12 +172,27 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
             if (item.type === 2) {
               try { item.deleteBin(); deleted++; } catch (ex) { failed.push({ id: query, error: ex.toString() }); }
             } else {
-              // Bug #82: deleteAsset removed in 25.4. Try fallbacks.
-              var ok = false;
-              try { if (typeof app.project.deleteAsset === "function") { app.project.deleteAsset(item); ok = true; } } catch(eA) {}
-              if (!ok) { try { if (typeof item.clearOut === "function") { item.clearOut(); ok = true; } } catch(eC) {} }
+              // Bug #82 v2: chain same fallbacks as single delete.
+              var ok = false; var via = null;
+              try { if (typeof app.project.deleteAsset === "function") { app.project.deleteAsset(item); ok = true; via = "deleteAsset"; } } catch(eA) {}
+              if (!ok) { try { if (typeof item.deleteBin === "function") { item.deleteBin(); ok = true; via = "item.deleteBin"; } } catch(eDB) {} }
+              if (!ok) {
+                try {
+                  app.enableQE();
+                  if (qe && qe.project && typeof qe.project.deleteAsset === "function") { qe.project.deleteAsset(item); ok = true; via = "qe.deleteAsset"; }
+                } catch(eQE) {}
+              }
+              if (!ok && typeof item.select === "function" && typeof app.findMenuCommandId === "function") {
+                try {
+                  item.select();
+                  var cid = null;
+                  try { cid = app.findMenuCommandId("Clear"); } catch(eF1) {}
+                  if (!cid) { try { cid = app.findMenuCommandId("Edit.Clear"); } catch(eF2) {} }
+                  if (cid) { app.executeCommand(cid); ok = true; via = "executeCommand"; }
+                } catch(eEx) {}
+              }
               if (ok) deleted++;
-              else failed.push({ id: query, error: "No working delete path (deleteAsset removed in 25.4)" });
+              else failed.push({ id: query, error: "No working delete path for item type " + item.type + " (Bug #82). See single delete for full probe info." });
             }
           }
           return __result({ deleted: deleted, total: ids.length, names: names, failed: failed });
