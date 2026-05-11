@@ -44,7 +44,9 @@ export function getMediaTools(bridgeOptions: BridgeOptions) {
     },
 
     import_folder: {
-      description: "Import an entire folder of media into the project",
+      description:
+        "Import a folder of media into the project. " +
+        "Bug #58 fix: filters by common media extensions, supports recursive=true for subfolders, skips hidden/system files (.DS_Store etc), and reports the actual folder contents in the error when nothing matches so the caller can debug.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -52,27 +54,81 @@ export function getMediaTools(bridgeOptions: BridgeOptions) {
             type: "string",
             description: "Path to the folder to import",
           },
+          recursive: {
+            type: "boolean",
+            description: "Walk subfolders too (default: false)",
+          },
+          extensions: {
+            type: "array",
+            description:
+              "Optional array of file extensions to import (with or without leading dot). " +
+              "Defaults to common video/audio/image formats: mp4 mov m4v avi mkv wmv flv webm mxf mts m2ts mp3 wav aif aiff aac m4a flac ogg jpg jpeg png tif tiff bmp psd ai r3d braw arri ari dpx exr.",
+          },
         },
         required: ["folder_path"],
       },
-      handler: async (args: { folder_path: string }) => {
+      handler: async (args: { folder_path: string; recursive?: boolean; extensions?: string[] }) => {
+        const recursive = args.recursive === true;
+        const defaultExts = [
+          "mp4","mov","m4v","avi","mkv","wmv","flv","webm","mxf","mts","m2ts",
+          "mp3","wav","aif","aiff","aac","m4a","flac","ogg",
+          "jpg","jpeg","png","tif","tiff","bmp","psd","ai",
+          "r3d","braw","arri","ari","dpx","exr"
+        ];
+        const exts = (args.extensions && args.extensions.length > 0)
+          ? args.extensions.map(e => e.toLowerCase().replace(/^\./, ""))
+          : defaultExts;
+        const extsLiteral = JSON.stringify(exts);
         const script = buildToolScript(`
           var folder = new Folder("${escapeForExtendScript(args.folder_path)}");
           if (!folder.exists) return __error("Folder not found: ${escapeForExtendScript(args.folder_path)}");
-          
-          var files = folder.getFiles();
+
+          var allowExts = ${extsLiteral};
+          var extMap = {};
+          for (var ex = 0; ex < allowExts.length; ex++) extMap[allowExts[ex]] = true;
+
           var filePaths = [];
-          for (var i = 0; i < files.length; i++) {
-            if (files[i] instanceof File) {
-              filePaths.push(files[i].fsName);
+          var skippedNonMedia = [];
+
+          function collect(folderObj) {
+            var entries = folderObj.getFiles();
+            if (!entries) return;
+            for (var i = 0; i < entries.length; i++) {
+              var entry = entries[i];
+              var name = entry.name;
+              // Skip hidden / system files.
+              if (name.charAt(0) === ".") continue;
+              if (entry instanceof Folder) {
+                if (${recursive ? "true" : "false"}) collect(entry);
+                continue;
+              }
+              if (entry instanceof File) {
+                var dotIdx = name.lastIndexOf(".");
+                var ext = (dotIdx >= 0) ? name.substring(dotIdx + 1).toLowerCase() : "";
+                if (extMap[ext]) filePaths.push(entry.fsName);
+                else skippedNonMedia.push(name);
+              }
             }
           }
-          
-          if (filePaths.length === 0) return __error("No files found in folder");
-          
+          collect(folder);
+
+          if (filePaths.length === 0) {
+            return __error(
+              "import_folder: no media files matched in '" + folder.fsName + "'" +
+              (${recursive ? "true" : "false"} ? " (recursive)" : "") +
+              ". Skipped non-media files: " + (skippedNonMedia.length ? skippedNonMedia.slice(0, 20).join(", ") : "(none)") +
+              ". Use the 'extensions' param to widen the filter."
+            );
+          }
+
           var importSuccess = app.project.importFiles(filePaths, true, app.project.rootItem, false);
-          if (!importSuccess) return __error("Import failed");
-          return __result({ imported: filePaths.length, folder: "${escapeForExtendScript(args.folder_path)}" });
+          if (!importSuccess) return __error("importFiles() returned false for " + filePaths.length + " path(s)");
+          return __result({
+            imported: filePaths.length,
+            folder: "${escapeForExtendScript(args.folder_path)}",
+            recursive: ${recursive ? "true" : "false"},
+            skippedNonMedia: skippedNonMedia.length
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

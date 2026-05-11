@@ -63,7 +63,9 @@ export function getKeyframeTools(bridgeOptions: BridgeOptions) {
     },
 
     set_effect_property: {
-      description: "Set the value of a specific effect property on a clip",
+      description:
+        "Set the value of a specific effect property on a clip. " +
+        "Bug #79 fix: when a component has duplicate property names (e.g., Opacity has 2x 'Blend Mode' in 25.4), pass `property_index` (from `list_clip_effects`) to target a specific occurrence. Without `property_index`, the first match by displayName is used (legacy behaviour). `match_name` is also accepted as a more reliable alternative to display name.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -73,24 +75,38 @@ export function getKeyframeTools(bridgeOptions: BridgeOptions) {
           },
           effect_name: {
             type: "string",
-            description: "Display name of the effect (e.g., 'Motion', 'Opacity')",
+            description: "Display name of the effect (e.g., 'Motion', 'Opacity'). Optional if `match_name` is provided.",
           },
           property_name: {
             type: "string",
-            description: "Display name of the property (e.g., 'Scale', 'Position', 'Opacity')",
+            description: "Display name of the property (e.g., 'Scale', 'Position', 'Opacity'). Optional if `property_index` is provided.",
+          },
+          property_index: {
+            type: "number",
+            description: "Exact 0-based index of the property within the component. Use to disambiguate when multiple properties share a displayName (Bug #79). Takes precedence over property_name.",
+          },
+          match_name: {
+            type: "string",
+            description: "Property matchName (internal ID, more stable than displayName). Tried after property_index but before property_name.",
           },
           value: {
             type: "number",
             description: "Value to set",
           },
         },
-        required: ["node_id", "effect_name", "property_name", "value"],
+        required: ["node_id", "effect_name", "value"],
       },
-      handler: async (args: { node_id: string; effect_name: string; property_name: string; value: number }) => {
+      handler: async (args: { node_id: string; effect_name: string; property_name?: string; property_index?: number; match_name?: string; value: number }) => {
+        if (args.property_index === undefined && !args.property_name && !args.match_name) {
+          return Promise.resolve({ success: false, error: "Provide at least one of: property_index, property_name, match_name." });
+        }
+        const propIdxLiteral = args.property_index !== undefined ? String(args.property_index) : "null";
+        const propNameLiteral = args.property_name !== undefined ? `"${escapeForExtendScript(args.property_name)}"` : "null";
+        const matchNameLiteral = args.match_name !== undefined ? `"${escapeForExtendScript(args.match_name)}"` : "null";
         const script = buildToolScript(`
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found");
-          
+
           var clip = result.clip;
           var comp = null;
           for (var i = 0; i < clip.components.numItems; i++) {
@@ -100,21 +116,40 @@ export function getKeyframeTools(bridgeOptions: BridgeOptions) {
             }
           }
           if (!comp) return __error("Effect not found: ${escapeForExtendScript(args.effect_name)}");
-          
+
           var prop = null;
-          for (var p = 0; p < comp.properties.numItems; p++) {
-            if (comp.properties[p].displayName === "${escapeForExtendScript(args.property_name)}") {
-              prop = comp.properties[p];
-              break;
+          var resolvedVia = null;
+          var targetIdx = ${propIdxLiteral};
+          var targetName = ${propNameLiteral};
+          var targetMatch = ${matchNameLiteral};
+
+          if (targetIdx !== null) {
+            if (targetIdx < 0 || targetIdx >= comp.properties.numItems) {
+              return __error("property_index " + targetIdx + " out of range (component has " + comp.properties.numItems + " properties)");
+            }
+            prop = comp.properties[targetIdx];
+            resolvedVia = "property_index";
+          } else if (targetMatch !== null) {
+            for (var pm = 0; pm < comp.properties.numItems; pm++) {
+              var mn = null;
+              try { mn = comp.properties[pm].matchName; } catch(eMN) {}
+              if (mn === targetMatch) { prop = comp.properties[pm]; resolvedVia = "match_name"; break; }
             }
           }
-          if (!prop) return __error("Property not found: ${escapeForExtendScript(args.property_name)}");
-          
+          if (!prop && targetName !== null) {
+            for (var p = 0; p < comp.properties.numItems; p++) {
+              if (comp.properties[p].displayName === targetName) { prop = comp.properties[p]; resolvedVia = "property_name"; break; }
+            }
+          }
+          if (!prop) return __error("Property not found via index=" + targetIdx + " match_name=" + targetMatch + " name=" + targetName);
+
           prop.setValue(${args.value}, true);
           return __result({
             set: true,
             effect: "${escapeForExtendScript(args.effect_name)}",
-            property: "${escapeForExtendScript(args.property_name)}",
+            property: prop.displayName,
+            propertyIndex: targetIdx !== null ? targetIdx : null,
+            resolvedVia: resolvedVia,
             value: ${args.value}
           });
         `);

@@ -203,7 +203,9 @@ Examples:
     },
 
     list_clip_effects: {
-      description: "List all effects/components on a clip with their properties and current values. Essential for debugging effect issues.",
+      description:
+        "List all effects/components on a clip with their properties and current values. Essential for debugging effect issues. " +
+        "Bug #79 fix: when a component has multiple properties with the same displayName (e.g., Opacity component has 2x 'Blend Mode' in 25.4), each property now carries `duplicateGroup` + `dupIndex`. Pair with `set_effect_property`'s `property_index` param to target exactly one.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -218,13 +220,20 @@ Examples:
         const script = buildToolScript(`
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found: ${escapeForExtendScript(args.node_id)}");
-          
+
           var clip = result.clip;
           var components = [];
-          
+
           for (var i = 0; i < clip.components.numItems; i++) {
             var comp = clip.components[i];
             var props = [];
+            // Pre-pass: count displayName occurrences inside this component.
+            var nameCounts = {};
+            for (var pc = 0; pc < comp.properties.numItems; pc++) {
+              var nm = comp.properties[pc].displayName;
+              nameCounts[nm] = (nameCounts[nm] || 0) + 1;
+            }
+            var seenInComp = {};
             for (var p = 0; p < comp.properties.numItems; p++) {
               var prop = comp.properties[p];
               var info = {
@@ -236,6 +245,13 @@ Examples:
               try { info.value = prop.getValue(0, 0); } catch(e) {}
               try { info.isTimeVarying = prop.isTimeVarying(); } catch(e) {}
               try { info.keyframesSupported = prop.areKeyframesSupported(); } catch(e) {}
+              if (nameCounts[prop.displayName] > 1) {
+                seenInComp[prop.displayName] = (seenInComp[prop.displayName] || 0);
+                info.duplicateGroup = prop.displayName;
+                info.dupIndex = seenInComp[prop.displayName];
+                info.dupCount = nameCounts[prop.displayName];
+                seenInComp[prop.displayName]++;
+              }
               props.push(info);
             }
             components.push({
@@ -245,7 +261,7 @@ Examples:
               properties: props
             });
           }
-          
+
           return __result({
             clipName: clip.name,
             nodeId: clip.nodeId,

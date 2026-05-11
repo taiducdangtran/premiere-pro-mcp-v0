@@ -141,13 +141,15 @@ export function getCaptionTools(bridgeOptions: BridgeOptions) {
 
     add_caption: {
       description:
-        "Add a single caption (text + start/end time) to a caption track",
+        "Add a single caption (text + start/end time) to a caption track. " +
+        "Bug #45 fix: previously threw 'TypeError: undefined is not an object' when the sequence had no caption tracks. " +
+        "Now returns a clear actionable error directing the caller to first run `create_caption_track` (or import a .srt/.vtt file), since Premiere's caption-track creation requires a source caption-format project item — there's no plain 'empty caption track' DOM API.",
       parameters: {
         type: "object" as const,
         properties: {
           track_index: {
             type: "number",
-            description: "Index of the caption track (0-based)",
+            description: "Index of the caption track (0-based). Use 0 if the sequence has only one caption track.",
           },
           text: { type: "string", description: "Caption text content" },
           start_seconds: { type: "number", description: "Start time in seconds" },
@@ -164,6 +166,23 @@ export function getCaptionTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
+
+          // Bug #45: detect missing captionTracks collection or empty list before indexing.
+          if (!seq.captionTracks || seq.captionTracks.numTracks === 0) {
+            return __error(
+              "add_caption: this sequence has no caption tracks. " +
+              "Premiere's DOM does not expose a 'create empty caption track' API — you must first " +
+              "import a caption source file (.srt / .vtt / .scc) via import_captions or import_media, " +
+              "then call create_caption_track(item_id) to attach it. After that, add_caption can append " +
+              "additional captions to the resulting track."
+            );
+          }
+          if (${args.track_index} >= seq.captionTracks.numTracks) {
+            return __error(
+              "add_caption: track_index " + ${args.track_index} + " out of range. " +
+              "Sequence has " + seq.captionTracks.numTracks + " caption track(s) (valid indexes 0.." + (seq.captionTracks.numTracks - 1) + ")."
+            );
+          }
 
           try {
             var captionTrack = seq.captionTracks[${args.track_index}];

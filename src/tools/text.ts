@@ -300,27 +300,45 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
           var newValue = ${valueLiteral};
           var propertyName = "${escapeForExtendScript(args.property_name)}";
 
+          // Bug #67: detect non-MOGRT clip up front and report clearly instead of falling
+          // through to a generic "Property not found".
+          var isMGT = false;
+          var mgt = null;
           try {
-            var mgt = clip.getMGTComponent();
-            if (mgt) {
-              for (var i = 0; i < mgt.properties.numItems; i++) {
-                if (mgt.properties[i].displayName === propertyName) {
-                  mgt.properties[i].setValue(newValue, true);
-                  return __result({ property: propertyName, set: true, viaMGT: true });
-                }
-              }
+            if (typeof clip.getMGTComponent === "function") {
+              mgt = clip.getMGTComponent();
+              isMGT = !!mgt;
             }
-          } catch (ex) {}
+          } catch (exM) {}
 
-          for (var i = 0; i < clip.components.numItems; i++) {
-            for (var j = 0; j < clip.components[i].properties.numItems; j++) {
-              if (clip.components[i].properties[j].displayName === propertyName) {
-                clip.components[i].properties[j].setValue(newValue, true);
-                return __result({ property: propertyName, set: true, componentIndex: i });
+          if (isMGT) {
+            for (var i = 0; i < mgt.properties.numItems; i++) {
+              if (mgt.properties[i].displayName === propertyName) {
+                try { mgt.properties[i].setValue(newValue, true); }
+                catch(eSv) { return __error("MGT property '" + propertyName + "' setValue failed: " + eSv.toString()); }
+                return __result({ property: propertyName, set: true, viaMGT: true });
               }
             }
+            // MOGRT clip but the named property isn't in its MGT component — probe sibling props.
+            var availMGT = [];
+            for (var k = 0; k < mgt.properties.numItems; k++) availMGT.push(mgt.properties[k].displayName);
+            return __error(
+              "set_mogrt_property: MOGRT clip found but property '" + propertyName + "' not exposed. " +
+              "Available MGT properties: " + availMGT.join(" | ")
+            );
           }
-          return __error("Property not found: " + propertyName);
+
+          // Not a MOGRT clip — refuse with a clear redirect. Previously this fell through
+          // to a regular-component scan that succeeded by accident and confused callers.
+          var compNames = [];
+          for (var c2 = 0; c2 < clip.components.numItems; c2++) compNames.push(clip.components[c2].displayName);
+          return __error(
+            "set_mogrt_property: clip '" + clip.name + "' is NOT a MOGRT (no MGT component). " +
+            "set_mogrt_property is for Motion Graphics Template clips only. " +
+            "For regular effects use set_effect_property(node_id, effect_name='" +
+            (compNames[0] || "Motion") + "', property_name='" + propertyName + "', ...). " +
+            "Clip components: " + compNames.join(" | ")
+          );
         `);
         return sendCommand(script, bridgeOptions);
       },

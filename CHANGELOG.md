@@ -4,6 +4,46 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.4] - 2026-05-11 — Sweep #2 retest fixes (12 bugs)
+
+Addresses sweep #2 retest results in `notebug.md`. CRITICAL data-integrity bugs first, then set/get inconsistencies, then probe/disambiguation improvements.
+
+### Fixed — CRITICAL data integrity
+
+- **#77 `get_clip_properties` negative outPoint / sub-frame end / int `isSpeedReversed`** — after razor/split, `clip.outPoint.ticks` and `clip.end.ticks` can return invalid sentinel values. Now reads raw values, repairs via `start + duration` / `inPoint + duration` when impossible (negative or sub-frame). Surfaces a `_raw` snapshot + `_note` when repair fires. `isSpeedReversed` and `isSelected` coerced to proper booleans.
+- **#81 `split_clip` silent no-op** — previously returned `split: true` even when the razor was a no-op (e.g., time fell outside any clip on the target track because `set_zero_point` shifted the coordinate system). Now pre-validates that a DOM clip on the target track contains `time_seconds`, returns a clear error with the available clip range otherwise; verifies post-razor that the clip count actually increased.
+- **#76 `duplicate_sequence` silent active-switch + missing new sequence ID** — returns both `originalSequenceId` and `newSequenceId` (snapshotted via before/after sequence-ID diff). Adds `make_active: boolean` param — `false` restores the original as active after cloning.
+
+### Fixed — set/get inconsistency
+
+- **#72 `get_clip_volume` always returns 0** — was calling `getValue()` on a time-varying Level property without specifying time. Now detects `isTimeVarying`, samples via `getValueAtTime(clipStart + 0.001s)`, falls back to `getValue()`, and surfaces a `_probe` array of all Volume sub-properties when neither works.
+- **#73 `get_clip_speed` always returns 1** — DOM `clip.getSpeed()` doesn't always reflect QE `setSpeed()`. Now probes three sources (DOM `getSpeed`, QE `qeClip.speed`, computed source/timeline duration ratio), picks the most reliable, returns `speedPercent` + `_probe`.
+
+### Fixed — Uniform Scale family (Bug #75 / #34)
+
+- **#75 `set_clip_scale`** — auto-detects Uniform Scale state. If "Scale" property exists (uniform=true) sets it directly; if only "Scale Width"+"Scale Height" exist (uniform=false), sets both. Previously failed silently when uniform=false because "Scale" didn't exist on the Motion component.
+- **#34 `set_scale_width_height`** — flips Uniform Scale OFF first, **re-reads** the property collection (Premiere rebuilds it after the toggle in 25.4), uses case-insensitive trimmed matching, and emits a probe of available Motion property names when one isn't found.
+
+### Fixed — Lumetri Saturation (Bug #74)
+
+- **#74 `color_correct` saturation param "Invalid parameter"** — Lumetri has 3x "Saturation" properties (Basic / Creative / Color Wheels). Now skips Saturation entries whose current value isn't a plain number (those are Color Wheels color arrays), wraps each property set in `try/catch` so a single bad value doesn't abort the rest, and surfaces a clear error if Saturation never got applied.
+
+### Fixed — Pending bugs from v1.2.1 retest
+
+- **#45 `add_caption`** — detects missing `captionTracks` collection or zero tracks up front; returns actionable error explaining the `import_captions` → `create_caption_track` → `add_caption` workflow instead of a raw `TypeError: undefined is not an object`.
+- **#67 `set_mogrt_property`** — detects whether the clip actually has an MGT component before iterating. If it's a regular video clip, returns a clear redirect to `set_effect_property` with the available component list. If MOGRT but property name not exposed, probes and lists available MGT properties.
+- **#58 `import_folder`** — adds `recursive` and `extensions` params, filters by common media extensions by default, skips hidden/system files, and surfaces the skipped non-media filenames in the error when nothing matches so callers can debug.
+- **#60 `import_fcp_xml`** — pre-validates the FCPXML file path with `File.exists` and wraps `openFCPXML` in try/catch (was throwing generic "Not Enough Parameters" on bad paths).
+
+### Fixed — Cleanup-phase findings
+
+- **#82 `delete_project_item` + `delete_multiple_project_items`** — `app.project.deleteAsset()` was removed in Premiere 25.4. Now tries `deleteAsset` → `item.clearOut()` → `executeCommand("Clear")` in order with graceful fallbacks; surfaces a workaround note (manual Backspace in Project panel) if all paths fail.
+
+### Fixed — Duplicate-name disambiguation (Bug #78 / #79)
+
+- **#78 `list_available_effects` / `list_available_audio_effects`** — annotates duplicate display names (e.g., "Noise" appears 2x, "Transform" appears 2x) with `duplicateGroup`, `dupIndex`, `dupCount`. Callers can disambiguate by `index`.
+- **#79 `list_clip_effects` + `set_effect_property`** — `list_clip_effects` flags duplicate property names per component (e.g., Opacity has 2x "Blend Mode"). `set_effect_property` accepts new optional params `property_index` and `match_name` for precise targeting; resolution priority is property_index → match_name → property_name. Existing callers using only `property_name` keep working.
+
 ## [1.2.3] - 2026-05-11 — `add_text_overlay` honest disable
 
 ### Fixed — `add_text_overlay` (out-of-scope retest finding)

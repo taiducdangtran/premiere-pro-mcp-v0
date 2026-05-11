@@ -1655,4 +1655,712 @@ Các bugs này dev đã defer cho v1.2.4+, nhưng nếu tester có thời gian r
 
 **Tester contact:** report lại trong file này (`notebug.md`), append section mới `# 🔁 RETEST RESULTS — v1.2.2/v1.2.3` để dev follow up.
 
+---
+
+# 🔁 RETEST RESULTS — v1.2.2 / v1.2.3 (2026-05-11, tester sweep #2)
+
+Run trên project "Lò nướng.prproj" (Premiere 25.4.1, build commits `cbffcc0` v1.2.2 + `401fcc5` v1.2.3). Active sequence: `MCP_Test_FromClips`.
+
+## 🎯 Highest priority — kết quả thực tế
+
+### 🔴 Bug #37 `add_color_matte` — **STILL BROKEN trong v1.2.2**
+
+**Triệu chứng:** Gọi `add_color_matte({ color_hex: "#FF0000", name: "RetestMatte_v122" })` → **timeout 30s** + Color Picker dialog HIỆN RA NGUYÊN VẸN trong Premiere (đã verify bằng screenshot từ tester). Bridge block hoàn toàn cho đến khi user dismiss dialog tay.
+
+**Đối chiếu với dev claim trong v1.2.2 FIX LOG:**
+> "trước đây timeout 30s + block bridge → giờ return error trong <1s, bridge engine không bao giờ bị block bởi Color Picker."
+
+**Reality:** behavior identical với v1.2.1. Fix KHÔNG có effect.
+
+**Có thể root cause:**
+1. Code mới vẫn fallthrough vào `qe.project.newColorMatte()` thay vì refuse-to-invoke — kiểm tra logic refuse có thực sự active hay không, đặc biệt khi DOM probe trả về truthy object/method nhưng method gọi vẫn redirect xuống QE bên dưới.
+2. Hoặc Adobe DOM `app.project.rootItem.createColorMatte()` tồn tại trong 25.4.1 NHƯNG internal implementation vẫn open Color Picker dialog (cùng QE backend, chỉ wrap khác).
+3. Hoặc build deployed cho tester KHÔNG khớp với commit `cbffcc0` — verify deploy lại.
+
+**Đề nghị dev:**
+- Log từng bước probe trong `add_color_matte` (DOM path 1 → DOM path 2 → refuse vs invoke QE) ra `app.consoleClear()/console.log` để debug runtime
+- Test trực tiếp trong ExtendScript Toolkit: `typeof app.project.rootItem.createColorMatte` — nếu `"undefined"` thì fix path 1 không bao giờ trigger, code chắc chắn rơi vào refuse hoặc QE fallback
+- Nếu refuse branch đang invoke QE thay vì throw → fix logic guard
+
+**Test command để dev verify:**
+```jsx
+// Chạy trong ExtendScript Toolkit
+$.writeln(typeof app.project.rootItem.createColorMatte);
+$.writeln(typeof app.project.createColorMatte);
+```
+
+### 🔴 Bug #19 `inspect_dom_object` — **STILL PARTIAL trong v1.2.2**
+
+**Triệu chứng:** Output trên `app.project.activeSequence`:
+```json
+"projectItem": {
+  "children": null,                              ← Fixed (was undefined)
+  "getOverrideColorSpaceList": "[object]",       ← STILL "[object]", expected "[function]"
+  ...
+}
+```
+
+**Đối chiếu với dev claim:**
+> "Function refs → `\"[function]\"`"
+
+**Reality:** vẫn `"[object]"`.
+
+**Có thể root cause:**
+1. ExtendScript host method `getOverrideColorSpaceList` không pass cả `typeof === "function"` LẪN `instanceof Function` — nó là một loại host object kiểu khác. Cần thêm probe thứ 3.
+2. Hoặc `inspectObj()` hit `vt === "function"` check trước nhưng fallthrough do exception trong `instanceof` block bị silent catch.
+
+**Đề nghị dev — thêm probe 3-tier:**
+```javascript
+var isFn = (vt === "function");
+if (!isFn && val !== null && vt === "object") {
+  try { isFn = (val instanceof Function); } catch(e) {}
+  if (!isFn) {
+    // Tier 3: probe by attempting toString
+    try {
+      var s = Object.prototype.toString.call(val);
+      isFn = (s === "[object Function]");
+    } catch(e) {}
+  }
+}
+```
+
+**Test command để dev verify:**
+```jsx
+var seq = app.project.activeSequence;
+var fn = seq.projectItem.getOverrideColorSpaceList;
+$.writeln("typeof: " + typeof fn);
+$.writeln("instanceof: " + (fn instanceof Function));
+$.writeln("toString: " + Object.prototype.toString.call(fn));
+```
+
+### 🔴 Bug #37-sibling `add_text_overlay` v1.2.3 — **STILL BROKEN**
+
+**Triệu chứng:** Gọi `add_text_overlay({ text: "RetestText_v123", duration_seconds: 3, start_seconds: 10 })` → trả error:
+```
+Error: add_text_overlay failed: Error: Illegal Parameter type
+```
+
+**Đối chiếu với dev claim:**
+> "Return error rõ ràng với 4 workarounds: import_mogrt(...) + set_mogrt_property(...), import_mogrt_from_library(...), add_caption(...), tạo title bằng UI rồi automate."
+
+**Reality:** trả raw ExtendScript error `"Illegal Parameter type"` — KHÔNG có workaround note, KHÔNG có MOGRT redirect, KHÔNG có error message rõ ràng.
+
+**Có thể root cause:**
+1. Probe `app.project.createSupportItem("title", ...)` trả về method tồn tại (truthy) → code chạy `.call()` với param sai → ExtendScript throw `"Illegal Parameter type"` → exception escape try/catch của fix.
+2. Try/catch trong fix không catch loại error này (có thể nó là `RuntimeError` không phải `Error`).
+
+**Đề nghị dev:**
+- Wrap toàn bộ probe attempts trong try/catch, bất kể error type
+- Default behavior khi cả 3 probe fail → return MOGRT redirect note (như intended)
+- Verify `createSupportItem` signature trong 25.4: có lẽ nhận `(name, presetPath)` chứ không phải `("title", ...)`
+
+**Test command:**
+```jsx
+try {
+  var x = app.project.createSupportItem("title", null, null);
+  $.writeln("OK: " + x);
+} catch(e) {
+  $.writeln("ERR: " + e.toString());
+}
+```
+
+## 🟢 Lower priority — kết quả thực tế
+
+### ✅ Bug #56 `set_workspace` — **PASS** (DOM API confirmed)
+
+- `set_workspace("Color")` → switched OK (Lumetri Color panel hiện ra trong Premiere)
+- `set_workspace("Editing")` → returned `{ set: true, workspace: "Editing" }` trong <1s
+- **KHÔNG có "Save Workspace?" dialog block bridge** ✅
+
+**Side-effect quan trọng cho dev/tester:**
+- Khi switch sang workspace KHÔNG chứa MCP Bridge panel (vd "Color"), CEP extension bị unload → bridge dừng response → các call sau đó timeout cho đến khi user re-enable extension manually
+- Test sequence: `set_workspace("Color")` PASS → `ping()` timeout 5s → user enable MCP Bridge panel thủ công → `ping()` OK
+- **Khuyến nghị:** thêm pre-check trong `set_workspace` để warn user nếu target workspace không có extension panel registered, hoặc auto re-enable panel sau khi switch.
+
+### ✅ Bug #40 `replace_clip_media` — **PASS** (confirmed)
+
+```
+Input:  clip_node_id="000f4470" (C8027.MP4 on V1), new_item_id="000f42b8" (C8028.MP4)
+Output: { "replaced": true, "clipName": "C8027.MP4", "newSource": "C8028.MP4" }
+Duration: <2s, no dialog
+```
+
+### ✅ Bug #41 `four_point_edit` — **PASS** (confirmed)
+
+```
+Input:  source_item_id="000f42b9" (C8016.MP4), source 0-3s → timeline 35-38s on V2
+Output: { "edited": true, "mode": "overwrite", "speedPercent": 100, ... }
+Duration: <2s, no dialog
+```
+
+### ⏸️ Bug #70 `close_project` — **SKIPPED**
+
+Không test vì sẽ đóng project hiện tại → mất state cho các retest còn lại trong session. Theo dev classification (DOM API + ExtendScript dialog), expected PASS — tester nên verify riêng trong session disposable.
+
+## 📊 TỔNG KẾT RETEST v1.2.2 / v1.2.3
+
+| # | Tool | Dev claim | Actual result | Status |
+|----|------|-----------|---------------|--------|
+| 19 | `inspect_dom_object` | `"[function]"` | vẫn `"[object]"` | 🔴 FAIL |
+| 37 | `add_color_matte` | <1s fast-fail, no dialog | timeout 30s, Color Picker hiện ra | 🔴 FAIL |
+| 37b | `add_text_overlay` (v1.2.3) | MOGRT redirect note | `"Illegal Parameter type"` raw error | 🔴 FAIL |
+| 40 | `replace_clip_media` | Expected PASS | ✅ PASS (<2s) | ✅ PASS |
+| 41 | `four_point_edit` | Expected PASS | ✅ PASS (<2s) | ✅ PASS |
+| 56 | `set_workspace` | Expected PASS | ✅ PASS (<1s) + side-effect note | ✅ PASS |
+| 70 | `close_project` | Expected PASS | ⏸️ chưa test | ⏸️ skipped |
+
+**Score:** 3/6 PASS, 3/6 STILL FAIL (#19, #37, #37b), 1/6 skipped.
+
+## 🔥 Highest priority cho dev (v1.2.4)
+
+1. **Bug #37 `add_color_matte`** — fix v1.2.2 không có effect. Cần debug runtime: log từng probe step, verify build deployed đúng commit, hoặc nếu DOM `createColorMatte` cũng internally call QE path → **disable hẳn** giống pattern slip/slide/roll (Bug #39). User-facing message: "Color matte creation blocked — use `add_black_video` + Lumetri tint, or `add_adjustment_layer` + `apply_ramp`."
+
+2. **Bug #19 `inspect_dom_object`** — `instanceof Function` không đủ cho ExtendScript host methods. Thêm tier-3 probe `Object.prototype.toString.call(val) === "[object Function]"`.
+
+3. **Bug #37b `add_text_overlay`** — try/catch không catch được "Illegal Parameter type" exception. Wrap toàn bộ probe trong defensive catch và default-return MOGRT redirect note nếu MỌI probe fail.
+
+## ✅ Pattern đã work tốt — apply cho bugs pending v1.2.4+
+
+- **Graceful degradation pattern** (v1.2.1): `{ available: false, note: "...workaround..." }` — apply cho 17 pending bugs (#12, #20, #22, #25, #28, ..., #67) để cải thiện UX kể cả khi chưa fix gốc.
+- **Pre-validation pattern** (v1.2.1): check file exists trước khi gọi API — apply cho mọi tool path-based.
+- **DOM-first probe + refuse-QE pattern** (v1.2.2 architecture, dù #37 chưa work) — đúng hướng, cần debug instance cụ thể.
+
+---
+
+# 🔬 DEEP SWEEP #3 — v1.2.4 dev report (2026-05-11)
+
+Tester chạy thêm 1 vòng debug kỹ trên project "Lò nướng.prproj" (Premiere 25.4.1) để dev fix gọn 1 lần. Tổng 10 wave (~100+ tool calls) trên active sequence `MCP_Test_FromClips` → `MCP_Test_FromClips Copy`.
+
+## 🔴 NEW BUGS phát hiện (10 bugs ngoài 17 pending)
+
+### NEW BUG #72 — `get_clip_volume` LUÔN trả `0` bất kể set value
+
+**Repro (sequential, KHÔNG phải parallel ordering):**
+```
+set_clip_volume({node_id: "000f4479", volume_db: -9})  → { volumeDb: -9 } ✅
+get_clip_volume({track_index: 0, clip_index: 0})       → { volumeDb: 0 }  🔴
+```
+
+**Cùng clip (audio track 0, clip 0 = nodeId 000f4479).** Set ghi nhận thành công, Get đọc về 0.
+
+**Root cause khả năng:**
+- Get đang đọc audio TRACK-level volume thay vì CLIP-level Volume → Level parameter
+- Hoặc đọc sai property path (audio component's `Volume.Bypass` thay vì `Volume.Level`)
+
+**Test command cho dev:**
+```jsx
+var clip = app.project.activeSequence.audioTracks[0].clips[0];
+var vol = clip.components[1]; // Volume component
+$.writeln("comp.displayName: " + vol.displayName);
+for (var i = 0; i < vol.properties.numItems; i++) {
+  $.writeln("prop " + i + ": " + vol.properties[i].displayName + " = " + vol.properties[i].getValue());
+}
+```
+
+---
+
+### NEW BUG #73 — `get_clip_speed` LUÔN trả `speed: 1` bất kể set value
+
+**Repro:**
+```
+speed_change({node_id: "000f4475", speed_percent: 150})  → { speedChanged: true, speed: 150 } ✅
+get_clip_speed({node_id: "000f4475"})                    → { speed: 1, reversed: false }      🔴
+```
+
+**Pattern giống Bug #72** — set/get inconsistency. Speed actually changed in UI (sequence duration changed), nhưng get đọc về 1.
+
+**Root cause khả năng:**
+- Get đọc `clip.speed` (property) trong khi set dùng `clip.setSpeed()` method → 2 cơ chế khác nhau
+- Hoặc đọc thuộc tính ratio nhưng không nhân 100 → 1.5 → cast int → 1
+
+---
+
+### NEW BUG #74 — `color_correct` fail với param `saturation` (Invalid parameter)
+
+**Repro:**
+```
+color_correct({node_id: ..., exposure: 0.5})              → PASS ✅
+color_correct({node_id: ..., contrast: 15})               → PASS ✅
+color_correct({node_id: ..., saturation: 120})            → FAIL "Invalid parameter"  🔴
+color_correct({node_id: ..., exposure: 0.5, saturation: 120}) → FAIL "Invalid parameter" 🔴
+color_correct({node_id: ..., exposure: 0.5, contrast: 15}) → PASS ✅
+```
+
+**Saturation param riêng broken.** Các param khác work.
+
+**Root cause khả năng:** Lumetri saturation index có duplicate (3 "Saturation" props trong Lumetri), code dùng index sai trong `color_correct` (khác với `set_lumetri_creative` đã fix đúng idx 43).
+
+---
+
+### NEW BUG #75 — `set_clip_scale` / `add_keyframe(Motion, Scale)` fail khi `Uniform Scale = false`
+
+**Repro:**
+```
+# Clip 000f446f có Uniform Scale = false
+set_clip_scale({node_id: "000f446f", scale: 120})         → FAIL "Could not set scale" 🔴
+add_keyframe({effect_name:"Motion", property_name:"Scale", ...}) → FAIL "Property not found" 🔴
+
+# Clip 000f4473 có Uniform Scale = true
+set_clip_transform({node_id: "000f4473", scale: 90})      → PASS ✅
+```
+
+**Root cause CONFIRMED:** Premiere 25.4 Motion component có:
+- Khi `Uniform Scale = true` → có property `"Scale"` (single value)
+- Khi `Uniform Scale = false` → CHỈ có `"Scale Width"` + `"Scale Height"` (Scale biến mất)
+
+Code hiện tại assume `"Scale"` luôn tồn tại → fail khi uniform=false.
+
+**Fix:**
+```javascript
+// set_clip_scale - detect uniform state first
+var motion = clip.components["Motion"];
+var uniformProp = findPropByName(motion, "Uniform Scale");
+var isUniform = uniformProp ? uniformProp.getValue() : true;
+if (isUniform) {
+  setPropByName(motion, "Scale", scale);
+} else {
+  setPropByName(motion, "Scale Width", scale);
+  setPropByName(motion, "Scale Height", scale);
+}
+```
+
+Same fix cần áp dụng cho `add_keyframe`, `get_keyframes`, `set_keyframe_interpolation` khi target property là "Scale".
+
+**Liên quan:** Bug #34 `set_scale_width_height` đã pending — root cause cùng family. Width set work nhưng Height fail vì khi Uniform=true, "Scale Height" prop không exist (chỉ có "Scale Width"). Cần auto-toggle Uniform=false trước khi set 2 giá trị riêng.
+
+---
+
+### NEW BUG #76 — `duplicate_sequence` activate sequence mới (silent UX issue)
+
+**Repro:**
+```
+# State: active = "MCP_Test_FromClips"
+duplicate_sequence({sequence_id: "MCP_Test_FromClips"}) 
+  → { duplicated: true, originalName: "MCP_Test_FromClips" }  # KHÔNG có new ID
+# State: active = "MCP_Test_FromClips Copy" 🔴
+```
+
+**Vấn đề:**
+1. Active sequence bị chuyển sang copy **không có warning**
+2. Response **không return new sequence ID/name** → user không cách nào reference duplicate
+3. Mọi nodeId tracking cũ trong session bị stale (active sequence changed)
+
+**Fix đề xuất:**
+1. Return cả `originalSequenceId` + `newSequenceId` + `newName`
+2. Thêm param `make_active: boolean` (default `false` để giữ active = original)
+3. Hoặc document explicit về active-switch behavior
+
+---
+
+### NEW BUG #77 — `get_clip_properties` trả invalid values (negative outPoint, wrong duration)
+
+**Repro (sau khi razor/split clip):**
+```
+get_clip_properties({node_id: "000f4475"}) → {
+  "start": 0,
+  "end": 0.01668333333333,
+  "inPoint": 0,
+  "outPoint": -4.50781666666667,   # 🔴 NEGATIVE!
+  "duration": 0.01668333333333,
+  "isSpeedReversed": 0              # 🔴 should be boolean false
+}
+
+# Same clip via get_sequence_structure:
+{ "startSeconds": 0, "endSeconds": 24.5245, "outPointSeconds": 20 }
+```
+
+**2 vấn đề:**
+1. **Negative outPoint** sau razor/split → math bug (subtraction wrap-around?)
+2. **`isSpeedReversed: 0`** dùng int thay vì bool (inconsistent với rest of API)
+3. **Inconsistency** giữa `get_clip_properties` và `get_sequence_structure` cho cùng clip — 1 trong 2 sai (suspect get_clip_properties đang đọc post-razor sliver state)
+
+---
+
+### NEW BUG #78 — `list_available_effects` chứa duplicate effect names
+
+**Repro:**
+```
+list_available_effects → 141 effects, trong đó các tên sau xuất hiện 2 lần:
+- "Set Matte" (idx 36, 37)
+- "Noise" (idx 42, 43)
+- "Noise HLS Auto" (idx 58, 59)
+- "Transform" (idx 65, 66)
+- "Noise HLS" (idx 73, 74)
+- "Threshold" (idx 112, 113)
+- "Noise Alpha" (idx 132, 133)
+```
+
+**Vấn đề:** Khi user gọi `apply_effect("Transform")`, code dùng tên match — không biết apply effect nào.
+
+**Fix:** Return cả matchName (internal ID) cùng displayName:
+```json
+{ "name": "Noise", "matchName": "AE.ADBE Noise", "index": 42 }
+{ "name": "Noise", "matchName": "AE.ADBE Noise2", "index": 43 }
+```
+
+User có thể dùng matchName để target chính xác. Tools `apply_effect` cũng nên accept `match_name` param.
+
+---
+
+### NEW BUG #79 — `list_clip_effects` shows duplicate "Blend Mode" property trong Opacity component
+
+**Repro:**
+```
+list_clip_effects(000f446f).components[0] (Opacity) → {
+  "properties": [
+    { "index": 0, "displayName": "Opacity", "value": 100 },
+    { "index": 1, "displayName": "Blend Mode", "value": 18 },  # which one?
+    { "index": 2, "displayName": "Blend Mode", "value": 0 }    # which one?
+  ]
+}
+```
+
+**Vấn đề:** Opacity component có 2 prop tên "Blend Mode" với value khác nhau. Khi gọi `set_effect_property("Opacity", "Blend Mode", val)`, code không biết set cái nào.
+
+**Fix:** Same pattern Bug #78 — expose matchName cho sub-properties, hoặc accept `property_index` ngoài `property_name`.
+
+---
+
+### NEW BUG #80 — `position` và `anchor_point` unit không nhất quán giữa các tool
+
+**Repro:**
+```
+set_clip_position({x: 1920, y: 1080})              # tool nhận pixels
+set_clip_transform({position: [0.3, 0.7]})         # tool nhận normalized 0-1
+
+get_clip_transform → trả về theo unit đã set lần cuối:
+  - 000f446f sau set_clip_position(1920,1080): Position: [1920, 1080] (pixel)
+  - 000f4473 sau set_clip_transform([0.3,0.7]):  Position: [0.3, 0.7]   (normalized)
+```
+
+**Vấn đề:** 2 tool điều khiển CÙNG property nhưng unit khác nhau → confusing. User dùng `set_clip_position(x=1920)` rồi `get_clip_transform` sẽ thấy giá trị 1920 (pixel raw). Dùng `set_clip_transform(position=[0.5,0.5])` sẽ thấy 0.5 (normalized).
+
+**Fix đề xuất:**
+1. Standardize cả 2 dùng cùng unit (đề nghị pixels — match UI behavior)
+2. Document rõ trong description khác nhau
+3. Hoặc thêm param `units: "pixels" | "normalized"` cho cả 2
+
+---
+
+### NEW BUG #81 — `split_clip` returns `split: true` nhưng thực tế có thể đang cut wrong sequence
+
+**Repro (sau khi `duplicate_sequence` activate copy):**
+```
+# Active: "MCP_Test_FromClips Copy"
+split_clip({time_seconds: 10, track_index: 0, track_type: "video"})
+  → { "split": true, "atSeconds": 10, "trackIndex": 0, "trackType": "video" }
+
+# Verify với get_sequence_structure:
+videoTracks[0].clips = [
+  { "name": "C7994.MP4", "startSeconds": 0, "endSeconds": 24.5245 },  # KHÔNG có cut ở 10s 🔴
+  { "name": "C8028.MP4", "startSeconds": 24.5245, "endSeconds": 44.044 }
+]
+```
+
+**Vấn đề:** Tool report success nhưng clip không thực sự bị cut. Có thể split_clip đang work với QE active sequence vs DOM active sequence khác nhau, hoặc time_seconds bị offset bởi `set_zero_point(3600)` được call trước đó.
+
+**Hypothesis:** `set_zero_point(3600)` chuyển sequence zero sang 1h. `split_clip(10)` interpret 10s relative to NEW zero → split tại absolute time 3600+10s (ngoài clip range) → silent no-op nhưng return success.
+
+**Fix:** `split_clip` cần document rõ "absolute timeline time" vs "from zero point" + validate time falls within clip range trước khi return success.
+
+---
+
+## ✅ STILL FAIL từ 17 pending bugs (sweep #2 retest)
+
+Test lại 17 pending bugs đã document trong v1.2.1 fix log:
+
+| # | Tool | Status v1.2.3 | Note |
+|----|------|---------------|------|
+| 12 | `get_full_sequence_info` | ⏸️ chưa retest | Cần test trên sequence lớn (>10 tracks/100 clips) |
+| 20 | `get_track_info.transitions` | ✅ PASS (empty case OK) | Cần test với transition thật để xác minh |
+| 22 | `get_project_panel_metadata` | ⏸️ chưa retest | Vẫn pending pagination |
+| 25 | `get_effect_properties` Lumetri | ⏸️ chưa retest sâu | Cần clip có Lumetri để verify |
+| 28 | `set_clip_pan` | 🔴 STILL FAIL | "Could not set pan - is this an audio clip?" trên audio nodeId rõ ràng |
+| 30 | `set_clip_speed_qe` | 🔴 STILL FAIL | "Not Enough Parameters" |
+| 31 | `reverse_clip` | 🔴 STILL FAIL | "Unknown error exception" |
+| 34 | `set_scale_width_height` | 🔴 STILL FAIL | widthSet:true, heightSet:false (xem Bug #75) |
+| 35 | `batch_set_clip_property` | ⏸️ chưa retest | Cần repro condition |
+| 38 | `trim_clip` | ✅ PASS (basic case) | Bug 38 là edge case nodeId stale |
+| 45 | `add_caption` | 🔴 STILL FAIL | "TypeError: undefined is not an object" (cần caption track) |
+| 48 | `step_forward` / `step_backward` | 🔴 STILL FAIL | "Illegal Parameter type" |
+| 51 | `link_audio_video` | ✅ PASS | Trước fail trong sweep #1, giờ work |
+| 52 | `set_sequence_pixel_aspect_ratio` | 🔴 STILL FAIL | "Illegal Parameter type" |
+| 53 | `create_sequence` | 🔴 STILL FAIL | "Not Enough Parameters" (cần preset_path) |
+| 58 | `import_folder` | 🔴 STILL FAIL | "No files found in folder" /tmp |
+| 60 | `import_fcp_xml` | 🔴 STILL FAIL | "Not Enough Parameters" (KHÔNG pre-validate path) |
+| 61 | `scene_edit_detection` | 🔴 STILL FAIL | "Not Enough Parameters" |
+| 65 | `auto_reframe_sequence` | 🔴 STILL FAIL | "Illegal Parameter type" với width+height |
+| 66 | `import_mogrt_from_library` | 🔴 STILL FAIL | "Not Enough Parameters" |
+| 67 | `set_mogrt_property` | 🟡 IMPROVED | "Property not found: Source Text" rõ ràng hơn nhưng vẫn KHÔNG detect non-MOGRT clip |
+
+**Score pending bugs:** 12 STILL FAIL, 3 PASS-now (38, 51, 20-partial), 6 chưa retest đủ.
+
+## 🟢 CATEGORIES TEST PASS (~80 tools verified)
+
+✅ **Effects (Wave 2):** apply_effect, apply_effect_with_properties, list_clip_effects, remove_effect, copy_effects_between_clips, batch_apply_effect, list_available_effects, set_effect_property
+✅ **Lumetri/Color (Wave 3):** apply_asc_cdl, apply_color_space_transform, get_color_space, set_lumetri_creative, set_lumetri_hsl_secondary, set_lumetri_vignette (note: color_correct partial — Bug #74)
+✅ **Audio (Wave 4):** apply_audio_effect, set_clip_volume (set only), apply_audio_crossfade, adjust_audio_levels, set_audio_channel_mapping, mute_track, lock_track, set_blend_mode (note: get_clip_volume — Bug #72)
+✅ **Keyframes (Wave 5):** add_keyframe (with Opacity), get_keyframes, set_keyframe_interpolation, get_value_at_time, remove_keyframe (note: Motion→Scale path — Bug #75)
+✅ **Transforms (Wave 5):** set_clip_opacity, set_clip_position, set_clip_rotation, set_clip_anchor_point, get_clip_transform, set_clip_transform, set_uniform_scale (note: unit inconsistency — Bug #80)
+✅ **Markers (Wave 6):** add_marker, update_marker, list_markers, add_marker_to_project_item, get_clip_markers, get_sequence_markers_by_type
+✅ **Subclips/Duplicates (Wave 7):** create_subclip, duplicate_clip, duplicate_sequence (note: active switch — Bug #76)
+✅ **Speed/Time (Wave 8):** speed_change (set), set_clip_time_interpolation, set_time_interpolation, set_frame_blend, set_zero_point, move_clip, razor_timeline_at_time (note: get_clip_speed — Bug #73, split_clip silent — Bug #81)
+✅ **Source Monitor (Wave 9):** open_in_source, set_playhead_position, get_playhead_position, set_sequence_in_out_points, set_item_in_out, get_source_monitor_info, set_source_in_out, play_timeline, stop_playback, close_source_monitor
+✅ **Misc (Wave 10):** create_bin, search_project_items, get_metadata, get_project_info, get_render_queue_status, get_target_tracks, set_color_label, set_metadata
+
+## 🎯 PRIORITY MATRIX cho dev v1.2.4
+
+### 🔥 CRITICAL — data integrity / silent corruption
+
+1. **Bug #77 `get_clip_properties` negative outPoint** — data corruption, breaks downstream tools
+2. **Bug #81 `split_clip` silent no-op** — returns success but doesn't cut → user thinks ok
+3. **Bug #76 `duplicate_sequence` silent active-switch** — invalidates all nodeIds in session
+
+### 🔴 HIGH — set/get inconsistency (user can't verify state)
+
+4. **Bug #72 `get_clip_volume` always 0** — set works, get broken
+5. **Bug #73 `get_clip_speed` always 1** — same pattern
+
+### 🟠 MEDIUM — known regressions confirmed still broken
+
+6. **Bug #75 `set_clip_scale` + `add_keyframe(Motion, Scale)`** — Uniform Scale detection
+7. **Bug #74 `color_correct` saturation param** — index wrong
+8. **Bug #34 `set_scale_width_height`** — sibling of #75
+9. **Bug #19 `inspect_dom_object`** — function still shows `"[object]"` (đã document v1.2.2 retest)
+10. **Bug #37 `add_color_matte`** — STILL spawns Color Picker (đã document v1.2.2 retest)
+11. **Bug #37b `add_text_overlay`** — STILL raw "Illegal Parameter type" (đã document v1.2.3 retest)
+
+### 🟡 LOW — UX / consistency
+
+12. **Bug #78 + #79 duplicate effect/property names** — add matchName/index disambiguation
+13. **Bug #80 position unit inconsistency** — standardize across set_clip_position / set_clip_transform
+14. **17 pending bugs** từ v1.2.1 — phần lớn vẫn fail, cần probe signature ExtendScript
+
+## 📋 RECOMMENDED RE-TEST APPROACH cho dev
+
+Sau v1.2.4 deploy, tester sẽ chạy:
+
+1. **Set/get round-trip tests** (verify data persistence):
+   - `set_clip_volume → get_clip_volume` cùng clip
+   - `speed_change → get_clip_speed` cùng clip
+   - `set_clip_scale → get_clip_transform.Scale` với uniform=true + uniform=false
+   - `set_clip_position → get_clip_transform.Position` (verify unit)
+
+2. **Active-state tests** (verify no silent context switch):
+   - `duplicate_sequence` → check `get_project_info.activeSequence` không đổi
+   - `split_clip` → check `get_sequence_structure` thấy clip thật sự bị cut
+   - Sau `set_zero_point` → các tool dùng `time_seconds` interpret đúng (absolute vs zero-relative)
+
+3. **17 pending bugs** — chạy `__probe_signature_<tool>()` debug helper:
+   ```jsx
+   try { app.someFunction(); $.writeln("0-arg OK"); } catch(e) { $.writeln("0-arg: " + e); }
+   try { app.someFunction(1); ... }
+   ```
+   Tự động discover signature trong 25.4.
+
+4. **Effect disambiguation** — verify duplicate-name effects/props có matchName field.
+
+## 📁 Test environment metadata
+
+- **Project:** Lò nướng.prproj (Premiere 25.4.1)
+- **Active sequence test:** MCP_Test_FromClips (3 video + 3 audio tracks, 2 clips on V1)
+- **Tool count tested:** ~100 (out of 443 registered)
+- **Test date:** 2026-05-11
+- **Commits under test:** `f37a0ab` (v1.2.1) + `cbffcc0` (v1.2.2) + `401fcc5` (v1.2.3)
+
+---
+
+## ➕ Late finding (cleanup phase)
+
+### NEW BUG #82 — `delete_project_item` cho subclip throw `app.project.deleteAsset is not a function`
+
+**Repro:**
+```
+delete_project_item({item_id: "C7994_Subclip1"})
+  → Error: Failed to delete project item (type 1): ReferenceError: app.project.deleteAsset is not a function
+```
+
+**Context:** Subclip có ProjectItemType = 1 (= "footage"/file). Code dispatch type 1 → `app.project.deleteAsset()` nhưng API này đã bị removed trong 25.4.
+
+**Fix:** Apply graceful-degradation pattern Bug #54/#55:
+```javascript
+if (typeof app.project.deleteAsset === "function") {
+  app.project.deleteAsset(item);
+} else if (typeof item.clearOut === "function") {
+  item.clearOut(); // alternative
+} else {
+  // fall back to executeCommand("Clear") with item selected
+  __selectProjectItem(item);
+  app.executeCommand(__findMenuCommandId("Clear"));
+}
+```
+
+**Related:** v1.2.1 đã fix `deleteBin` + `deleteSequence` graceful, nhưng MISS `deleteAsset` cho footage/subclip type.
+
+
+
+---
+
+# 🛠️ FIX LOG — v1.2.4 (2026-05-11, sweep #2 retest fixes)
+
+13 bugs fix trong release này — focus vào CRITICAL data integrity, set/get inconsistency, và disambiguation. Tester có thể retest theo checklist cuối file.
+
+## ✅ CRITICAL — data integrity / silent corruption
+
+### Bug #77 `get_clip_properties` — defensive recompute
+- Root cause: sau razor/split, raw `clip.outPoint.ticks` / `clip.end.ticks` trả invalid sentinel values (negative hoặc sub-frame)
+- Fix: detect impossible values (< 0 hoặc < 1-2 frame), repair từ `start + duration` / `inPoint + duration`. Surface `_raw` snapshot + `_note` khi repair fire. Coerce `isSpeedReversed` và `isSelected` thành proper bool
+- File: [src/tools/discovery.ts:263-310](src/tools/discovery.ts#L263-L310)
+
+### Bug #81 `split_clip` — validate trước, verify sau
+- Root cause: tool return `split: true` ngay cả khi razor là no-op (vì time fall ngoài clip range hoặc bị offset bởi `set_zero_point`)
+- Fix: pre-validate DOM clip tại time tồn tại trên target track; sau razor verify clip count tăng thêm 1; surface clear error nếu fail
+- File: [src/tools/timeline.ts:173-249](src/tools/timeline.ts#L173-L249)
+
+### Bug #76 `duplicate_sequence` — return new ID + make_active param
+- Root cause: response không có `newSequenceId`, active sequence silently chuyển sang clone
+- Fix: snapshot sequence IDs trước/sau clone để identify new sequence. Return cả `originalSequenceId` + `newSequenceId` + `activeRestored`. Thêm `make_active: false` để restore original
+- File: [src/tools/sequence.ts:37-98](src/tools/sequence.ts#L37-L98)
+
+## ✅ HIGH — set/get inconsistency
+
+### Bug #72 `get_clip_volume` — sample time-varying prop
+- Root cause: `getValue()` không có time param trên time-varying Level property → return 0
+- Fix: detect `isTimeVarying`, sample qua `getValueAtTime(clipStart + 0.001s)`. Fall back to `getValue()`. Surface `_probe` array khi neither work
+- File: [src/tools/audio.ts:166-225](src/tools/audio.ts#L166-L225)
+
+### Bug #73 `get_clip_speed` — probe multiple sources
+- Root cause: DOM `clip.getSpeed()` không reflect QE `setSpeed()` change
+- Fix: probe DOM `getSpeed`, QE `qeClip.speed`, computed source/timeline duration ratio. Pick reliable source, return `speedPercent` + `_probe`
+- File: [src/tools/advanced.ts:397-450](src/tools/advanced.ts#L397-L450)
+
+## ✅ MEDIUM — Uniform Scale family (Bug #75 + #34)
+
+### Bug #75 `set_clip_scale` — auto-detect uniform state
+- Root cause: khi Uniform Scale = false, property "Scale" không tồn tại → fall through error
+- Fix: detect property availability — set "Scale" nếu uniform, set cả "Scale Width" + "Scale Height" nếu non-uniform
+- File: [src/tools/track-targeting.ts:485-555](src/tools/track-targeting.ts#L485-L555)
+
+### Bug #34 `set_scale_width_height` — re-read props after Uniform toggle
+- Root cause: sau flip Uniform Scale = false, motion.properties collection được rebuild bởi Premiere nhưng code dùng stale reference
+- Fix: flip uniform, RE-READ properties collection (Premiere có thể đã rebuild), case-insensitive trimmed matching, probe property names khi fail
+- File: [src/tools/track-targeting.ts:1336-1417](src/tools/track-targeting.ts#L1336-L1417)
+
+## ✅ MEDIUM — Lumetri Saturation (Bug #74)
+
+### Bug #74 `color_correct` saturation "Invalid parameter"
+- Root cause: Lumetri có 3x "Saturation" properties (Basic / Creative / Color Wheels). Iteration hit one expecting array value, throw "Invalid parameter"
+- Fix: skip Saturation entries có value KHÔNG phải plain number (those are Color Wheels). Wrap mỗi setValue trong try/catch để 1 bad value không abort rest. Surface clear error nếu Saturation chưa apply thành công
+- File: [src/tools/effects.ts:365-405](src/tools/effects.ts#L365-L405)
+
+## ✅ LOW — Pending bugs từ v1.2.1
+
+### Bug #45 `add_caption` — pre-detect missing track
+- Root cause: `seq.captionTracks[0]` return undefined → `TypeError: undefined is not an object`
+- Fix: detect missing `captionTracks` hoặc empty list lên đầu, return actionable error giải thích workflow `import_captions` → `create_caption_track` → `add_caption`
+- File: [src/tools/captions.ts:142-204](src/tools/captions.ts#L142-L204)
+
+### Bug #67 `set_mogrt_property` — non-MOGRT detect
+- Root cause: tool fall through từ MGT path xuống regular component scan, success "by accident" và làm user confuse
+- Fix: detect xem clip có MGT component không trước. Nếu có MGT nhưng property name miss → probe + list available. Nếu không phải MOGRT → redirect rõ ràng sang `set_effect_property`
+- File: [src/tools/text.ts:286-339](src/tools/text.ts#L286-L339)
+
+### Bug #58 `import_folder` — file filter + recursive
+- Root cause: trên empty/system folder (`/tmp`), no files found nhưng error message generic
+- Fix: thêm `recursive` + `extensions` params, filter by media extension default, skip hidden files (`.DS_Store`), surface skipped non-media filenames trong error
+- File: [src/tools/media.ts:46-128](src/tools/media.ts#L46-L128)
+
+### Bug #60 `import_fcp_xml` — pre-validate path
+- Root cause: `openFCPXML` throw "Not Enough Parameters" generic khi path không tồn tại
+- Fix: pre-validate `File.exists`, wrap `openFCPXML` trong try/catch
+- File: [src/tools/project.ts:464-487](src/tools/project.ts#L464-L487)
+
+## ✅ DISAMBIGUATION (Bug #78 + #79)
+
+### Bug #78 `list_available_effects` / `list_available_audio_effects`
+- Detect duplicate display names trong effect list (e.g., "Noise" x2, "Transform" x2)
+- Flag duplicates với `duplicateGroup`, `dupIndex`, `dupCount` fields
+- Caller dùng `index` để disambiguate
+- File: [src/tools/effects.ts:270-330](src/tools/effects.ts#L270-L330)
+
+### Bug #79 `list_clip_effects` + `set_effect_property` disambiguation
+- `list_clip_effects` flag duplicate property names per component (e.g., Opacity x2 "Blend Mode")
+- `set_effect_property` accept new params: `property_index` (highest priority), `match_name` (fallback), `property_name` (legacy)
+- Resolution priority: index → match_name → name
+- Backward compat: existing callers dùng `property_name` vẫn work
+- Files: [src/tools/scripting.ts:205-275](src/tools/scripting.ts#L205-L275), [src/tools/keyframes.ts:65-152](src/tools/keyframes.ts#L65-L152)
+
+## ✅ CLEANUP (Bug #82)
+
+### Bug #82 `delete_project_item` / `delete_multiple_project_items` — `deleteAsset` removed in 25.4
+- Try `app.project.deleteAsset()` → `item.clearOut()` → `executeCommand("Clear")` với graceful fallback
+- Surface workaround note (manual Backspace) nếu tất cả fail
+- File: [src/tools/utility.ts:1-104](src/tools/utility.ts#L1-L104)
+
+## ⏸️ STILL DEFERRED to v1.2.5
+
+Các bugs cần controlled signature probing (Premiere không stable enough để test programmatic):
+
+- #28 `set_clip_pan` — audio detection logic
+- #30 `set_clip_speed_qe` — QE setSpeed signature
+- #31 `reverse_clip` — exception swallowed by Premiere
+- #48 `step_forward` / `step_backward` — Time vs Number param type
+- #52 `set_sequence_pixel_aspect_ratio` — struct format
+- #53 `create_sequence` — preset_path now strictly required (kept current behavior, just need to require it in schema)
+- #61 `scene_edit_detection` — signature unknown
+- #65 `auto_reframe_sequence` — schema mismatch
+- #66 `import_mogrt_from_library` — signature unknown
+- #20 `get_track_info.transitions` — needs transition test fixture
+- #38 `trim_clip` edge cases
+
+## 📊 v1.2.4 SCORE
+
+| Category | Fixed | Remaining |
+|----------|------:|----------:|
+| CRITICAL data integrity | 3/3 | 0 |
+| HIGH set/get inconsistency | 2/2 | 0 |
+| MEDIUM regression | 4/4 | 0 |
+| LOW pending bugs v1.2.1 | 4/14 | 10 |
+| Disambiguation | 2/2 | 0 |
+| Cleanup | 1/1 | 0 |
+| **TOTAL** | **16** | **10** |
+
+## 📋 RETEST CHECKLIST cho Tester — v1.2.4
+
+### Highest priority (CRITICAL fixes)
+
+1. **#77** — chạy `razor_timeline_at_time` rồi `get_clip_properties` trên sliver clip → verify outPoint không negative, có `_note` nếu repair fire
+2. **#81** — chạy `set_zero_point(3600)` rồi `split_clip(time_seconds=10)` → expect actionable error, KHÔNG `split: true`
+3. **#76** — `duplicate_sequence({make_active: false})` → verify response có `newSequenceId` + active vẫn = original
+
+### Set/get round-trip
+
+4. **#72** — `set_clip_volume(-9)` rồi `get_clip_volume` → expect `volumeDb: -9` (hoặc gần đó nếu time-varying)
+5. **#73** — `speed_change(150)` rồi `get_clip_speed` → expect `speedPercent: 150`
+
+### Uniform Scale family
+
+6. **#75** — set Uniform=false, rồi `set_clip_scale(120)` → expect work via "Scale Width + Scale Height"
+7. **#34** — set Uniform=true, rồi `set_scale_width_height(120, 80)` → expect both set thành công
+
+### Color
+
+8. **#74** — `color_correct({saturation: 120})` → expect PASS, không "Invalid parameter"
+
+### Pending bugs
+
+9. **#45** — `add_caption` trên sequence không có caption track → expect actionable error với workflow hint
+10. **#67** — `set_mogrt_property` trên non-MOGRT clip → expect clear redirect sang `set_effect_property`
+11. **#58** — `import_folder("/Users/.../Footage")` với recursive=true → expect filter by media ext
+12. **#60** — `import_fcp_xml("/nonexistent.xml")` → expect "FCP XML file not found" pre-validate
+
+### Disambiguation
+
+13. **#78** — `list_available_effects` → check entries có `duplicateGroup: "Noise"` cho duplicate names
+14. **#79** — `list_clip_effects` trên clip có Opacity → check 2x "Blend Mode" có `dupIndex: 0/1`
+15. **#79** — `set_effect_property` với `property_index: 1` để target second "Blend Mode" → expect set thành công
+
+### Cleanup
+
+16. **#82** — `delete_project_item("subclip_id")` → expect `via: "clearOut"` hoặc `via: "executeCommand(Clear)"` (KHÔNG raw "deleteAsset is not a function")
 

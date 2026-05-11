@@ -264,23 +264,46 @@ export function getDiscoveryTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found: ${escapeForExtendScript(args.node_id)}");
-          
+
           var clip = result.clip;
+          // Bug #77: after razor/split, raw clip.outPoint.ticks / clip.end.ticks may return
+          // invalid negative or near-zero sentinel values. Read raw values, then repair via
+          // start+duration / inPoint+duration when values look impossible.
+          var rawStart = __ticksToSeconds(clip.start.ticks);
+          var rawEnd = __ticksToSeconds(clip.end.ticks);
+          var rawIn = __ticksToSeconds(clip.inPoint.ticks);
+          var rawOut = __ticksToSeconds(clip.outPoint.ticks);
+          var rawDur = __ticksToSeconds(clip.duration.ticks);
+
+          var endVal = rawEnd;
+          var outVal = rawOut;
+          var repaired = false;
+          if (rawEnd < rawStart || rawEnd <= 0.05) {  // ~1-2 frames likely garbage
+            if (rawDur > 0) { endVal = rawStart + rawDur; repaired = true; }
+          }
+          if (rawOut < 0 || rawOut < rawIn) {
+            if (rawDur > 0) { outVal = rawIn + rawDur; repaired = true; }
+          }
+
           var props = {
             nodeId: clip.nodeId,
             name: clip.name,
             trackIndex: result.trackIndex,
             trackType: result.trackType,
             clipIndex: result.clipIndex,
-            start: __ticksToSeconds(clip.start.ticks),
-            end: __ticksToSeconds(clip.end.ticks),
-            inPoint: __ticksToSeconds(clip.inPoint.ticks),
-            outPoint: __ticksToSeconds(clip.outPoint.ticks),
-            duration: __ticksToSeconds(clip.duration.ticks),
+            start: rawStart,
+            end: endVal,
+            inPoint: rawIn,
+            outPoint: outVal,
+            duration: rawDur,
             mediaType: clip.mediaType,
-            isSelected: clip.isSelected(),
-            isSpeedReversed: clip.isSpeedReversed ? clip.isSpeedReversed() : false
+            isSelected: !!clip.isSelected(),
+            isSpeedReversed: clip.isSpeedReversed ? !!clip.isSpeedReversed() : false
           };
+          if (repaired) {
+            props._raw = { start: rawStart, end: rawEnd, inPoint: rawIn, outPoint: rawOut, duration: rawDur };
+            props._note = "Bug #77: raw end/outPoint had invalid value(s) (negative or sub-frame); repaired via start+duration. Use _raw to inspect original Premiere values.";
+          }
           
           try {
             if (clip.components) {

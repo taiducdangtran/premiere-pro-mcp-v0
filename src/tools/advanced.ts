@@ -397,17 +397,51 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
         const script = buildToolScript(`
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found: ${escapeForExtendScript(args.node_id)}");
-          
+
           var clip = result.clip;
-          var speed = 1;
+          // Bug #73: clip.getSpeed() on the DOM clip often returns 1.0 even after
+          // speed_change (which uses QE setSpeed). Probe multiple sources:
+          //   - DOM clip.getSpeed() (preferred, returns ratio 1.0 = 100%)
+          //   - QE clip.speed (returns 100 = 100%)
+          //   - Compute from source vs timeline duration
+          var domSpeed = null;
+          var qeSpeed = null;
+          var computed = null;
           var reversed = false;
-          try { speed = clip.getSpeed(); } catch(e) {}
-          try { reversed = clip.isSpeedReversed() == 1; } catch(e) {}
-          
+
+          try { domSpeed = clip.getSpeed(); } catch(eDS) {}
+          try { reversed = !!(clip.isSpeedReversed && clip.isSpeedReversed()); } catch(eRev) {}
+
+          try {
+            var qeClip = __getQEClip(result);
+            if (qeClip && qeClip.speed !== undefined) { qeSpeed = qeClip.speed; }
+          } catch(eQE) {}
+
+          try {
+            var sourceDurTicks = parseFloat(clip.projectItem.getOutPoint().ticks) - parseFloat(clip.projectItem.getInPoint().ticks);
+            var timelineDurTicks = parseFloat(clip.duration.ticks);
+            if (timelineDurTicks > 0) {
+              computed = (sourceDurTicks / timelineDurTicks);
+            }
+          } catch(eComp) {}
+
+          // Pick best representative:
+          // - Prefer QE percent (most reliable after setSpeed)
+          // - Else DOM ratio * 100
+          // - Else computed ratio * 100
+          var speedPercent = null;
+          var sourceLabel = null;
+          if (qeSpeed !== null && !isNaN(qeSpeed)) { speedPercent = qeSpeed; sourceLabel = "qe.speed"; }
+          else if (domSpeed !== null && !isNaN(domSpeed)) { speedPercent = domSpeed * 100; sourceLabel = "dom.getSpeed*100"; }
+          else if (computed !== null && !isNaN(computed)) { speedPercent = computed * 100; sourceLabel = "computed*100"; }
+
           return __result({
             clipName: clip.name,
-            speed: speed,
-            reversed: reversed
+            speedPercent: speedPercent,
+            speed: speedPercent !== null ? speedPercent / 100 : null,
+            reversed: reversed,
+            _source: sourceLabel,
+            _probe: { domSpeed: domSpeed, qeSpeed: qeSpeed, computedRatio: computed }
           });
         `);
         return sendCommand(script, bridgeOptions);

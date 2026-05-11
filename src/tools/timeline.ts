@@ -171,13 +171,16 @@ export function getTimelineTools(bridgeOptions: BridgeOptions) {
     },
 
     split_clip: {
-      description: "Split (razor) a clip at a specific time position. Requires QE DOM.",
+      description:
+        "Split (razor) a clip at a specific time position. Requires QE DOM. " +
+        "Bug #81 fix: `time_seconds` is ABSOLUTE timeline time (Premiere's own coordinate, not affected by `set_zero_point`). " +
+        "Tool now validates the time falls within an actual clip on the target track and verifies the split happened (DOM clip count increased), returning a clear error if not.",
       parameters: {
         type: "object" as const,
         properties: {
           time_seconds: {
             type: "number",
-            description: "Time position in seconds where to split",
+            description: "Absolute timeline time in seconds where to split (NOT relative to zero point)",
           },
           track_index: {
             type: "number",
@@ -196,17 +199,60 @@ export function getTimelineTools(bridgeOptions: BridgeOptions) {
         const trackIndex = args.track_index ?? 0;
 
         const script = buildToolScript(`
+          var domSeq = app.project.activeSequence;
+          if (!domSeq) return __error("No active sequence");
+
+          // Bug #81 validate: find the DOM clip that contains time_seconds on the target track,
+          // BEFORE invoking the razor — so we know if the split is even feasible.
+          var domTrack = ${trackType === "video" ? "domSeq.videoTracks" : "domSeq.audioTracks"}[${trackIndex}];
+          if (!domTrack) return __error("Track not found: ${trackType} index ${trackIndex}");
+
+          var t = ${args.time_seconds};
+          var hit = null;
+          var beforeClipCount = domTrack.clips.numItems;
+          for (var c = 0; c < beforeClipCount; c++) {
+            var cc = domTrack.clips[c];
+            var s = __ticksToSeconds(cc.start.ticks);
+            var e = __ticksToSeconds(cc.end.ticks);
+            if (t > s && t < e) { hit = { name: cc.name, start: s, end: e, clipIndex: c }; break; }
+          }
+          if (!hit) {
+            return __error(
+              "split_clip: no clip on ${trackType} track ${trackIndex} contains time " + t + "s. " +
+              "Note: time_seconds is ABSOLUTE timeline time (Premiere coords), not relative to zero point. " +
+              "If you used set_zero_point earlier, add the zero offset back. Track has " + beforeClipCount + " clip(s)."
+            );
+          }
+
           app.enableQE();
-          var seq = qe.project.getActiveSequence();
-          if (!seq) return __error("No active sequence (QE)");
-          
-          var track = ${trackType === "video" ? `seq.getVideoTrackAt(${trackIndex})` : `seq.getAudioTrackAt(${trackIndex})`};
-          if (!track) return __error("Track not found");
-          
-          var timeTicks = __secondsToTicks(${args.time_seconds}).toString();
-          track.razor(timeTicks);
-          
-          return __result({ split: true, atSeconds: ${args.time_seconds}, trackIndex: ${trackIndex}, trackType: "${trackType}" });
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
+          var qeTrack = ${trackType === "video" ? `qeSeq.getVideoTrackAt(${trackIndex})` : `qeSeq.getAudioTrackAt(${trackIndex})`};
+          if (!qeTrack) return __error("QE track not found");
+
+          var timeTicks = __secondsToTicks(t).toString();
+          try { qeTrack.razor(timeTicks); } catch(e1) { return __error("razor threw: " + e1.toString()); }
+
+          // Verify split actually happened — DOM clip count should be +1.
+          var afterClipCount = domTrack.clips.numItems;
+          if (afterClipCount <= beforeClipCount) {
+            return __error(
+              "split_clip: razor() returned without error but DOM clip count did not increase " +
+              "(before=" + beforeClipCount + ", after=" + afterClipCount + "). " +
+              "This usually means time fell exactly on a clip boundary, or zero-point offset confused QE coords. " +
+              "Target clip: '" + hit.name + "' [" + hit.start + ", " + hit.end + "]"
+            );
+          }
+
+          return __result({
+            split: true,
+            atSeconds: t,
+            trackIndex: ${trackIndex},
+            trackType: "${trackType}",
+            targetClip: hit.name,
+            clipsBeforeRazor: beforeClipCount,
+            clipsAfterRazor: afterClipCount
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

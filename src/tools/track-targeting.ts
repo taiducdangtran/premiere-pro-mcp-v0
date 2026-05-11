@@ -483,7 +483,9 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
     },
 
     set_clip_scale: {
-      description: "Set the Scale property on a video clip's Motion effect.",
+      description:
+        "Set the Scale property on a video clip's Motion effect. " +
+        "Bug #75 fix: when the clip has Uniform Scale = false (independent W/H), Premiere 25.4 removes the unified 'Scale' property and only exposes 'Scale Width' + 'Scale Height'. This tool now auto-detects the Uniform Scale state and sets either 'Scale' (uniform) or both 'Scale Width' + 'Scale Height' (non-uniform).",
       parameters: {
         type: "object" as const,
         properties: {
@@ -504,21 +506,44 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
           if (!result) return __error("Clip not found");
 
           var clip = result.clip;
-          var set = false;
+          var motion = null;
           for (var i = 0; i < clip.components.numItems; i++) {
-            if (clip.components[i].displayName === "Motion") {
-              for (var p = 0; p < clip.components[i].properties.numItems; p++) {
-                if (clip.components[i].properties[p].displayName === "Scale") {
-                  clip.components[i].properties[p].setValue(${args.scale}, true);
-                  set = true;
-                  break;
-                }
-              }
-              break;
-            }
+            if (clip.components[i].displayName === "Motion") { motion = clip.components[i]; break; }
           }
-          if (!set) return __error("Could not set scale");
-          return __result({ scale: ${args.scale}, clip: clip.name });
+          if (!motion) return __error("Motion component not found on clip");
+
+          // Detect Uniform Scale state — in 25.4, when uniform = false the "Scale" property
+          // disappears and is replaced by "Scale Width" + "Scale Height".
+          var scaleProp = null;
+          var scaleWidthProp = null;
+          var scaleHeightProp = null;
+          var uniformProp = null;
+          for (var p = 0; p < motion.properties.numItems; p++) {
+            var pr = motion.properties[p];
+            var nm = pr.displayName;
+            if (nm === "Scale") scaleProp = pr;
+            else if (nm === "Scale Width") scaleWidthProp = pr;
+            else if (nm === "Scale Height") scaleHeightProp = pr;
+            else if (nm === "Uniform Scale") uniformProp = pr;
+          }
+
+          var setVia = null;
+          if (scaleProp) {
+            scaleProp.setValue(${args.scale}, true);
+            setVia = "Scale (uniform)";
+          } else if (scaleWidthProp && scaleHeightProp) {
+            scaleWidthProp.setValue(${args.scale}, true);
+            scaleHeightProp.setValue(${args.scale}, true);
+            setVia = "Scale Width + Scale Height (non-uniform)";
+          } else {
+            return __error("Could not set scale: no Scale / Scale Width+Height properties found on Motion");
+          }
+          return __result({
+            scale: ${args.scale},
+            clip: clip.name,
+            setVia: setVia,
+            isUniform: !!(uniformProp && uniformProp.getValue())
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -1309,7 +1334,10 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
     },
 
     set_scale_width_height: {
-      description: "Set independent Scale Width and Scale Height on a clip (requires Uniform Scale to be OFF).",
+      description:
+        "Set independent Scale Width and Scale Height on a clip's Motion. " +
+        "Bug #34 fix: previously widthSet returned true but heightSet stayed false because the property collection wasn't re-read after flipping Uniform Scale off (Premiere 25.4 rebuilds the property list — Scale becomes Scale Width / Scale Height). " +
+        "Tool now auto-toggles Uniform Scale=false, re-reads the property collection, does case-insensitive name match, and returns a probe of all Motion property names when one isn't found.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -1340,22 +1368,51 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
           }
           if (!motion) return __error("Motion component not found");
 
-          // Disable uniform scale first
-          for (var p = 0; p < motion.properties.numItems; p++) {
-            if (motion.properties[p].displayName === "Uniform Scale") {
-              motion.properties[p].setValue(false, true);
-              break;
+          function lowerTrim(s) { return String(s || "").toLowerCase().replace(/^\\s+|\\s+$/g, ""); }
+          function findProp(comp, targetLower) {
+            for (var p = 0; p < comp.properties.numItems; p++) {
+              if (lowerTrim(comp.properties[p].displayName) === targetLower) return comp.properties[p];
             }
+            return null;
           }
+
+          // Step 1: turn Uniform Scale OFF if currently ON.
+          var uniformProp = findProp(motion, "uniform scale");
+          var wasUniform = false;
+          if (uniformProp) {
+            try { wasUniform = !!uniformProp.getValue(); } catch(eU) {}
+            if (wasUniform) { try { uniformProp.setValue(false, true); } catch(eSU) {} }
+          }
+
+          // Step 2: re-read property collection (Premiere may have rebuilt it).
+          var widthProp = findProp(motion, "scale width");
+          var heightProp = findProp(motion, "scale height");
 
           var setW = false, setH = false;
-          for (var p = 0; p < motion.properties.numItems; p++) {
-            var pName = motion.properties[p].displayName;
-            if (pName === "Scale Width") { motion.properties[p].setValue(${args.scale_width}, true); setW = true; }
-            if (pName === "Scale Height") { motion.properties[p].setValue(${args.scale_height}, true); setH = true; }
+          if (widthProp) { try { widthProp.setValue(${args.scale_width}, true); setW = true; } catch(eW) {} }
+          if (heightProp) { try { heightProp.setValue(${args.scale_height}, true); setH = true; } catch(eH) {} }
+
+          if (!setW || !setH) {
+            // Probe: report what property names ARE on Motion so caller can diagnose.
+            var probe = [];
+            for (var k = 0; k < motion.properties.numItems; k++) {
+              probe.push(motion.properties[k].displayName);
+            }
+            return __error(
+              "set_scale_width_height partial fail. widthSet=" + setW + " heightSet=" + setH +
+              " (was Uniform=" + wasUniform + "). Motion property names available: " + probe.join(" | ")
+            );
           }
 
-          return __result({ clip: clip.name, scaleWidth: ${args.scale_width}, scaleHeight: ${args.scale_height}, widthSet: setW, heightSet: setH });
+          return __result({
+            clip: clip.name,
+            scaleWidth: ${args.scale_width},
+            scaleHeight: ${args.scale_height},
+            widthSet: setW,
+            heightSet: setH,
+            uniformWasOn: wasUniform,
+            uniformNowOff: true
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

@@ -462,21 +462,29 @@ export function getProjectTools(bridgeOptions: BridgeOptions) {
     },
 
     import_fcp_xml: {
-      description: "Import a Final Cut Pro XML file into the current project",
+      description:
+        "Import a Final Cut Pro XML file into the current project. " +
+        "Bug #60 fix: pre-validates the file path exists before invoking openFCPXML (previously threw a generic 'Not Enough Parameters' when path was wrong).",
       parameters: {
         type: "object" as const,
         properties: {
           path: {
             type: "string",
-            description: "Full path to the FCP XML file",
+            description: "Full path to the FCP XML file (.xml / .fcpxml)",
           },
         },
         required: ["path"],
       },
       handler: async (args: { path: string }) => {
         const script = buildToolScript(`
-          app.openFCPXML("${escapeForExtendScript(args.path)}");
-          return __result({ imported: true, path: "${escapeForExtendScript(args.path)}" });
+          var f = new File("${escapeForExtendScript(args.path)}");
+          if (!f.exists) return __error("FCP XML file not found at: ${escapeForExtendScript(args.path)}");
+
+          var ok = false;
+          try { ok = !!app.openFCPXML("${escapeForExtendScript(args.path)}"); }
+          catch(e) { return __error("openFCPXML threw: " + e.toString()); }
+
+          return __result({ imported: ok, path: "${escapeForExtendScript(args.path)}" });
         `);
         return sendCommand(script, bridgeOptions);
       },

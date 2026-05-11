@@ -42,12 +42,44 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
             }
           }
 
+          // Bug #82: app.project.deleteAsset removed in Premiere 25.4. Try multiple paths.
+          var deleted = false;
+          var via = null;
+          var errors = [];
           try {
-            app.project.deleteAsset(item);
-            return __result({ deleted: true, name: name, kind: "asset", type: type });
-          } catch (ex) {
-            return __error("Failed to delete project item (type " + type + "): " + ex.toString());
+            if (typeof app.project.deleteAsset === "function") {
+              app.project.deleteAsset(item); deleted = true; via = "deleteAsset";
+            }
+          } catch(eA) { errors.push("deleteAsset: " + eA.toString()); }
+
+          if (!deleted) {
+            try {
+              if (typeof item.clearOut === "function") {
+                item.clearOut(); deleted = true; via = "item.clearOut";
+              }
+            } catch(eC) { errors.push("clearOut: " + eC.toString()); }
           }
+
+          if (!deleted) {
+            // executeCommand("Clear") on the selected project item is the documented
+            // 25.4 workflow once the asset is selected. We don't have a selectProjectItem
+            // primitive in helpers, so try item.select if present.
+            try {
+              if (typeof item.select === "function") { item.select(); }
+              else if (typeof app.project.rootItem.select === "function") { item.deleteBin && item.deleteBin(); }
+              app.executeCommand(20012); // "Clear" menu command (cmdId varies by build — best-effort)
+              deleted = true; via = "executeCommand(Clear)";
+            } catch(eE) { errors.push("executeCommand: " + eE.toString()); }
+          }
+
+          if (!deleted) {
+            return __error(
+              "Failed to delete project item (type " + type + "): no working delete path in this Premiere build. " +
+              "Tried: " + errors.join(" | ") + ". " +
+              "Workaround: select the item in the Project panel and press Backspace, or call execute_extendscript with app.executeCommand(<Clear menu cmdId>)."
+            );
+          }
+          return __result({ deleted: true, name: name, kind: "asset", type: type, via: via });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -93,7 +125,12 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
             if (item.type === 2) {
               try { item.deleteBin(); deleted++; } catch (ex) { failed.push({ id: query, error: ex.toString() }); }
             } else {
-              try { app.project.deleteAsset(item); deleted++; } catch (ex) { failed.push({ id: query, error: ex.toString() }); }
+              // Bug #82: deleteAsset removed in 25.4. Try fallbacks.
+              var ok = false;
+              try { if (typeof app.project.deleteAsset === "function") { app.project.deleteAsset(item); ok = true; } } catch(eA) {}
+              if (!ok) { try { if (typeof item.clearOut === "function") { item.clearOut(); ok = true; } } catch(eC) {} }
+              if (ok) deleted++;
+              else failed.push({ id: query, error: "No working delete path (deleteAsset removed in 25.4)" });
             }
           }
           return __result({ deleted: deleted, total: ids.length, names: names, failed: failed });

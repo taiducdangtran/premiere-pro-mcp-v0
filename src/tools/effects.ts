@@ -268,16 +268,33 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
     },
 
     list_available_effects: {
-      description: "List all available video effects in Premiere Pro. Uses QE DOM.",
+      description:
+        "List all available video effects in Premiere Pro. Uses QE DOM. " +
+        "Bug #78 fix: detects duplicate display names (e.g., 'Noise', 'Transform' appear 2x) and flags them with `duplicateGroup` + `dupIndex`. " +
+        "Callers can pass `effect_index` to `apply_effect` to disambiguate (e.g., `apply_effect(name='Noise', effect_index=42)` vs `effect_index=43`).",
       parameters: {},
       handler: async () => {
         const script = buildToolScript(`
           app.enableQE();
-          // Premiere 25.4+: getVideoEffectList returns an Array of strings (length, not numItems).
           var effects = qe.project.getVideoEffectList();
           var list = [];
+          var counts = {};
           for (var i = 0; i < effects.length; i++) {
-            list.push({ name: String(effects[i]), index: i });
+            var nm = String(effects[i]);
+            counts[nm] = (counts[nm] || 0) + 1;
+          }
+          var seen = {};
+          for (var j = 0; j < effects.length; j++) {
+            var nm2 = String(effects[j]);
+            var entry = { name: nm2, index: j };
+            if (counts[nm2] > 1) {
+              seen[nm2] = (seen[nm2] || 0);
+              entry.duplicateGroup = nm2;
+              entry.dupIndex = seen[nm2];
+              entry.dupCount = counts[nm2];
+              seen[nm2]++;
+            }
+            list.push(entry);
           }
           return __result(list);
         `);
@@ -286,15 +303,32 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
     },
 
     list_available_audio_effects: {
-      description: "List all available audio effects in Premiere Pro. Uses QE DOM.",
+      description:
+        "List all available audio effects in Premiere Pro. Uses QE DOM. " +
+        "Bug #78 fix: flags duplicate display names with `duplicateGroup` + `dupIndex` so callers can disambiguate.",
       parameters: {},
       handler: async () => {
         const script = buildToolScript(`
           app.enableQE();
           var effects = qe.project.getAudioEffectList();
           var list = [];
+          var counts = {};
           for (var i = 0; i < effects.length; i++) {
-            list.push({ name: String(effects[i]), index: i });
+            var nm = String(effects[i]);
+            counts[nm] = (counts[nm] || 0) + 1;
+          }
+          var seen = {};
+          for (var j = 0; j < effects.length; j++) {
+            var nm2 = String(effects[j]);
+            var entry = { name: nm2, index: j };
+            if (counts[nm2] > 1) {
+              seen[nm2] = (seen[nm2] || 0);
+              entry.duplicateGroup = nm2;
+              entry.dupIndex = seen[nm2];
+              entry.dupCount = counts[nm2];
+              seen[nm2]++;
+            }
+            list.push(entry);
           }
           return __result(list);
         `);
@@ -362,28 +396,51 @@ export function getEffectsTools(bridgeOptions: BridgeOptions) {
             qeClip.addVideoEffect(lumetriEff);
           }
 
-          // Set Lumetri properties
+          // Set Lumetri properties.
+          // Bug #74: "Saturation" appears 3x in Lumetri (Basic / Creative / Color Wheels).
+          // Iterating in order and stopping at first "Saturation" hits Basic Correction
+          // — which is what we want — but the OTHER two Saturation entries are color
+          // arrays, not numbers, and if Premiere reorders props in a future build, we'd
+          // hit a non-number first and throw "Invalid parameter". We now skip any
+          // Saturation prop whose current value is not a plain number.
           var changes = {};
+          var saturationAttempts = 0;
+          var saturationErrors = [];
           for (var i = 0; i < clip.components.numItems; i++) {
             var comp = clip.components[i];
             if (comp.displayName === "Lumetri Color") {
               for (var p = 0; p < comp.properties.numItems; p++) {
                 var prop = comp.properties[p];
                 var name = prop.displayName;
-                ${args.exposure !== undefined ? `if (name === "Exposure") { prop.setValue(${args.exposure}, true); changes.exposure = ${args.exposure}; }` : ""}
-                ${args.contrast !== undefined ? `if (name === "Contrast") { prop.setValue(${args.contrast}, true); changes.contrast = ${args.contrast}; }` : ""}
-                ${args.highlights !== undefined ? `if (name === "Highlights") { prop.setValue(${args.highlights}, true); changes.highlights = ${args.highlights}; }` : ""}
-                ${args.shadows !== undefined ? `if (name === "Shadows") { prop.setValue(${args.shadows}, true); changes.shadows = ${args.shadows}; }` : ""}
-                ${args.whites !== undefined ? `if (name === "Whites") { prop.setValue(${args.whites}, true); changes.whites = ${args.whites}; }` : ""}
-                ${args.blacks !== undefined ? `if (name === "Blacks") { prop.setValue(${args.blacks}, true); changes.blacks = ${args.blacks}; }` : ""}
-                ${args.temperature !== undefined ? `if (name === "Temperature") { prop.setValue(${args.temperature}, true); changes.temperature = ${args.temperature}; }` : ""}
-                ${args.tint !== undefined ? `if (name === "Tint") { prop.setValue(${args.tint}, true); changes.tint = ${args.tint}; }` : ""}
-                ${args.saturation !== undefined ? `if (name === "Saturation") { prop.setValue(${args.saturation}, true); changes.saturation = ${args.saturation}; }` : ""}
+                ${args.exposure !== undefined ? `if (name === "Exposure") { try { prop.setValue(${args.exposure}, true); changes.exposure = ${args.exposure}; } catch(eE) {} }` : ""}
+                ${args.contrast !== undefined ? `if (name === "Contrast") { try { prop.setValue(${args.contrast}, true); changes.contrast = ${args.contrast}; } catch(eC) {} }` : ""}
+                ${args.highlights !== undefined ? `if (name === "Highlights") { try { prop.setValue(${args.highlights}, true); changes.highlights = ${args.highlights}; } catch(eH) {} }` : ""}
+                ${args.shadows !== undefined ? `if (name === "Shadows") { try { prop.setValue(${args.shadows}, true); changes.shadows = ${args.shadows}; } catch(eS) {} }` : ""}
+                ${args.whites !== undefined ? `if (name === "Whites") { try { prop.setValue(${args.whites}, true); changes.whites = ${args.whites}; } catch(eW) {} }` : ""}
+                ${args.blacks !== undefined ? `if (name === "Blacks") { try { prop.setValue(${args.blacks}, true); changes.blacks = ${args.blacks}; } catch(eB) {} }` : ""}
+                ${args.temperature !== undefined ? `if (name === "Temperature") { try { prop.setValue(${args.temperature}, true); changes.temperature = ${args.temperature}; } catch(eT) {} }` : ""}
+                ${args.tint !== undefined ? `if (name === "Tint") { try { prop.setValue(${args.tint}, true); changes.tint = ${args.tint}; } catch(eTi) {} }` : ""}
+                ${args.saturation !== undefined ? `
+                if (name === "Saturation") {
+                  saturationAttempts++;
+                  var curVal = null;
+                  try { curVal = prop.getValue(); } catch(eGS) {}
+                  // Only treat as Basic Correction Saturation if the current value is a
+                  // simple number (not an [r,g,b] array — those are Color Wheels variants).
+                  if (typeof curVal === "number" && changes.saturation === undefined) {
+                    try { prop.setValue(${args.saturation}, true); changes.saturation = ${args.saturation}; }
+                    catch(eSt) { saturationErrors.push("idx " + p + " setValue: " + eSt.toString()); }
+                  }
+                }
+                ` : ""}
               }
               break;
             }
           }
-          
+          ${args.saturation !== undefined ? `if (changes.saturation === undefined) {
+            return __error("Bug #74: could not set Lumetri Saturation. Attempts=" + saturationAttempts + " errors=" + saturationErrors.join("; "));
+          }` : ""}
+
           return __result({ colorCorrected: true, clipName: clip.name, changes: changes });
         `);
         return sendCommand(script, bridgeOptions);

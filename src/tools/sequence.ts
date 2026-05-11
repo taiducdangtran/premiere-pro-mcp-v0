@@ -35,7 +35,11 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
     },
 
     duplicate_sequence: {
-      description: "Duplicate an existing sequence",
+      description:
+        "Duplicate an existing sequence. Returns both originalSequenceId and newSequenceId so callers can reference the copy. " +
+        "By default the duplicate becomes the active sequence (Premiere's `clone()` behaviour) — " +
+        "set `make_active: false` to restore the original as active afterward. " +
+        "Bug #76 fix: previously this returned no new ID and silently switched active sequence, invalidating in-flight nodeId tracking.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -43,16 +47,51 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
             type: "string",
             description: "Sequence name or ID to duplicate",
           },
+          make_active: {
+            type: "boolean",
+            description: "If false, restore the original sequence as active after cloning (default: true, keeps Premiere's native behaviour)",
+          },
         },
         required: ["sequence_id"],
       },
-      handler: async (args: { sequence_id: string }) => {
+      handler: async (args: { sequence_id: string; make_active?: boolean }) => {
+        const restoreOriginal = args.make_active === false;
         const script = buildToolScript(`
           var seq = __findSequence("${escapeForExtendScript(args.sequence_id)}");
           if (!seq) return __error("Sequence not found: ${escapeForExtendScript(args.sequence_id)}");
-          
+
+          var originalId = seq.sequenceID;
+          var originalName = seq.name;
+
+          // Snapshot existing sequence IDs so we can identify the new clone afterward.
+          var beforeIds = {};
+          var sequences = app.project.sequences;
+          for (var i = 0; i < sequences.numSequences; i++) {
+            beforeIds[sequences[i].sequenceID] = true;
+          }
+
           seq.clone();
-          return __result({ duplicated: true, originalName: seq.name });
+
+          // Find the newly added sequence (only ID not in the snapshot).
+          var newSeq = null;
+          for (var j = 0; j < sequences.numSequences; j++) {
+            if (!beforeIds[sequences[j].sequenceID]) { newSeq = sequences[j]; break; }
+          }
+
+          var restored = false;
+          if (${restoreOriginal ? "true" : "false"} && newSeq) {
+            try { app.project.activeSequence = seq; restored = true; } catch(e) {}
+          }
+
+          return __result({
+            duplicated: true,
+            originalSequenceId: originalId,
+            originalName: originalName,
+            newSequenceId: newSeq ? newSeq.sequenceID : null,
+            newName: newSeq ? newSeq.name : null,
+            activeSequenceId: app.project.activeSequence ? app.project.activeSequence.sequenceID : null,
+            activeRestored: restored
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

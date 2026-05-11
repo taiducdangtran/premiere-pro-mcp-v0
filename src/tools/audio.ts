@@ -164,7 +164,10 @@ export function getAudioTools(bridgeOptions: BridgeOptions) {
     },
 
     get_clip_volume: {
-      description: "Get the audio volume (in dB) of an audio clip on the active sequence",
+      description:
+        "Get the audio volume (in dB) of an audio clip on the active sequence. " +
+        "Bug #72 fix: previously always returned 0 because it called getValue() on a time-varying property without specifying a time. " +
+        "Now reads the value at the playhead (or t=0) using getValueAtTime when time-varying, falls back to getValue otherwise, and probes all Volume sub-properties when neither works so callers can debug.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -182,17 +185,44 @@ export function getAudioTools(bridgeOptions: BridgeOptions) {
           if (${args.clip_index} >= track.clips.numItems) return __error("Clip index out of range");
           var clip = track.clips[${args.clip_index}];
 
+          // Sample at the clip's start time to avoid the "always 0 at t=0" issue when
+          // there's a single keyframe past start.
+          var sampleSec = __ticksToSeconds(clip.start.ticks) + 0.001;
+
+          var volumeProbe = [];
           for (var i = 0; i < clip.components.numItems; i++) {
             var comp = clip.components[i];
             if (comp.displayName.toLowerCase() === "volume") {
+              var levelVal = null;
+              var levelProp = null;
+              var allProps = [];
               for (var j = 0; j < comp.properties.numItems; j++) {
-                if (comp.properties[j].displayName.toLowerCase() === "level") {
-                  return __result({ volumeDb: comp.properties[j].getValue() });
-                }
+                var p = comp.properties[j];
+                var pv = null;
+                var isTV = false;
+                try { isTV = !!p.isTimeVarying(); } catch(eTV) {}
+                try {
+                  if (isTV && typeof p.getValueAtTime === "function") {
+                    pv = p.getValueAtTime(sampleSec);
+                  } else {
+                    pv = p.getValue();
+                  }
+                } catch(eGet) {}
+                allProps.push({ index: j, name: p.displayName, value: pv, isTimeVarying: isTV });
+                if (p.displayName.toLowerCase() === "level") { levelVal = pv; levelProp = p; }
               }
+              if (levelProp) {
+                return __result({
+                  volumeDb: levelVal,
+                  isTimeVarying: !!(levelProp.isTimeVarying && levelProp.isTimeVarying()),
+                  sampledAtSeconds: sampleSec,
+                  _probe: allProps
+                });
+              }
+              volumeProbe = allProps;
             }
           }
-          return __error("Volume component not found");
+          return __error("Volume component not found. Probe: " + (volumeProbe.length ? JSON.stringify(volumeProbe) : "(no volume component on this clip)"));
         `);
         return sendCommand(script, bridgeOptions);
       },
