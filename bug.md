@@ -579,3 +579,193 @@ Có thể đây là MCP-layer change hoặc Lumetri-specific code path mới. Te
 **Response shape expected:**
 - After BOM filter chặn garbage, ExtendScript output → valid JSON → CEP plugin's primary parse path (line 132 main.js: `var parsed = JSON.parse(result); response = JSON.stringify(parsed);`). Tester sẽ thấy `data` là object trực tiếp, không phải JSON-string envelope.
 - Nếu vẫn thấy envelope wrap → suggest probe CEP plugin log để xem `JSON.parse` throw ở đâu — có thể còn 1 loại char chưa filter.
+
+---
+
+## ✅ v1.2.15 FIX STATUS (2026-05-11, dev response to sweep #9)
+
+Sweep #9 confirmed 2/3 PASS. Một issue còn lại — BOM filter PARTIAL — đã fix.
+
+| Issue | Patch | File | LOC |
+|-------|-------|------|----:|
+| 🟢 BOM filter (5 BOM + empty + 200-char blob) | Refactor regex anchor strip → **printable-char count per codepoint**. New `__countPrintable(s)` đếm chars in printable ranges (0x20-0x7E ASCII, 0x00A1-0x1FFF + 0x3000-0xFFEF non-ASCII letters/symbols), explicitly excluding control (0x00-0x1F, 0x7F-0x9F), zero-width (0x200B-0x200D), BOM (0xFEFF), specials (0xFFF0-0xFFFF). Value or name with **zero printable chars** → filter. Empty string → filter. Truncate threshold lowered 500 → 200. | `src/tools/keyframes.ts`, `src/tools/scripting.ts` | ~25 |
+
+**Why anchor regex failed in v1.2.14:** ExtendScript's regex `^[﻿...]+|[﻿...]+$` was supposed to strip leading/trailing BOM chars. Tester confirmed control chars ``/`` WERE filtered (5 props gone in sweep #9) — meaning the regex partially worked. But BOM `﻿` consistently leaked. Likely ExtendScript's regex engine has a quirk with `﻿` in character class. Codepoint counting bypasses this entirely.
+
+**Build:** PASS, version v1.2.15
+
+### Expected sweep #10 behavior
+
+For Lumetri Color clip với props mentioned trong sweep #9:
+- index 0 "Blob" → value `"﻾"` → `__countPrintable("﻾") === 0` → filter ✅
+- index 122/124/128/129 (Embedded LUTs / Media Embedded Lut blob / LUTAsset / LookAsset) → all BOM values → filter ✅
+- index 123 "Media Embedded LUT type" → empty string `""` → `s.length === 0` → return null → filter ✅
+- index 126 "Auto Tone Analytics Data" → 200+ char JSON blob → `length > 200` → filter ✅
+
+Expected: `filteredInternalCount` jumps from ~49 to ~55+ (7 more props gone). Output không còn BOM "﻾" leak. Pipeline-safe.
+
+**Vietnamese characters preserved:** filter range `0x00A1-0x1FFF` covers Vietnamese (Latin Extended Additional), `0x3000-0xFFEF` covers CJK — clip names như "Lò nướng" hoặc captions Vietnamese không bị filter.
+
+---
+
+# 🔁 RETEST RESULTS — v1.2.14 (2026-05-11, sweep #9)
+
+CEP panel + Claude Code đều đã restart để load commit `5303c29`.
+
+## 📊 SCORE
+
+| Issue | Status | Notes |
+|-------|--------|-------|
+| 🟡 #86 setValue chain | ✅ **FULL PASS** | `updated: 1, notFound: []` — chain successfully wrote Opacity=80 |
+| 🟢 Response envelope | ✅ **FIXED** | Direct JSON object, no more `"{\"success\":true,...}"` string wrap |
+| 🟢 BOM filter | 🟡 **PARTIAL** | Control chars filtered (44→49 count), BOM `"﻾"` + empty string + 200-char JSON vẫn xuất hiện |
+
+**Score:** 2/3 full PASS, 1 partial.
+
+---
+
+## ✅ #86 setValue chain — FULL PASS
+
+**Repro:**
+```
+batch_set_clip_property({
+  property_name: "Opacity", value: 80,
+  targets: [{trackType: "video", trackIndex: 0, clipIndex: 0}]
+})
+```
+
+**Output (v1.2.14):**
+```json
+{
+  "property": "Opacity",
+  "updated": 1,
+  "notFound": []
+}
+```
+
+**Before (v1.2.13):** Failed với "Illegal Parameter type" / "1-arg: Illegal Parameter type" — both 2-arg + 1-arg setValue rejected.
+**After (v1.2.14):** Chain `setValue(v,true) → setValue(v) → setValueAtKey → setValueAtTime` đã 1 trong 4 attempts succeed. Opacity actually persisted to 80. 🎉
+
+Dev hypothesis confirmed: property cần time-varying-aware setter cho Premiere 25.4 (likely `setValueAtKey` hoặc `setValueAtTime` succeeded).
+
+---
+
+## ✅ Response envelope — FIXED
+
+`get_effect_properties` và `list_clip_effects` giờ trả về object trực tiếp:
+```json
+{ "effect": "Lumetri Color", "matchName": "AE.ADBE Lumetri", "properties": [...], ... }
+```
+
+Không còn `"{\"success\":true,\"data\":{...}}"` JSON-string wrapper. CEP plugin parse path khôi phục. 🎉
+
+---
+
+## 🟡 BOM filter — PARTIAL: Control chars filtered, BOM vẫn leak
+
+**WIN:** Control chars `""` (Luma vs Sat, Sat vs Sat) và `""` (Hue vs Sat/Hue/Luma) đã GONE khỏi output. 5 properties filtered thêm: `filteredInternalCount: 49` (trước là 44).
+
+**LEAK:** BOM `"﻾"` (U+FEFF) vẫn xuất hiện ở **5 properties**:
+
+```json
+{"index": 0,   "displayName": "Blob",                      "value": "﻾"}  ← STILL LEAK
+{"index": 122, "displayName": "Embedded LUTs",             "value": "﻾"}  ← STILL LEAK
+{"index": 124, "displayName": "Media Embedded Lut blob",   "value": "﻾"}  ← STILL LEAK
+{"index": 128, "displayName": "LUTAsset",                  "value": "﻾"}  ← STILL LEAK
+{"index": 129, "displayName": "LookAsset",                 "value": "﻾"}  ← STILL LEAK
+```
+
+**Cộng thêm 2 cases nữa cần xử lý:**
+- `{"index": 123, "displayName": "Media Embedded LUT type", "value": ""}` — empty string
+- `{"index": 126, "displayName": "Auto Tone Analytics Data", "value": "{\"mAutoTonePressed\":false,...11 fields...}"}` — 200+ char JSON blob (dev claim filter strings >500 chars, nhưng chỉ ~250 chars → dưới threshold)
+
+### Diagnosis
+
+Dev claim trong v1.2.14:
+- `__sanitizeBlob(v)` coerce qua `String(v)` rồi strip BOM/zero-width/control chars
+- Filter strings > 500 chars
+
+**Reality kiểm chứng:**
+- ✅ Control chars (``, ``) — FILTERED
+- 🔴 BOM (U+FEFF) — KHÔNG filtered (still appears with `value: "﻾"`)
+- 🔴 Empty string — KHÔNG filtered
+- 🔴 Auto Tone JSON (~250 chars) — KHÔNG filtered (below 500 threshold)
+
+### Hypothesis cho dev
+
+1. **BOM filter logic miss:** `__sanitizeBlob` strip BOM nhưng có thể chỉ strip BOM ở **prefix** (BOM-as-first-char). Nếu value sau strip vẫn non-empty (e.g., contains other binary content sau BOM) thì return non-empty string. Property "Blob" có thể là binary blob 1-char với cardinal U+FEFF — strip BOM ra empty → but maybe tool returns empty string thay vì filter out.
+
+   **Test verify:** Output `"value": "﻾"` (1 char display) — confirm `String(prop.getValue()).length === 1 && charCodeAt(0) === 0xFEFF`. Filter should reject value entirely (set to `null` or skip property).
+
+2. **Multi-char BOM blob:** ExtendScript might display single BOM char in tester output but actual storage có thể là 2+ chars (BOM + more binary). Then `String(v).replace(/^﻿+/, '')` strip BOM prefix but leaves residual binary. Filter logic should also reject strings ENTIRELY made of control/zero-width chars.
+
+### Suggested v1.2.15 fix
+
+```javascript
+function __sanitizeBlob(v) {
+  if (v === null || v === undefined) return null;
+  var s = String(v);
+  
+  // Strip BOM/zero-width prefix
+  s = s.replace(/^[﻿​-‍]+/, '');
+  
+  // Remove all control chars (0x00-0x1F except tab/newline)
+  s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  
+  // After cleanup, if string is empty or only whitespace → filter out
+  if (s.length === 0 || /^\s*$/.test(s)) return null;
+  
+  // Filter very long blobs (Auto Tone Analytics, etc.)
+  // Lower threshold from 500 → 200 chars to catch the 250-char JSON
+  if (s.length > 200) return "[truncated: " + s.length + " chars]";
+  
+  return s;
+}
+```
+
+Cũng cần: properties với `value === null` sau filter → exclude entirely from output array (count them in `filteredInternalCount`).
+
+---
+
+## 📊 Updated cumulative state
+
+| Build | Pass rate |
+|-------|----------:|
+| v1.2.12 | ~91% |
+| v1.2.13 | ~93% |
+| v1.2.14 | **~96%** ✅ |
+
+Còn 1 partial (BOM leak, ~5 props in Lumetri output). Production-ready cho mọi workflow chính.
+
+---
+
+## 🎯 PRIORITY cho v1.2.15
+
+| Priority | Issue | Suggested |
+|----------|-------|-----------|
+| 🟢 Low | BOM `"﻾"` leak | Filter strings whose post-cleanup result is empty OR all-zero-width |
+| 🟢 Low | 200-char JSON blob | Lower truncate threshold 500 → 200 |
+| 🟢 Low | Empty string at index 123 | Filter out empty values entirely |
+
+**Estimated v1.2.15 work:** ~10 LOC. Đây là pure polish, không block workflow nào.
+
+---
+
+## 📁 Session metadata sweep #9
+
+- **Build:** v1.2.14 (`5303c29`)
+- **Project:** Lò nướng.prproj
+- **Active sequence:** Sequence 01 Cắt
+- **Test date:** 2026-05-11
+- **Cleanup:** Removed Lumetri Color test effect, reset Opacity back to 100 trên test clip (000f4311).
+
+---
+
+## ✨ v1.2.14 highlights
+
+- Dev correctly identified time-varying setValue API issue → 4-attempt chain win
+- Response envelope side-effect resolved automatically via BOM filter improvement
+- 5 control-char properties stripped from Lumetri output → cleaner UX
+- Foundation for v1.2.15 trivial polish path
+
+**Pipeline-readiness: 🟢 PRODUCTION-READY.** Mọi tool chính đã PASS, chỉ còn cosmetic Lumetri property output cần polish nhỏ.

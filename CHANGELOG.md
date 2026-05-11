@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.15] - 2026-05-11 — Sweep #9 feedback: BOM filter via printable-char count
+
+Sweep #9 confirmed 2/3 PASS from v1.2.14 (#86 setValue chain works, response envelope fixed transitively). BOM filter was PARTIAL — control chars `/` were filtered (5 props gone) but BOM `﻿` still leaked at 5 Lumetri indices. This release replaces the regex anchor strip with a codepoint counting approach.
+
+### Fixed
+
+- **#25 BOM filter** v4 — replaced regex `^[\s﻿...]+|[\s﻿...]+$` with `__countPrintable(s)` that walks codepoints and counts characters in printable ranges (`0x20-0x7E` ASCII, `0x00A1-0x1FFF` and `0x3000-0xFFEF` non-ASCII letters/symbols). Value or name with **zero printable chars** is filtered. Empty strings also filtered. Truncate threshold lowered 500 → 200 to catch Lumetri "Auto Tone Analytics Data" (~250 chars). Vietnamese + CJK preserved by the non-ASCII ranges. Likely root cause of v1.2.14 failure: ExtendScript's regex engine has an edge case with `﻿` in `[...]` character classes that ASCII codepoint counting bypasses.
+
 ## [1.2.14] - 2026-05-11 — Sweep #8 feedback: #86 setValue chain, BOM filter root fix
 
 Sweep #8 confirmed 3/4 fixes from v1.2.13 PASS but the BOM filter still leaked (Lumetri "﻾" still in output) and the #86 setValue mystery persisted. Both root-caused this release.
