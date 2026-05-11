@@ -1,5 +1,6 @@
 import { buildToolScript, escapeForExtendScript } from "../bridge/script-builder.js";
 import { sendCommand, BridgeOptions } from "../bridge/file-bridge.js";
+import { existsSync } from "node:fs";
 
 export function getProjectTools(bridgeOptions: BridgeOptions) {
   return {
@@ -675,10 +676,17 @@ export function getProjectTools(bridgeOptions: BridgeOptions) {
         required: ["project_path"],
       },
       handler: async (args: { project_path: string; sequence_ids?: string[] }) => {
+        if (typeof args.project_path === "string" && args.project_path.length > 0 && !existsSync(args.project_path)) {
+          return {
+            success: false,
+            error: `import_sequences_from_project: project_path does not exist: ${args.project_path}`,
+          };
+        }
         const ids = JSON.stringify(args.sequence_ids ?? []);
         const script = buildToolScript(`
           var path = "${escapeForExtendScript(args.project_path)}";
           var ids = ${ids};
+          var rootBefore = app.project.rootItem.children.numItems;
           try {
             var ok = app.project.importSequences
               ? app.project.importSequences(path, ids)
@@ -687,7 +695,27 @@ export function getProjectTools(bridgeOptions: BridgeOptions) {
               app.openDocument(path);
               return __result({ imported: false, note: "importSequences API not available; opened source project instead." });
             }
-            return __result({ imported: true, count: ids.length || "all" });
+            var rootAfter = app.project.rootItem.children.numItems;
+            if (rootAfter === rootBefore) {
+              return __error({
+                reason: "import_sequences_from_project: API returned without error but no new project items were added. " +
+                        "Likely sequence_ids did not match any sequence in the source project, or the source file is empty/invalid. " +
+                        "Pass an empty sequence_ids array to import all sequences.",
+                _probe: {
+                  projectPath: path,
+                  sequenceIds: ids,
+                  rootItemsBefore: rootBefore,
+                  rootItemsAfter: rootAfter
+                }
+              });
+            }
+            return __result({
+              imported: true,
+              count: ids.length || "all",
+              rootItemsBefore: rootBefore,
+              rootItemsAfter: rootAfter,
+              rootItemsAdded: rootAfter - rootBefore
+            });
           } catch (ex) {
             return __error("Failed to import sequences: " + ex.toString());
           }

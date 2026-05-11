@@ -1,7 +1,7 @@
 import { buildToolScript, escapeForExtendScript } from "../bridge/script-builder.js";
 import { sendCommand, BridgeOptions } from "../bridge/file-bridge.js";
 import { readFileSync, unlinkSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 export function getExportTools(bridgeOptions: BridgeOptions) {
@@ -27,12 +27,27 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
         required: ["output_path"],
       },
       handler: async (args: { output_path: string; preset_path?: string; work_area_only?: boolean }) => {
+        if (typeof args.output_path === "string" && args.output_path.length > 0) {
+          const outputDir = dirname(args.output_path);
+          if (!existsSync(outputDir)) {
+            return {
+              success: false,
+              error: `export_sequence: output directory does not exist: ${outputDir}. Create the directory before calling, or pass a valid path.`,
+            };
+          }
+        }
+        if (args.preset_path && !existsSync(args.preset_path)) {
+          return {
+            success: false,
+            error: `export_sequence: preset_path does not exist: ${args.preset_path}`,
+          };
+        }
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          
+
           var outputPath = "${escapeForExtendScript(args.output_path)}";
-          
+
           ${args.preset_path
             ? `var presetPath = "${escapeForExtendScript(args.preset_path)}";`
             : `// Use default H.264 preset
@@ -41,14 +56,18 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
                var presetFile = new File("/Applications/Adobe Media Encoder 2025/MediaIO/systempresets/4028/HDTV 1080p 29.97 High Quality.epr");
                if (presetFile.exists) presetPath = presetFile.fsName;`
           }
-          
+
           var exportResult = seq.exportAsMediaDirect(
             outputPath,
             presetPath,
             ${args.work_area_only ? "app.encoder.ENCODE_WORKAREA" : "app.encoder.ENCODE_ENTIRE"}
           );
-          
-          return __result({ exported: true, outputPath: outputPath });
+
+          return __result({
+            queued: true,
+            outputPath: outputPath,
+            _note: "AME queue accepted the job; render completion is async. Check the file on disk or use get_render_queue_status to confirm finished output."
+          });
         `);
         return sendCommand(script, { ...bridgeOptions, timeoutMs: 120000 }); // 2 min timeout for exports
       },
@@ -470,13 +489,23 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
         trim_audio_files?: boolean;
         handle_frames?: number;
       }) => {
+        if (typeof args.output_path === "string" && args.output_path.length > 0) {
+          const outputDir = dirname(args.output_path);
+          if (!existsSync(outputDir)) {
+            return {
+              success: false,
+              error: `export_omf: output directory does not exist: ${outputDir}. Create the directory before calling.`,
+            };
+          }
+        }
+        const outputPath = args.output_path;
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
-          
+
           app.project.exportOMF(
             seq,
-            "${escapeForExtendScript(args.output_path)}",
+            "${escapeForExtendScript(outputPath)}",
             "OMFTitle",
             ${args.sample_rate ?? 48000},
             ${args.bits_per_sample ?? 16},
@@ -485,8 +514,19 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
             ${args.trim_audio_files !== false ? 1 : 0},
             ${args.handle_frames ?? 1000}
           );
-          
-          return __result({ exported: true, outputPath: "${escapeForExtendScript(args.output_path)}", format: "OMF" });
+
+          // Verify the OMF actually landed on disk before reporting success.
+          // exportOMF is synchronous (unlike AME queue), so the file should exist immediately.
+          var outFile = new File("${escapeForExtendScript(outputPath)}");
+          if (!outFile.exists) {
+            return __error({
+              reason: "export_omf: API returned without error but the OMF file was not written to disk. " +
+                      "Verify output path is writable and the sequence has audio tracks.",
+              _probe: { outputPath: "${escapeForExtendScript(outputPath)}" }
+            });
+          }
+
+          return __result({ exported: true, outputPath: "${escapeForExtendScript(outputPath)}", format: "OMF" });
         `);
         return sendCommand(script, { ...bridgeOptions, timeoutMs: 120000 });
       },

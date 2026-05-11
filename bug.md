@@ -1025,6 +1025,164 @@ Tất cả 7 fail resolved. Build sạch, **288/288 tests PASS**.
 **Test:** `npm test` → 288 PASS / 0 FAIL
 **Approach:** Option B (semantic polymorphic) — converter giờ hiểu `type: "any"` → `z.any()` đúng spirit của polymorphic fields, không phải workaround.
 
+---
+
+# 🔁 LIVE SWEEP — v1.2.17 (2026-05-11, sweep #13, Premiere 25.4.1)
+
+Live-test 30 non-effect tool theo `sweep13-plan.md` trên project "Lò nướng.prproj". (Plan ghi 31 nhưng A=5, B=2, C=2, D=4, E=2, F=2, G=5, H=2, I=3, J=3 = **30** — discrepancy 1, có thể plan đếm lại.) Nhiều tool chưa từng live-test trước đây phơi bày bug nghiêm trọng.
+
+## 📊 SCORE
+
+| Group | Tools | ✅ PASS | 🟡 PARTIAL | 🔴 FAIL | Pass rate |
+|-------|------:|--------:|------------:|---------:|----------:|
+| A. Export & encode | 5 | 1 | 2 | 2 | 20% |
+| B. Import sequences | 2 | 0 | 0 | 2 | 0% |
+| C. Generate media | 2 | 0 | 0 | 2 | 0% |
+| D. Sequence settings | 4 | 4 | 0 | 0 | 100% |
+| E. Burn-in | 2 | 2 | 0 | 0 | 100% |
+| F. Warp Stabilizer | 2 | 1 | 1 | 0 | 50% |
+| G. Edit ops | 5 | 2 | 0 | 3 | 40% |
+| H. Lift/Extract | 2 | 1 | 0 | 1 | 50% |
+| I. Media interp | 3 | 1 | 1 | 1 | 33% |
+| J. Playhead nav | 3 | 3 | 0 | 0 | 100% |
+| **Total** | **30** | **15** | **4** | **11** | **50%** |
+
+## 📋 Tool-by-tool
+
+| Tool | Status | Notes |
+|------|:------:|-------|
+| A1 `get_export_file_extension` | 🟡 | PASS extension="mpeg" cho HDV720.epr. **Edge bug**: preset không tồn tại trả `extension: null` thay vì error rõ |
+| A2 `export_sequence` | 🔴 | **#91 False positive**: trả `exported: true` cho dir KHÔNG tồn tại; key tên `exported` misleading (chỉ queue AME, chưa finish) |
+| A3 `export_omf` | 🔴 | **#92** cùng pattern A2: `exported: true` cho dir không tồn tại; .omf file thật cũng không xuất hiện |
+| A4 `start_batch_encode` | 🟡 | trả `started: true`. `get_render_queue_status` báo `isRunning: "unknown"` → không verify được từ MCP side |
+| A5 `set_transcode_on_ingest` | ✅ | enable true / disable false đều work clean |
+| B1 `import_sequences` | 🔴 | **#93** "Error: Not Enough Parameters" từ Adobe DOM — broken cả khi pass `sequence_ids: []` workaround |
+| B2 `import_sequences_from_project` | 🔴 | **#94 False positive** `imported: true, count: "all"` cho path không tồn tại; `rootItemCount` không đổi → không import gì |
+| Duplicate check | ⚠️ | B1 & B2 signature gần giống, behavior khác nhau (B1 fail vs B2 false positive). Cân nhắc deprecate B1 (broken anyway), giữ B2 sau fix |
+| C1 `create_bars_and_tone` | 🔴 | **#95** "Illegal Parameter type" với mọi config (default/custom/no-args). Tool pass sai shape vào Adobe DOM |
+| C2 `add_universal_counting_leader` | 🔴 | **#96** "Failed to create counting leader: Not Enough Parameters". Cùng family với C1 |
+| D1 `set_sequence_field_type` | ✅ | set 1 → confirm 1, revert 0 verified via `get_sequence_settings` |
+| D2 `set_sequence_display_format` | ✅ | set 3/0 → confirm 3/0, revert. **🟡 Doc mismatch**: schema doc enum 0-11 nhưng project baseline dùng 106/200 — actual Adobe enum khác doc |
+| D3 `set_override_frame_rate` | ✅ | set 23.976 → confirm, revert 29.97 |
+| D4 `set_override_pixel_aspect_ratio` | ✅ | set 2:1 → confirm PAR=2, revert 1:1 |
+| E1 `burn_in_timecode` | ✅ | Timecode effect added, Opacity=80 confirmed via `list_clip_effects` |
+| E2 `burn_in_metadata` | ✅ | "Metadata & Timecode Burn-in" added (67 props, 15 internal filtered) |
+| Edge | ⚠️ | `remove_effect` reject `effect_name="Metadata &amp; Timecode Burn-in"` (HTML-encoded), accept plain `&` — minor caller-side concern |
+| F1 `stabilize_clip` | 🟡 | **#97**: default args PASS; pass `smoothness=50 + method="Subspace Warp"` → 🔴 "Illegal Parameter type". Schema accept nhưng Adobe DOM reject |
+| F2 `configure_warp_stabilizer` | ✅ | smoothness=75, framing, result đều set, trả `analysisStatusCounter: 408` |
+| G1 `three_point_edit` | ✅ | overwrite source 0-3s lên timeline 310s V1 → clip 3s tạo đúng |
+| G2 `move_clip_to_track` | 🔴 | **#98** "Not Enough Parameters" — tool broken ở Adobe DOM level |
+| G3 `batch_enable_disable` | 🔴 | **#99** target=track V3 (5 clips enabled) trả `affected: 0`. Tool không thực sự iterate clips on track |
+| G4 `rename_project_item` | ✅ | rename + revert work |
+| G5 `freeze_frame` | 🔴 | **#100** "ReferenceError: seq.exportFramePNG is not a function" — Adobe DOM API không tồn tại |
+| **`undo` / `multiple_undo`** | 🔴 | **#101 CRITICAL** cả 2 đều broken trong 25.4 (`app.project.undo` và `app.executeCommand` undefined). Workaround chỉ Cmd/Ctrl+Z trong UI. Ảnh hưởng MỌI test session — không thể auto-revert |
+| H1 `lift_selection` | 🔴 | **#102** "qeSeq.lift is not a function" — QE DOM thiếu method |
+| H2 `extract_selection` | ✅ | in/out 308-314 → remove G1 leftover clip + close gap (sequence về 298.33s như cũ) |
+| I1 `set_offline` | 🟡 | error path PASS cho item không tồn tại. Happy path SKIP để bảo vệ project (set_offline lên media live sẽ phá rendering) |
+| I2 `set_footage_interpretation` | ✅ | set frame_rate=24 → confirm, revert 29.97 verified |
+| I3 `set_project_scratch_disk` | 🔴 | **#103** cả `get_project_scratch_disks` lẫn `set_project_scratch_disk` đều return empty `{}` — không feedback, không xác minh, không capture baseline để revert |
+| J1 `go_to_start` | ✅ | playhead về 0 |
+| J2 `go_to_in_point` | ✅ | in=5 → playhead=5 |
+| J3 `go_to_out_point` | ✅ | out=15 → playhead=15. **Edge**: no in/out → fallback về 0 / sequence end (no error, silent) |
+
+## 🐛 NEW BUGS — chi tiết
+
+### 🔴 #91 + #92 — `export_sequence` / `export_omf` false positive
+
+Cùng pattern Bug #88 (`import_mogrt_from_library`). Tool trả `exported: true` ngay cả khi output dir không tồn tại. Caller tưởng đã xuất file thành công, nhưng AME (1) chưa nhận queue, hoặc (2) không thể ghi.
+
+**Fix gợi ý:** verify output dir exists trước khi call AME; rename key `exported` → `queued` để phản ánh đúng trạng thái (AME queued ≠ rendered).
+
+### 🔴 #93 + #94 — `import_sequences*` broken/false-positive
+
+- B1 `import_sequences`: throws Adobe error ngay cả với valid signature
+- B2 `import_sequences_from_project`: false positive cho path không tồn tại
+
+**Fix gợi ý:**
+- Verify project_path file exists trước khi call DOM
+- Snapshot `rootItemCount` before/after để confirm thật có import
+- Cân nhắc deprecate B1 (broken, B2 đã cover use case)
+
+### 🔴 #95 + #96 — `create_bars_and_tone` / `add_universal_counting_leader`
+
+Cả 2 throw Adobe DOM signature errors. Có thể `project.createBarsAndTone()` / `project.createUniversalCountingLeader()` đã thay đổi signature trong Premiere 25.x.
+
+**Action:** verify Adobe ExtendScript reference cho Premiere 25.4 cho 2 method này. Probe để discover signature mới.
+
+### 🔴 #98 — `move_clip_to_track` "Not Enough Parameters"
+
+Adobe DOM error. Probably QE DOM signature change.
+
+### 🔴 #99 — `batch_enable_disable` track-target không iterate
+
+Tool trả `affected: 0` cho track có 5 clips. Logic không loop qua clips trên track. Likely bug trong handler — chỉ check `target === 'selected'` hoặc `'all'` path.
+
+### 🔴 #100 — `freeze_frame` API name sai
+
+`seq.exportFramePNG` không tồn tại. Premiere thật có thể dùng `sequence.exportFrame(path, time, settings)` hoặc khác. Cần verify Adobe docs.
+
+### 🔴 #101 CRITICAL — `undo` / `multiple_undo` broken in 25.4
+
+Cả 2 endpoint mà code rely on đều undefined trong Premiere 25.4:
+- `app.project.undo` undefined
+- `app.executeCommand` undefined
+
+**Impact:** ❗ MCP test sessions, AI workflows không thể auto-revert. Mọi script nào dựa trên undo flow sẽ vỡ. Đây là blocker cho user-facing automation.
+
+**Workaround current:** Cmd/Ctrl+Z trong UI thủ công.
+
+**Fix gợi ý:** explore alternatives — `qe.project.undo()`, `app.enableQE()` rồi gọi qe undo, hoặc post-2025 Premiere API mới. Nếu không có API nào hoạt động, ít nhất tool nên báo lỗi sớm hơn (return `{ undone: 0, available: false }` đã làm, nhưng caller hay không check).
+
+### 🔴 #102 — `lift_selection` `qeSeq.lift is not a function`
+
+QE DOM thiếu method `.lift`. Có thể đã rename hoặc moved sang regular DOM.
+
+### 🔴 #103 — Scratch disk API trả empty
+
+`get_project_scratch_disks` trả `{}` (không có data), `set_project_scratch_disk` cũng trả `{}` (không feedback). Cả 2 không thể tin cậy.
+
+## 🟡 MINOR ISSUES
+
+| # | Tool | Issue |
+|---|------|-------|
+| 🟡 | `get_export_file_extension` | path không tồn tại → `extension: null` silently, không error |
+| 🟡 | `export_sequence/omf` | key `exported: true` misleading khi AME chỉ queued |
+| 🟡 | `get_render_queue_status` | trả `isRunning: "unknown"` — chưa thực sự query AME |
+| 🟡 | `set_sequence_display_format` | doc enum 0-11 ≠ actual Adobe value 106/200 |
+| 🟡 | `stabilize_clip` | optional params (smoothness, method) reject với "Illegal Parameter type" — schema accept nhưng Adobe DOM reject |
+| 🟡 | `remove_effect` | reject HTML-encoded `&amp;`, chỉ accept plain `&` (caller-side concern) |
+| 🟡 | `go_to_in/out_point` | no in/out set → silent fallback 0 / sequence end (không error, không note) |
+
+## 🎯 PRIORITY cho v1.2.18
+
+| Priority | Bug | Fix complexity |
+|----------|-----|---------------:|
+| 🔥 #101 | undo/multiple_undo broken | High — cần research Adobe 25.x replacement API |
+| 🔴 #91-#94 | export/import false positives | Medium — add path-exists check + state diff |
+| 🔴 #95-#96 | bars-and-tone / counting leader signature | Medium — verify Adobe ExtendScript reference |
+| 🔴 #98-#100 | move_clip_to_track / batch_enable_disable / freeze_frame | Medium — DOM signature fix per tool |
+| 🔴 #102-#103 | lift_selection / scratch disk | Medium |
+| 🟡 minor | doc mismatches, edge case silents | Low — doc + return polish |
+
+## 🟢 What works well
+
+- **Group D (100% PASS)**: sequence settings tools đều stable (D1-D4)
+- **Group E (100% PASS)**: burn-in effects apply + verify cleanly
+- **Group J (100% PASS)**: playhead navigation works, edge fallback hợp lý
+- **F2 PASS**: configure_warp_stabilizer trả `analysisStatusCounter` đúng spec
+- **G1, G4, H2, I2**: solid sweeps qua các API quan trọng
+
+## 📁 Session metadata sweep #13
+
+- **Build:** v1.2.17 (uncommitted, dev branch)
+- **Project:** Lò nướng.prproj (Premiere 25.4.1 build 3)
+- **Active sequence:** Sequence 01 Cắt (88 clips, 3V/3A, 298.33s)
+- **Test date:** 2026-05-11
+- **Output dir:** `/Users/tai.ddtran/sweep13_out/` (empty after session — AME render queue ≠ confirmed file write)
+- **Side effects left:** none (H2 extract đã cleanup G1 leftover, project state nguyên vẹn)
+- **NodeIds tested:** V1c0=000f4311, V2c1=000f438d, project item=000f42b3 (C7984_RENAMED.MP4)
+- **Test scope:** 30/31 non-effect tool theo plan; 95 `apply_*` effect wrappers reserve cho sweep #14+
+
 ## 📊 SCORE
 
 | Loại | Số lượng | Mức độ |

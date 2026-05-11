@@ -1007,15 +1007,40 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
           if (!seq) return __error("No active sequence");
 
           var count = 0;
+          var attempted = 0;
+          var errors = [];
           var disabled = ${!args.enabled};
+
+          function applyDisabled(clip) {
+            // Premiere 25.4: clip.setDisabled() may throw or be removed.
+            // Try the legacy method first, then fall back to direct property assignment.
+            try {
+              clip.setDisabled(disabled);
+              return null;
+            } catch(eMethod) {
+              try {
+                clip.disabled = disabled;
+                return null;
+              } catch(eProp) {
+                return "setDisabled: " + eMethod.toString() + " / disabled=: " + eProp.toString();
+              }
+            }
+          }
 
           function setOnTrack(track) {
             for (var c = 0; c < track.clips.numItems; c++) {
-              try {
-                if ("${args.target}" === "selected" && !track.clips[c].isSelected()) continue;
-                track.clips[c].setDisabled(disabled);
+              if ("${args.target}" === "selected") {
+                try {
+                  if (!track.clips[c].isSelected()) continue;
+                } catch(eSel) { continue; }
+              }
+              attempted++;
+              var err = applyDisabled(track.clips[c]);
+              if (err === null) {
                 count++;
-              } catch(e) {}
+              } else if (errors.length < 5) {
+                errors.push({ clipName: track.clips[c].name, error: err });
+              }
             }
           }
 
@@ -1028,7 +1053,17 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
             for (var t = 0; t < seq.audioTracks.numTracks; t++) setOnTrack(seq.audioTracks[t]);
           }
 
-          return __result({ affected: count, enabled: ${args.enabled} });
+          if (attempted > 0 && count === 0) {
+            return __error({
+              reason: "batch_enable_disable: iterated " + attempted + " clip(s) but every setDisabled call failed. " +
+                      "Likely the Adobe DOM API for toggling clip enabled state changed in this Premiere build.",
+              affected: 0,
+              attempted: attempted,
+              firstErrors: errors
+            });
+          }
+
+          return __result({ affected: count, attempted: attempted, enabled: ${args.enabled}, failures: errors.length });
         `);
         return sendCommand(script, bridgeOptions);
       },
