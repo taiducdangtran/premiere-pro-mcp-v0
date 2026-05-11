@@ -405,7 +405,8 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
     auto_reframe_sequence: {
       description:
         "Auto-reframe a sequence for a different aspect ratio. " +
-        "Bug #65 v2 (v1.2.8): camelCase method `autoReframeSequence` confirmed present in Premiere 25.4, but signature is undocumented — all probed shapes (num/den, w/h, with/without motion string, with/without nest bool) throw 'Illegal Parameter type'. Tool probes documented shapes and surfaces full _probe data. Currently requires Adobe ExtendScript docs to resolve.",
+        "Bug #65 v3 (v1.2.12): correct signature confirmed via Adobe ExtendScript docs — `autoReframeSequence(numerator, denominator, motionPreset, newName, useNestedSequences)`. " +
+        "motionPreset is a String ('slower'|'default'|'faster'), and the 4th arg is `newName` (String, the duplicate sequence name), NOT a nest flag. Previous probes failed because they used a bool/int at position 4.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -423,28 +424,39 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
           },
           motion_preset: {
             type: "string",
-            enum: ["default", "fastMotion", "slowerMotion"],
-            description: "Motion tracking preset (default: 'default')",
+            enum: ["slower", "default", "faster"],
+            description: "Motion tracking preset string (default: 'default'). Per Adobe docs.",
           },
-          nest_clips: {
+          new_name: {
+            type: "string",
+            description: "Name for the new reframed sequence (default: '<source name> - Auto Reframe').",
+          },
+          use_nested_sequences: {
             type: "boolean",
-            description: "Nest clips during reframe (default: false)",
+            description: "Use nested sequences (default: false). 5th arg per Adobe docs.",
           },
         },
         required: ["target_width", "target_height"],
       },
-      handler: async (args: { sequence_id?: string; target_width: number; target_height: number; motion_preset?: string; nest_clips?: boolean }) => {
+      handler: async (args: {
+        sequence_id?: string;
+        target_width: number;
+        target_height: number;
+        motion_preset?: string;
+        new_name?: string;
+        use_nested_sequences?: boolean;
+      }) => {
         const seqLookup = args.sequence_id
           ? `var seq = __findSequence("${escapeForExtendScript(args.sequence_id)}"); if (!seq) return __error("Sequence not found");`
           : `var seq = app.project.activeSequence; if (!seq) return __error("No active sequence");`;
         const motion = args.motion_preset || "default";
-        const nest = args.nest_clips === true;
+        const newName = args.new_name || "";
+        const useNested = args.use_nested_sequences === true;
 
         const script = buildToolScript(`
-          __probeState = { tool: "auto_reframe_sequence", attempts: [] };
+          __probeState = { tool: "auto_reframe_sequence" };
 
           ${seqLookup}
-          __probeState.apiType = (typeof seq.autoReframeSequence);
           if (typeof seq.autoReframeSequence !== "function") {
             return __error({ reason: "auto_reframe_sequence: API not exposed in this Premiere build", _probe: __probeState });
           }
@@ -456,52 +468,35 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
           var num = w / g;
           var den = h / g;
           var motion = "${motion}";
-          var nest = ${nest ? "true" : "false"};
-          // Adobe docs (older builds): motionPreset int 0=SlowerMotion, 1=Default, 2=FasterMotion
-          // nestSelectionType int 0=DisableNesting, 1=NestFull, 2=NestClipsWithMotion
-          var motionInt = (motion === "slowerMotion") ? 0 : (motion === "fastMotion") ? 2 : 1;
-          var nestInt = nest ? 1 : 0;
-          __probeState.target = { w: w, h: h, num: num, den: den, motion: motion, motionInt: motionInt, nest: nest, nestInt: nestInt };
+          // Backward-compat: accept old enum values
+          if (motion === "slowerMotion") motion = "slower";
+          else if (motion === "fastMotion") motion = "faster";
+          var newName = "${escapeForExtendScript(newName)}";
+          if (!newName) newName = seq.name + " - Auto Reframe";
+          var useNested = ${useNested ? "true" : "false"};
+          __probeState.params = { num: num, den: den, motion: motion, newName: newName, useNested: useNested };
 
-          // Bug #65 v3 (v1.2.8): expand probe to include 5-arg all-int form per Adobe ExtendScript ref
-          var sigs = [
-            // All-int 5-arg form (most likely correct per Adobe API)
-            { args: [num, den, motionInt, nestInt, 1], label: "5-arg all-int (num, den, motionInt, nestInt, useUndo=1)" },
-            { args: [num, den, motionInt, nestInt, 0], label: "5-arg all-int (num, den, motionInt, nestInt, useUndo=0)" },
-            // All-int 4-arg form
-            { args: [num, den, motionInt, nestInt], label: "4-arg all-int (num, den, motionInt, nestInt)" },
-            // Existing variants kept as fallbacks
-            { args: [num, den, motion, nest], label: "(num, den, motionString, nestBool)" },
-            { args: [num, den, motion], label: "(num, den, motionString)" },
-            { args: [num, den], label: "(num, den)" },
-            { args: [w, h, motionInt, nestInt], label: "(w, h, motionInt, nestInt)" },
-            { args: [w, h, motion, nest], label: "(w, h, motionString, nestBool)" },
-            { args: [w, h], label: "(w, h)" }
-          ];
-          var ok = false;
-          var via = null;
-          for (var s = 0; s < sigs.length && !ok; s++) {
-            var att = { signature: sigs[s].label, thrown: false };
-            try {
-              var a = sigs[s].args;
-              if (a.length === 5) seq.autoReframeSequence(a[0], a[1], a[2], a[3], a[4]);
-              else if (a.length === 4) seq.autoReframeSequence(a[0], a[1], a[2], a[3]);
-              else if (a.length === 3) seq.autoReframeSequence(a[0], a[1], a[2]);
-              else if (a.length === 2) seq.autoReframeSequence(a[0], a[1]);
-              ok = true; via = sigs[s].label;
-            } catch(eS) { att.thrown = true; att.error = eS.toString(); }
-            __probeState.attempts.push(att);
+          // Bug #65 v4 (v1.2.12): correct signature per Adobe docs:
+          // autoReframeSequence(numerator, denominator, motionPreset, newName, useNestedSequences)
+          try {
+            seq.autoReframeSequence(num, den, motion, newName, useNested);
+          } catch(eARS) {
+            __probeState.error = eARS.toString();
+            return __error({
+              reason: "auto_reframe_sequence: " + eARS.toString(),
+              _probe: __probeState
+            });
           }
-          if (!ok) {
-            return __error({ reason: "auto_reframe_sequence: no signature worked", _probe: __probeState });
-          }
+
           __probeState = null;
           return __result({
             reframed: true,
-            name: seq.name,
+            sourceName: seq.name,
+            newName: newName,
             targetSize: w + "x" + h,
             aspectRatio: num + ":" + den,
-            signatureUsed: via
+            motionPreset: motion,
+            useNestedSequences: useNested
           });
         `);
         return sendCommand(script, bridgeOptions);

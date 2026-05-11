@@ -768,87 +768,75 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
     scene_edit_detection: {
       description:
         "Perform scene edit detection on the selected clips in the active sequence. " +
-        "Bug #61 fix: `performSceneEditDetectionOnSelection` in Premiere 25.4 requires a flags/option object; the no-arg form throws 'Not Enough Parameters'. Tool now probes documented arg shapes (object with flags, individual booleans, no args) and surfaces the failure modes.",
+        "Bug #61 v3 (v1.2.12): correct signature confirmed via Adobe ExtendScript docs — " +
+        "`performSceneEditDetectionOnSelection(actionDesired, applyCutsToLinkedAudio, sensitivity)` where " +
+        "actionDesired is the String 'CreateMarkers' or 'ApplyCuts', and sensitivity is the String " +
+        "'LowSensitivity' | 'MediumSensitivity' | 'HighSensitivity'. " +
+        "Previous probes failed because they passed bool flags or numeric sensitivity values.",
       parameters: {
         type: "object" as const,
         properties: {
-          apply_cuts: {
-            type: "boolean",
-            description: "Apply cuts at detected edits (default: true)",
+          action: {
+            type: "string",
+            enum: ["ApplyCuts", "CreateMarkers"],
+            description: "What to do at each detected edit: 'ApplyCuts' (default) or 'CreateMarkers'.",
           },
-          create_markers: {
+          apply_to_linked_audio: {
             type: "boolean",
-            description: "Create sequence markers at detected edits (default: false)",
+            description: "Apply cuts to audio linked to selected video clips (default: true).",
           },
           sensitivity: {
-            type: "number",
-            description: "Detection sensitivity 0-100 (default: 50)",
+            type: "string",
+            enum: ["LowSensitivity", "MediumSensitivity", "HighSensitivity"],
+            description: "Detection sensitivity (default: 'MediumSensitivity').",
           },
         },
       },
-      handler: async (args: { apply_cuts?: boolean; create_markers?: boolean; sensitivity?: number }) => {
-        const applyCuts = args.apply_cuts !== false;
-        const createMarkers = args.create_markers === true;
-        const sensitivity = args.sensitivity ?? 50;
+      handler: async (args: { action?: string; apply_to_linked_audio?: boolean; sensitivity?: string }) => {
+        const action = args.action === "CreateMarkers" ? "CreateMarkers" : "ApplyCuts";
+        const applyLinked = args.apply_to_linked_audio !== false;
+        const sensitivity = (args.sensitivity === "LowSensitivity" || args.sensitivity === "HighSensitivity")
+          ? args.sensitivity
+          : "MediumSensitivity";
+
         const script = buildToolScript(`
-          __probeState = { tool: "scene_edit_detection", attempts: [] };
+          __probeState = { tool: "scene_edit_detection" };
 
           var seq = app.project.activeSequence;
           if (!seq) return __error({ reason: "No active sequence", _probe: __probeState });
 
-          __probeState.apiType = (typeof seq.performSceneEditDetectionOnSelection);
           if (typeof seq.performSceneEditDetectionOnSelection !== "function") {
             return __error({ reason: "scene_edit_detection: API not exposed in this Premiere build", _probe: __probeState });
           }
 
-          // Check selection
           try {
             var sel = seq.getSelection();
             __probeState.selectionCount = sel ? sel.length : 0;
           } catch(eSel) { __probeState.selectionError = eSel.toString(); }
 
-          var applyCuts = ${applyCuts ? "true" : "false"};
-          var createMarkers = ${createMarkers ? "true" : "false"};
-          var sensitivity = ${sensitivity};
-          // Bug #61 v2 (v1.2.8): ExtendScript often requires bool-as-int (0/1).
-          // Also Adobe API may want sensitivity as int (0..100) not float.
-          var applyCutsInt = applyCuts ? 1 : 0;
-          var createMarkersInt = createMarkers ? 1 : 0;
-          var sensInt = Math.round(sensitivity);
+          var action = "${action}";
+          var applyLinked = ${applyLinked ? "true" : "false"};
+          var sensitivity = "${sensitivity}";
+          __probeState.params = { action: action, applyLinked: applyLinked, sensitivity: sensitivity };
 
-          var sigs = [
-            // 3-arg all-int form
-            { args: [applyCutsInt, createMarkersInt, sensInt], label: "3-arg all-int (1/0, 1/0, sensInt)" },
-            { args: [applyCutsInt, createMarkersInt, sensitivity], label: "3-arg (1/0, 1/0, sensFloat)" },
-            // 4-arg with sensitivity as range 0..1
-            { args: [applyCutsInt, createMarkersInt, sensitivity / 100, 0], label: "4-arg (1/0, 1/0, sens01, 0)" },
-            // Original bool variants
-            { args: [{ applyCuts: applyCuts, createMarkers: createMarkers, sensitivity: sensitivity }], label: "object {applyCuts,createMarkers,sensitivity}" },
-            { args: [applyCuts, createMarkers, sensitivity], label: "3-arg (bool,bool,num)" },
-            { args: [applyCuts, createMarkers], label: "2-arg (bool,bool)" },
-            { args: [applyCutsInt, createMarkersInt], label: "2-arg all-int (1/0, 1/0)" },
-            { args: [applyCuts], label: "1-arg (bool)" },
-            { args: [applyCutsInt], label: "1-arg (int 1/0)" },
-            { args: [], label: "no args" }
-          ];
-          var ok = false;
-          var via = null;
-          for (var s = 0; s < sigs.length && !ok; s++) {
-            var att = { signature: sigs[s].label, thrown: false };
-            try {
-              var a = sigs[s].args;
-              if (a.length === 0) seq.performSceneEditDetectionOnSelection();
-              else if (a.length === 1) seq.performSceneEditDetectionOnSelection(a[0]);
-              else if (a.length === 2) seq.performSceneEditDetectionOnSelection(a[0], a[1]);
-              else if (a.length === 3) seq.performSceneEditDetectionOnSelection(a[0], a[1], a[2]);
-              else if (a.length === 4) seq.performSceneEditDetectionOnSelection(a[0], a[1], a[2], a[3]);
-              ok = true; via = sigs[s].label;
-            } catch(eS) { att.thrown = true; att.error = eS.toString(); }
-            __probeState.attempts.push(att);
+          // Bug #61 v3 (v1.2.12): correct signature per Adobe docs
+          try {
+            seq.performSceneEditDetectionOnSelection(action, applyLinked, sensitivity);
+          } catch(eSE) {
+            __probeState.error = eSE.toString();
+            return __error({
+              reason: "scene_edit_detection: " + eSE.toString(),
+              _probe: __probeState
+            });
           }
-          if (!ok) return __error({ reason: "scene_edit_detection: no signature worked", _probe: __probeState });
+
           __probeState = null;
-          return __result({ sceneDetection: true, signatureUsed: via });
+          return __result({
+            sceneDetection: true,
+            action: action,
+            applyToLinkedAudio: applyLinked,
+            sensitivity: sensitivity
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

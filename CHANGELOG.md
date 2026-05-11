@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.12] - 2026-05-11 — Adobe ExtendScript docs unlock #61, #65, #66
+
+User pointed to `https://ppro-scripting.docsforadobe.dev/` — the canonical (community-maintained) Premiere Pro ExtendScript reference. Three bugs previously marked "blocked on Adobe docs" or graceful-disabled now have correct signatures.
+
+### Fixed — correct signatures from docs
+
+- **#61 `scene_edit_detection`** — `performSceneEditDetectionOnSelection(actionDesired, applyCutsToLinkedAudio, sensitivity)` where:
+  - `actionDesired` is a String enum: `"CreateMarkers"` or `"ApplyCuts"` (NOT a bool flag pair)
+  - `applyCutsToLinkedAudio` is a Boolean
+  - `sensitivity` is a String enum: `"LowSensitivity"` | `"MediumSensitivity"` | `"HighSensitivity"` (NOT a number 0-100)
+
+  All previous probes (v1.2.6 onward) failed because they passed bool flags + numeric sensitivity. Tool now uses the documented form directly. New params: `action`, `apply_to_linked_audio`, `sensitivity` (with enum strings).
+
+- **#65 `auto_reframe_sequence`** — `autoReframeSequence(numerator, denominator, motionPreset, newName, useNestedSequences)` where:
+  - `motionPreset` is a String: `"slower"` | `"default"` | `"faster"` (NOT int 0/1/2 or `"slowerMotion"`/`"fastMotion"`)
+  - The 4th arg is `newName` (String), **NOT** a nest flag — this is why every prior probe at 4-arg failed with "Illegal Parameter type"
+  - `useNestedSequences` Boolean comes as the 5th arg
+
+  Tool now calls the documented form directly. New params: `motion_preset` (enum updated to slower/default/faster), `new_name`, `use_nested_sequences`. Legacy enum values (`"slowerMotion"`, `"fastMotion"`) auto-mapped to the documented strings for backward compat.
+
+- **#66 `import_mogrt_from_library` (RESTORED)** — sweep #6 graceful-disable was based on a probe of `app.project.importMGTFromLibrary` (undefined), but per docs the method lives on the **Sequence** object: `seq.importMGTFromLibrary(libraryName, mgtName, time, vidTrackOffset, audTrackOffset)`. Tool now calls the correct path; `library_name` is now a required param. Returns the imported TrackItem name.
+
 ## [1.2.11] - 2026-05-11 — Final cleanup: #36 graceful disable + #53 preset_path guard
 
 Two cleanup fixes — both were in the codebase but the wrong shape (success-with-`added:false`, or letting Premiere throw a raw "Not Enough Parameters" instead of pre-validating).

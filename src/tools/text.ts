@@ -170,7 +170,9 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
     import_mogrt_from_library: {
       description:
         "Import a MOGRT from an Adobe Creative Cloud Library by name. " +
-        "Bug #66 v2 (v1.2.8): Adobe removed the CC Library MOGRT import API (importMGTFromLibrary, libraries) from Premiere DOM in 25.4 — confirmed via live probe. Tool now returns a clear error with workarounds.",
+        "Bug #66 v3 (v1.2.12): correct signature confirmed via Adobe ExtendScript docs — " +
+        "`seq.importMGTFromLibrary(libraryName, mgtName, time, vidTrackOffset, audTrackOffset)`. " +
+        "Sweep #6 graceful-disable was based on a probe of `app.project.importMGTFromLibrary` (which is undefined), but the method actually lives on the Sequence object. Tool now calls the correct path.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -180,42 +182,75 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
           },
           library_name: {
             type: "string",
-            description: "Name of the Adobe Creative Cloud library containing the MOGRT.",
+            description: "Name of the Adobe Creative Cloud library containing the MOGRT (required).",
           },
           track_index: {
             type: "number",
             description: "Video track index (default: 0)",
+          },
+          audio_track_index: {
+            type: "number",
+            description: "Audio track index (default: same as track_index)",
           },
           start_seconds: {
             type: "number",
             description: "Start time in seconds (default: 0)",
           },
         },
-        required: ["mogrt_name"],
+        required: ["mogrt_name", "library_name"],
       },
       handler: async (args: {
         mogrt_name: string;
-        library_name?: string;
+        library_name: string;
         track_index?: number;
+        audio_track_index?: number;
         start_seconds?: number;
       }) => {
+        const vTrack = args.track_index ?? 0;
+        const aTrack = args.audio_track_index ?? vTrack;
+        const startSeconds = args.start_seconds ?? 0;
         const script = buildToolScript(`
-          __probeState = {
-            tool: "import_mogrt_from_library",
-            "app.project.importMGTFromLibrary": typeof app.project.importMGTFromLibrary,
-            "app.project.libraries": typeof app.project.libraries,
-            "app.project.importMGT": typeof app.project.importMGT,
-            "app.project.importMOGRT": typeof app.project.importMOGRT
-          };
-          var seq = app.project.activeSequence;
-          if (seq) __probeState["seq.importMGTFromLibrary"] = typeof seq.importMGTFromLibrary;
+          __probeState = { tool: "import_mogrt_from_library" };
 
-          return __error({
-            reason: "import_mogrt_from_library: Adobe removed CC Library MOGRT import API from Premiere DOM in 25.4. " +
-                    "Workarounds: (1) Download the MOGRT from CC Libraries panel manually, then use import_mogrt(file_path, ...); " +
-                    "(2) Author the title as a sequence and import as XML; " +
-                    "(3) Use add_caption(...) for simple subtitles.",
-            _probe: __probeState
+          var seq = app.project.activeSequence;
+          if (!seq) return __error({ reason: "No active sequence", _probe: __probeState });
+
+          __probeState["seq.importMGTFromLibrary"] = typeof seq.importMGTFromLibrary;
+          if (typeof seq.importMGTFromLibrary !== "function") {
+            return __error({
+              reason: "import_mogrt_from_library: API not exposed in this Premiere build. " +
+                      "Workarounds: (1) Download the MOGRT from CC Libraries panel, then use import_mogrt(file_path, ...); " +
+                      "(2) Use add_caption(...) for simple subtitles.",
+              _probe: __probeState
+            });
+          }
+
+          var libraryName = "${escapeForExtendScript(args.library_name)}";
+          var mogrtName = "${escapeForExtendScript(args.mogrt_name)}";
+          var startTicks = __secondsToTicks(${startSeconds}).toString();
+          var vIdx = ${vTrack};
+          var aIdx = ${aTrack};
+          __probeState.params = { libraryName: libraryName, mogrtName: mogrtName, startTicks: startTicks, vIdx: vIdx, aIdx: aIdx };
+
+          var trackItem = null;
+          try {
+            trackItem = seq.importMGTFromLibrary(libraryName, mogrtName, startTicks, vIdx, aIdx);
+          } catch(eIM) {
+            __probeState.error = eIM.toString();
+            return __error({
+              reason: "import_mogrt_from_library: " + eIM.toString(),
+              _probe: __probeState
+            });
+          }
+
+          __probeState = null;
+          return __result({
+            imported: true,
+            libraryName: libraryName,
+            mogrtName: mogrtName,
+            videoTrackIndex: vIdx,
+            audioTrackIndex: aIdx,
+            trackItemName: trackItem ? trackItem.name : null
           });
         `);
         return sendCommand(script, bridgeOptions);
