@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.8] - 2026-05-11 — Sweep #6 dev-report fixes: dbToLinear, Channel Volume, graceful disables
+
+Sweep #6 tester ran live ExtendScript probes in Premiere 25.4.1 to gather concrete fix data (rather than guesses). Each finding shipped with a proven test sequence; this release applies those patches.
+
+### Fixed — Critical write paths
+
+- **#72 `set_clip_volume`** v3 — `Volume.Level` expects **linear amplitude** (10^(db/20)), not dB. Tester live-probe confirmed `setValue(-6)` clamps to 0 while `setValue(dbToLinear(-6)) = 0.5012` persists correctly. Tool now converts dB → linear before writing and dB → linear → dB round-trip on readback. Surfaces both `verifiedLinear` and `verifiedDb`.
+- **#28 `set_clip_pan`** v3 — Premiere 25.4 removed the `Panner`/`Balance` component; pan now routes through `Channel Volume` (matchName "Internal Channel Volume Stereo") Left/Right linear gains. Tool finds `Channel Volume` by matchName, computes L/R gains from pan (-100..100), writes both, verifies by readback.
+- **#19 `inspect_dom_object`** v4 — host properties like `getOverrideColorSpaceList` are actually **arrays**, not methods, despite the `get`-prefix name. Tool now checks `Object.prototype.toString.call(val) === "[object Array]"` BEFORE generic object handling and renders `[array: N items]`. Removed the (incorrect) 3rd/4th-stage function-detection probes.
+
+### Fixed — Honest disables (with workarounds in error)
+
+- **#66 `import_mogrt_from_library`** v2 — `app.project.importMGTFromLibrary`, `app.project.libraries`, `app.project.importMGT`, `app.project.importMOGRT` are all `undefined` in Premiere 25.4 (live probe). Adobe removed the CC Library MOGRT import API. Tool returns a clear error with three workarounds: (1) manual download + `import_mogrt`, (2) sequence + XML, (3) `add_caption`.
+- **#52 `set_sequence_pixel_aspect_ratio`** v2 — `seq.videoPixelAspectRatio` is `undefined` in Premiere 25.4 (property removed; all writes silently no-op). Tool returns a clear error with three workarounds: (1) Sequence Settings dialog, (2) `set_sequence_settings`, (3) `create_sequence` with preset.
+
+### Fixed — Polish
+
+- **#83 `get_clip_volume._probe[].name`** — strengthened with `String().trim()` + fallback to `p.name` so whitespace-only `displayName` no longer reads as empty.
+- **#85 `get_clip_speed._probe`** — renamed `computedRatio_sourceDurOverTimelineDur` → `qeTickInverse` with `_note` explaining it's QE-DOM-internal and to rely on `speedPercent` for user-facing values.
+- **#65 `auto_reframe_sequence`** — confirmed `autoReframeSequence` (camelCase) is the right method name; signature still undocumented in Adobe ExtendScript reference. Updated description to flag this clearly.
+- **#72 `get_clip_volume`** — companion read-side fix: now applies `linearToDb` to the stored linear value and surfaces both `volumeDb` and `volumeLinear`.
+
 ## [1.2.7] - 2026-05-11 — Sweep #4 retest fixes: foundation + #72 inversion + v1.2.6 rewrap
 
 Addresses sweep #4 retest (`notebug.md`) which showed 12/24 PASS overall but exposed two systemic issues:

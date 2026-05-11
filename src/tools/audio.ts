@@ -166,8 +166,8 @@ export function getAudioTools(bridgeOptions: BridgeOptions) {
     get_clip_volume: {
       description:
         "Get the audio volume (in dB) of an audio clip on the active sequence. " +
-        "Bug #72 fix: previously always returned 0 because it called getValue() on a time-varying property without specifying a time. " +
-        "Now reads the value at the playhead (or t=0) using getValueAtTime when time-varying, falls back to getValue otherwise, and probes all Volume sub-properties when neither works so callers can debug.",
+        "Bug #72 v3 (v1.2.8): Volume.Level stores LINEAR AMPLITUDE — tool reads linear then converts to dB via 20·log10(lin). " +
+        "Samples at the playhead-equivalent point using getValueAtTime when time-varying, falls back to getValue otherwise.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -184,6 +184,12 @@ export function getAudioTools(bridgeOptions: BridgeOptions) {
           var track = seq.audioTracks[${args.track_index}];
           if (${args.clip_index} >= track.clips.numItems) return __error("Clip index out of range");
           var clip = track.clips[${args.clip_index}];
+
+          function linearToDb(lin) {
+            if (lin === null || lin === undefined) return null;
+            if (lin <= 0) return -96;
+            return 20 * (Math.log(lin) / Math.LN10);
+          }
 
           // Sample at the clip's start time to avoid the "always 0 at t=0" issue when
           // there's a single keyframe past start.
@@ -208,12 +214,18 @@ export function getAudioTools(bridgeOptions: BridgeOptions) {
                     pv = p.getValue();
                   }
                 } catch(eGet) {}
-                allProps.push({ index: j, name: p.displayName || "(unnamed)", value: pv, isTimeVarying: isTV });
+                var pName = "";
+                try { pName = String(p.displayName || "").replace(/^\s+|\s+$/g, ""); } catch(eNm) {}
+                if (!pName) {
+                  try { pName = String(p.name || "").replace(/^\s+|\s+$/g, ""); } catch(eN2) {}
+                }
+                allProps.push({ index: j, name: pName || "(unnamed)", value: pv, isTimeVarying: isTV });
                 if (p.displayName.toLowerCase() === "level") { levelVal = pv; levelProp = p; }
               }
               if (levelProp) {
                 return __result({
-                  volumeDb: levelVal,
+                  volumeDb: linearToDb(levelVal),
+                  volumeLinear: levelVal,
                   isTimeVarying: !!(levelProp.isTimeVarying && levelProp.isTimeVarying()),
                   sampledAtSeconds: sampleSec,
                   _probe: allProps

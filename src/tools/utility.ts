@@ -426,8 +426,7 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
     set_sequence_pixel_aspect_ratio: {
       description:
         "Change the pixel aspect ratio of the active sequence. " +
-        "Bug #52 fix: previously threw 'Illegal Parameter type' because `videoPixelAspectRatio` may require a string/enum in Premiere 25.4 rather than a raw float. " +
-        "Tool now probes value formats (number → string → fraction) and surfaces the original type if all fail.",
+        "Bug #52 v2 (v1.2.8): videoPixelAspectRatio property removed from Sequence DOM in Premiere 25.4 — confirmed via live probe (typeof = undefined; all writes silently no-op). Tool now returns a clear error with workarounds.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -440,62 +439,23 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
       },
       handler: async (args: { ratio: number }) => {
         const script = buildToolScript(`
-          __probeState = { tool: "set_sequence_pixel_aspect_ratio", attempts: [], ratio: ${args.ratio} };
+          __probeState = { tool: "set_sequence_pixel_aspect_ratio", ratio: ${args.ratio} };
 
           var seq = app.project.activeSequence;
           if (!seq) return __error({ reason: "No active sequence", _probe: __probeState });
 
-          var settings = seq.getSettings();
-          if (!settings) return __error({ reason: "Could not get sequence settings", _probe: __probeState });
+          var settings = null;
+          try { settings = seq.getSettings(); } catch(eGS) {}
+          __probeState["seq.videoPixelAspectRatio"] = typeof seq.videoPixelAspectRatio;
+          __probeState["settings.videoPixelAspectRatio"] = settings ? typeof settings.videoPixelAspectRatio : "(no settings)";
+          __probeState["seq.setPixelAspectRatio"] = typeof seq.setPixelAspectRatio;
 
-          var origVal = null;
-          var origType = null;
-          try { origVal = settings.videoPixelAspectRatio; origType = typeof origVal; } catch(eO) {}
-          __probeState.originalValue = origVal;
-          __probeState.originalType = origType;
-
-          // Bug #52 v2: also probe struct form {num, den} per tester suggestion + setPixelAspectRatio method
-          var ratio = ${args.ratio};
-          var candidates = [
-            { v: ratio, label: "number" },
-            { v: String(ratio), label: "string" },
-            { v: parseFloat(ratio), label: "float" },
-            { v: { num: Math.round(ratio * 10000), den: 10000 }, label: "struct {num,den}" }
-          ];
-
-          var ok = false;
-          var via = null;
-          for (var i = 0; i < candidates.length && !ok; i++) {
-            var a = { signature: "settings.videoPixelAspectRatio = " + candidates[i].label, thrown: false };
-            try {
-              settings.videoPixelAspectRatio = candidates[i].v;
-              seq.setSettings(settings);
-              ok = true; via = candidates[i].label;
-            } catch(eC) { a.thrown = true; a.error = eC.toString(); }
-            __probeState.attempts.push(a);
-          }
-
-          // Path 5: seq.setPixelAspectRatio direct method
-          if (!ok && typeof seq.setPixelAspectRatio === "function") {
-            var aM = { signature: "seq.setPixelAspectRatio(ratio)", thrown: false };
-            try { seq.setPixelAspectRatio(ratio); ok = true; via = "setPixelAspectRatio direct"; }
-            catch(eM) { aM.thrown = true; aM.error = eM.toString(); }
-            __probeState.attempts.push(aM);
-          }
-
-          if (!ok) {
-            return __error({
-              reason: "set_sequence_pixel_aspect_ratio: no value format accepted",
-              _probe: __probeState
-            });
-          }
-          __probeState = null;
-          return __result({
-            ratio: ratio,
-            sequence: seq.name,
-            via: via,
-            originalType: origType,
-            originalValue: origVal
+          return __error({
+            reason: "set_sequence_pixel_aspect_ratio: videoPixelAspectRatio property removed from Sequence DOM in Premiere 25.4. " +
+                    "Workarounds: (1) Set PAR via Sequence Settings dialog in Premiere UI; " +
+                    "(2) Use set_sequence_settings(...) which may expose PAR via a struct param; " +
+                    "(3) Create a new sequence with proper PAR via create_sequence(preset_path).",
+            _probe: __probeState
           });
         `);
         return sendCommand(script, bridgeOptions);

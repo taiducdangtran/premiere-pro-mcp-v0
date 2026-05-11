@@ -700,9 +700,8 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
     set_clip_volume: {
       description:
         "Set the volume level on an audio clip (in dB). " +
-        "Bug #72 v2 fix: previously `setValue(db, true)` returned success but didn't persist — tester _probe revealed Volume.Level stayed at 0 after the call. " +
-        "The 2nd arg `true` on a time-varying Level prop creates a keyframe at time 0 (out-of-clip), not a constant. " +
-        "Tool now: (1) detects isTimeVarying state; (2) for constant: uses setValue(db) with explicit false-or-omit updateUI; (3) for time-varying: uses setValueAtTime/addKey at clip start; (4) verifies the write by reading back; (5) surfaces _probe with before/after values.",
+        "Bug #72 v3 fix (v1.2.8): Volume.Level expects LINEAR AMPLITUDE (0..1+), not dB — tester live probe confirmed setValue(-6) clamps to 0 while setValue(10^(-6/20)) writes 0.5012 correctly. " +
+        "Tool now converts dB → linear via 10^(db/20) before writing, then verifies by reading back and converting back to dB.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -751,83 +750,46 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
             return __error({ reason: "Volume.Level property not found", _probe: __probeState });
           }
 
-          var target = ${args.volume_db};
-          var clipStartSec = __ticksToSeconds(clip.start.ticks);
-
-          var beforeVal = null;
-          try { beforeVal = levelProp.getValue(); } catch(eGB) {}
-          var isTV = false;
-          try { isTV = !!(levelProp.isTimeVarying && levelProp.isTimeVarying()); } catch(eTV) {}
-          __probeState.beforeValue = beforeVal;
-          __probeState.isTimeVarying = isTV;
-          __probeState.clipStartSec = clipStartSec;
-          __probeState.targetDb = target;
-
-          // Strategy: try a sequence of write paths and verify each by reading back.
-          // The original bug: setValue(target, true) silent no-op when Level is time-varying.
-          var writes = [];
-
-          // Path 1: if time-varying, set keyframe at the clip's IN time (where audio
-          // playback starts), not at t=0 (which may be outside the clip).
-          if (isTV) {
-            try {
-              if (typeof levelProp.setValueAtKey === "function" && typeof levelProp.addKey === "function") {
-                // ensure a key exists at clipStartSec then write value
-                try { levelProp.addKey(clipStartSec); } catch(eAK) {}
-                levelProp.setValueAtKey(clipStartSec, target, true);
-                writes.push({ path: "setValueAtKey(clipStart, target, true)", thrown: false });
-              } else if (typeof levelProp.setValueAtTime === "function") {
-                levelProp.setValueAtTime(clipStartSec, target);
-                writes.push({ path: "setValueAtTime(clipStart, target)", thrown: false });
-              }
-            } catch(eW1) { writes.push({ path: "time-varying setKey", thrown: true, error: eW1.toString() }); }
+          function dbToLinear(db) { return Math.pow(10, db / 20); }
+          function linearToDb(lin) {
+            if (lin <= 0) return -96;
+            return 20 * (Math.log(lin) / Math.LN10);
           }
 
-          // Path 2: setValue(target) — try WITHOUT the updateUI=true that causes keyframe creation.
-          try { levelProp.setValue(target); writes.push({ path: "setValue(target)", thrown: false }); }
-          catch(eW2) { writes.push({ path: "setValue(target)", thrown: true, error: eW2.toString() }); }
+          var targetDb = ${args.volume_db};
+          var targetLinear = dbToLinear(targetDb);
+          __probeState.targetDb = targetDb;
+          __probeState.targetLinear = targetLinear;
 
-          // Path 3: setValue(target, false) — explicit no-UI-update form.
-          try { levelProp.setValue(target, false); writes.push({ path: "setValue(target, false)", thrown: false }); }
-          catch(eW3) { writes.push({ path: "setValue(target, false)", thrown: true, error: eW3.toString() }); }
+          var beforeLinear = null;
+          try { beforeLinear = levelProp.getValue(); } catch(eGB) {}
+          __probeState.beforeLinear = beforeLinear;
 
-          // Path 4: legacy setValue(target, true) — same as before fix; may keyframe.
-          try { levelProp.setValue(target, true); writes.push({ path: "setValue(target, true) [legacy]", thrown: false }); }
-          catch(eW4) { writes.push({ path: "setValue(target, true)", thrown: true, error: eW4.toString() }); }
+          var thrown = null;
+          try { levelProp.setValue(targetLinear, true); }
+          catch(eSV) { thrown = eSV.toString(); }
+          __probeState.writeThrown = thrown;
 
-          __probeState.writes = writes;
+          var afterLinear = null;
+          try { afterLinear = levelProp.getValue(); } catch(eVA) {}
+          __probeState.afterLinear = afterLinear;
 
-          // Verify by re-reading.
-          var afterConst = null;
-          var afterAtClipStart = null;
-          try { afterConst = levelProp.getValue(); } catch(eVA) {}
-          try {
-            if (typeof levelProp.getValueAtTime === "function") {
-              afterAtClipStart = levelProp.getValueAtTime(clipStartSec + 0.001);
-            }
-          } catch(eVT) {}
-          __probeState.afterConst = afterConst;
-          __probeState.afterAtClipStart = afterAtClipStart;
-
-          // Pick the best-evidence success indicator.
-          var persisted = false;
-          if (afterConst !== null && Math.abs(afterConst - target) < 0.01) persisted = true;
-          else if (afterAtClipStart !== null && Math.abs(afterAtClipStart - target) < 0.01) persisted = true;
+          var persisted = (afterLinear !== null && Math.abs(afterLinear - targetLinear) < 0.001);
 
           if (!persisted) {
             return __error({
-              reason: "set_clip_volume: tried " + writes.length + " write paths but readback shows value did not persist (target=" + target + ", afterConst=" + afterConst + ", afterAtClipStart=" + afterAtClipStart + ")",
+              reason: "set_clip_volume: write did not persist (targetDb=" + targetDb + " targetLinear=" + targetLinear + " afterLinear=" + afterLinear + ")",
               _probe: __probeState
             });
           }
 
-          __probeState = null; // clear on success so result doesn't carry probe noise
+          __probeState = null;
           return __result({
-            volumeDb: target,
-            clip: clip.name,
-            isTimeVarying: isTV,
-            verifiedValue: (afterConst !== null && Math.abs(afterConst - target) < 0.01) ? afterConst : afterAtClipStart,
-            writeAttempts: writes.length
+            volumeDb: targetDb,
+            volumeLinear: targetLinear,
+            verifiedLinear: afterLinear,
+            verifiedDb: linearToDb(afterLinear),
+            clip: clip.name
           });
         `);
         return sendCommand(script, bridgeOptions);
@@ -860,64 +822,86 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
           var clip = result.clip;
           __probeState.trackType = result.trackType;
           __probeState.mediaType = clip.mediaType;
-          __probeState.mediaTypeIs = (typeof clip.mediaType);
 
-          // Bug #28 v2: handle both string "Audio" and integer enum mediaType
           var isAudio = (result.trackType === "audio") ||
                         (clip.mediaType === "Audio") ||
                         (clip.mediaType === 2);
-          __probeState.isAudio = isAudio;
           if (!isAudio) {
             return __error({ reason: "set_clip_pan: not an audio clip (trackType=" + result.trackType + ", mediaType=" + clip.mediaType + ")", _probe: __probeState });
           }
 
-          function lower(s) { return String(s || "").toLowerCase(); }
-          var panNameHints = ["panner", "balance", "pan/balance", "channel volume"];
-          var propNameHints = ["balance", "pan", "pan/balance"];
-
-          var set = false;
+          // Bug #28 v3 (v1.2.8): Premiere 25.4 dropped Panner/Balance component.
+          // Pan now applied via Channel Volume → Left/Right linear gains.
+          var chVol = null;
           var compNamesProbe = [];
-          var matchedComp = null;
-          var matchedPropName = null;
-
           for (var i = 0; i < clip.components.numItems; i++) {
             var comp = clip.components[i];
-            var cn = lower(comp.displayName);
             compNamesProbe.push(comp.displayName);
-            var compIsPanner = false;
-            for (var h = 0; h < panNameHints.length; h++) {
-              if (cn.indexOf(panNameHints[h]) !== -1) { compIsPanner = true; break; }
+            var mn = String(comp.matchName || "");
+            var dn = String(comp.displayName || "");
+            if (mn.indexOf("Channel Volume") >= 0 || dn.indexOf("Channel Volume") >= 0) {
+              chVol = comp;
+              break;
             }
-            if (!compIsPanner) continue;
-
-            var compProps = [];
-            for (var p = 0; p < comp.properties.numItems; p++) {
-              var prop = comp.properties[p];
-              compProps.push({ index: p, name: prop.displayName });
-              var pn = lower(prop.displayName);
-              var match = false;
-              for (var hh = 0; hh < propNameHints.length; hh++) {
-                if (pn === propNameHints[hh]) { match = true; break; }
-              }
-              if (match && !set) {
-                var atp = { component: comp.displayName, property: prop.displayName, thrown: false };
-                try { prop.setValue(${args.pan}, true); set = true; matchedComp = comp.displayName; matchedPropName = prop.displayName; }
-                catch(eSV) { atp.thrown = true; atp.error = eSV.toString(); }
-                __probeState.attempts.push(atp);
-              }
-            }
-            __probeState["compProps_" + comp.displayName] = compProps;
           }
           __probeState.componentNames = compNamesProbe;
 
-          if (!set) {
+          if (!chVol) {
             return __error({
-              reason: "set_clip_pan: no Panner/Balance component or matching property found",
+              reason: "set_clip_pan: Channel Volume component not found. Premiere 25.4 routes pan through Channel Volume's Left/Right gains; this clip lacks that component.",
               _probe: __probeState
             });
           }
+
+          var leftProp = null;
+          var rightProp = null;
+          var chProps = [];
+          for (var p = 0; p < chVol.properties.numItems; p++) {
+            var prop = chVol.properties[p];
+            var pn = String(prop.displayName || "");
+            chProps.push({ index: p, name: pn });
+            if (pn === "Left" && !leftProp) leftProp = prop;
+            else if (pn === "Right" && !rightProp) rightProp = prop;
+          }
+          __probeState.channelVolumeProps = chProps;
+
+          if (!leftProp || !rightProp) {
+            return __error({
+              reason: "set_clip_pan: Channel Volume found but Left/Right properties missing",
+              _probe: __probeState
+            });
+          }
+
+          // pan: -100..0..100  →  linear gains (1.0 = unity)
+          var panVal = ${args.pan};
+          var p = panVal / 100;
+          var gainL, gainR;
+          if (p <= 0) { gainL = 1.0; gainR = 1.0 + p; }
+          else { gainL = 1.0 - p; gainR = 1.0; }
+          __probeState.gainL = gainL;
+          __probeState.gainR = gainR;
+
+          try { leftProp.setValue(gainL, true); }
+          catch(eL) { return __error({ reason: "Failed to write Left gain: " + eL.toString(), _probe: __probeState }); }
+          try { rightProp.setValue(gainR, true); }
+          catch(eR) { return __error({ reason: "Failed to write Right gain: " + eR.toString(), _probe: __probeState }); }
+
+          var verifyL = null, verifyR = null;
+          try { verifyL = leftProp.getValue(); } catch(eVL) {}
+          try { verifyR = rightProp.getValue(); } catch(eVR) {}
+          __probeState.verifyL = verifyL;
+          __probeState.verifyR = verifyR;
+
           __probeState = null;
-          return __result({ pan: ${args.pan}, clip: clip.name, component: matchedComp, property: matchedPropName });
+          return __result({
+            pan: panVal,
+            clip: clip.name,
+            component: chVol.displayName,
+            leftGain: gainL,
+            rightGain: gainR,
+            verifiedLeft: verifyL,
+            verifiedRight: verifyR
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

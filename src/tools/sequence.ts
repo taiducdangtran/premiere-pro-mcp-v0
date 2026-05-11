@@ -396,7 +396,7 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
     auto_reframe_sequence: {
       description:
         "Auto-reframe a sequence for a different aspect ratio. " +
-        "Bug #65 fix: `autoReframeSequence(w, h, false)` threw 'Illegal Parameter type' in Premiere 25.4 — the signature changed to expect numerator/denominator integers for the aspect ratio plus motion preset string. Tool now probes documented signature shapes.",
+        "Bug #65 v2 (v1.2.8): camelCase method `autoReframeSequence` confirmed present in Premiere 25.4, but signature is undocumented — all probed shapes (num/den, w/h, with/without motion string, with/without nest bool) throw 'Illegal Parameter type'. Tool probes documented shapes and surfaces full _probe data. Currently requires Adobe ExtendScript docs to resolve.",
       parameters: {
         type: "object" as const,
         properties: {

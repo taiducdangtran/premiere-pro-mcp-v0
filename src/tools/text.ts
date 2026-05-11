@@ -170,7 +170,7 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
     import_mogrt_from_library: {
       description:
         "Import a MOGRT from an Adobe Creative Cloud Library by name. " +
-        "Bug #66 fix: previously called `importMGTFromLibrary(name, ticks, v, a)` which threw 'Not Enough Parameters' in 25.4 — Adobe added a required `libraryName` first argument. Tool now accepts `library_name` and probes documented signature shapes.",
+        "Bug #66 v2 (v1.2.8): Adobe removed the CC Library MOGRT import API (importMGTFromLibrary, libraries) from Premiere DOM in 25.4 — confirmed via live probe. Tool now returns a clear error with workarounds.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -180,7 +180,7 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
           },
           library_name: {
             type: "string",
-            description: "Name of the Adobe Creative Cloud library containing the MOGRT. Required in Premiere 25.4+ — pass the library's display name as shown in the CC Libraries panel.",
+            description: "Name of the Adobe Creative Cloud library containing the MOGRT.",
           },
           track_index: {
             type: "number",
@@ -199,63 +199,23 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
         track_index?: number;
         start_seconds?: number;
       }) => {
-        const trackIndex = args.track_index ?? 0;
-        const startSeconds = args.start_seconds ?? 0;
-        const libraryName = args.library_name ?? "";
-
         const script = buildToolScript(`
-          __probeState = { tool: "import_mogrt_from_library", attempts: [] };
-
+          __probeState = {
+            tool: "import_mogrt_from_library",
+            "app.project.importMGTFromLibrary": typeof app.project.importMGTFromLibrary,
+            "app.project.libraries": typeof app.project.libraries,
+            "app.project.importMGT": typeof app.project.importMGT,
+            "app.project.importMOGRT": typeof app.project.importMOGRT
+          };
           var seq = app.project.activeSequence;
-          if (!seq) return __error({ reason: "No active sequence", _probe: __probeState });
+          if (seq) __probeState["seq.importMGTFromLibrary"] = typeof seq.importMGTFromLibrary;
 
-          __probeState.apiType = (typeof seq.importMGTFromLibrary);
-          if (typeof seq.importMGTFromLibrary !== "function") {
-            return __error({ reason: "import_mogrt_from_library: API not exposed in this Premiere build", _probe: __probeState });
-          }
-
-          var mogrtName = "${escapeForExtendScript(args.mogrt_name)}";
-          var libraryName = "${escapeForExtendScript(libraryName)}";
-          var startTicks = __secondsToTicks(${startSeconds}).toString();
-          var tIdx = ${trackIndex};
-          __probeState.input = { mogrtName: mogrtName, libraryName: libraryName, startTicks: startTicks, trackIndex: tIdx };
-
-          var sigs = [];
-          if (libraryName) {
-            sigs.push({ args: [libraryName, mogrtName, startTicks, tIdx, tIdx], label: "(library, name, ticks, v, a)" });
-            sigs.push({ args: [libraryName, mogrtName, startTicks, tIdx], label: "(library, name, ticks, vTrack)" });
-          }
-          sigs.push({ args: [mogrtName, startTicks, tIdx, tIdx], label: "legacy: (name, ticks, v, a)" });
-          sigs.push({ args: [mogrtName, startTicks, tIdx], label: "legacy: (name, ticks, vTrack)" });
-
-          var ok = false;
-          var via = null;
-          for (var s = 0; s < sigs.length && !ok; s++) {
-            var att = { signature: sigs[s].label, thrown: false };
-            try {
-              var a = sigs[s].args;
-              var ret = null;
-              if (a.length === 5) ret = seq.importMGTFromLibrary(a[0], a[1], a[2], a[3], a[4]);
-              else if (a.length === 4) ret = seq.importMGTFromLibrary(a[0], a[1], a[2], a[3]);
-              else if (a.length === 3) ret = seq.importMGTFromLibrary(a[0], a[1], a[2]);
-              if (ret !== false) { ok = true; via = sigs[s].label; }
-              else { att.returnedFalse = true; }
-            } catch(eS) { att.thrown = true; att.error = eS.toString(); }
-            __probeState.attempts.push(att);
-          }
-          if (!ok) {
-            return __error({
-              reason: "import_mogrt_from_library: no signature worked" + (libraryName ? "" : " (hint: library_name may be required in 25.4)"),
-              _probe: __probeState
-            });
-          }
-          __probeState = null;
-          return __result({
-            imported: true,
-            mogrtName: mogrtName,
-            libraryName: libraryName || null,
-            trackIndex: tIdx,
-            signatureUsed: via
+          return __error({
+            reason: "import_mogrt_from_library: Adobe removed CC Library MOGRT import API from Premiere DOM in 25.4. " +
+                    "Workarounds: (1) Download the MOGRT from CC Libraries panel manually, then use import_mogrt(file_path, ...); " +
+                    "(2) Author the title as a sequence and import as XML; " +
+                    "(3) Use add_caption(...) for simple subtitles.",
+            _probe: __probeState
           });
         `);
         return sendCommand(script, bridgeOptions);

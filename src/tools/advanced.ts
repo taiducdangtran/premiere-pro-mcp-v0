@@ -530,8 +530,8 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
             _probe: {
               domSpeed: domSpeed,
               qeSpeed: qeSpeed,
-              computedRatio_sourceDurOverTimelineDur: computed,
-              note: "computedRatio is source_dur / timeline_dur and does NOT directly equal speed multiplier — it ignores trim points; informational only"
+              qeTickInverse: computed,
+              _note: "qeTickInverse is QE-DOM internal (ticks-per-frame inverse, source_dur/timeline_dur); rely on speedPercent for user-facing values"
             }
           });
         `);

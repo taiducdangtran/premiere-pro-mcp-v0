@@ -143,30 +143,24 @@ Examples:
                 try {
                   var val = obj[key];
                   var vt = typeof val;
-                  // Bug #19 v3: ExtendScript host methods report typeof === "object"
-                  // AND fail instanceof Function check. Add 3rd-stage probe via
-                  // String conversion - host methods stringify to function-like strings.
                   var isFn = (vt === "function");
                   if (!isFn && val !== null && vt === "object") {
                     try { isFn = (val instanceof Function); } catch(eIF) {}
-                    if (!isFn) {
-                      // String conversion probe — last resort detection.
-                      try {
-                        var s = String(val);
-                        if (s && s.indexOf("function") === 0) isFn = true;
-                      } catch(eStr) {}
-                    }
-                    // 4th probe: check if it has .call/.apply (function-like)
-                    if (!isFn) {
-                      try {
-                        if (typeof val.call === "function" || typeof val.apply === "function") isFn = true;
-                      } catch(eC) {}
-                    }
                   }
                   if (isFn) {
                     result[key] = "[function]";
                   } else if (vt === "object" && val !== null) {
-                    if (depth < maxD) {
+                    // Bug #19 v4 (v1.2.8): detect Array via Object.prototype.toString
+                    // before generic object handling. ExtendScript host can return
+                    // Array-typed properties even from methods named like "getX()"
+                    // (e.g., getOverrideColorSpaceList → array of 32 ColorSpace objs).
+                    var tag = "";
+                    try { tag = Object.prototype.toString.call(val); } catch(eTag) {}
+                    if (tag === "[object Array]") {
+                      var arrLen = 0;
+                      try { arrLen = val.length; } catch(eLen) {}
+                      result[key] = "[array: " + arrLen + " items]";
+                    } else if (depth < maxD) {
                       result[key] = inspectObj(val, depth + 1, maxD);
                     } else {
                       result[key] = "[object]";
