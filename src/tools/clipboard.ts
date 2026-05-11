@@ -480,27 +480,57 @@ export function getClipboardTools(bridgeOptions: BridgeOptions) {
             }
             var clip = track.clips[clipIndex];
 
+            // Bug #86 fix (v1.2.13): previously we'd push a "setValue threw" entry
+            // AND a "not found" entry for the same target when the first match
+            // rejected the value. Track match-found state separately and stop on
+            // first match (don't fall through to next component).
             var didSet = false;
+            var matchFound = false;
+            var setValueError = null;
+            var matchedPath = null;
             var propsSeen = [];
-            for (var i = 0; i < clip.components.numItems; i++) {
-              for (var j = 0; j < clip.components[i].properties.numItems; j++) {
-                var pn = clip.components[i].properties[j].displayName;
-                if (pn) propsSeen.push(pn);
+            for (var i = 0; i < clip.components.numItems && !matchFound; i++) {
+              var comp = clip.components[i];
+              for (var j = 0; j < comp.properties.numItems; j++) {
+                var pn = comp.properties[j].displayName;
+                if (pn && propsSeen.length < 50) propsSeen.push(pn);
                 if (pn && pn.toLowerCase() === prop) {
+                  matchFound = true;
+                  matchedPath = comp.displayName + "." + pn;
+                  // Try setValue with the standard 2-arg form, then 1-arg fallback
                   try {
-                    clip.components[i].properties[j].setValue(val, true);
+                    comp.properties[j].setValue(val, true);
                     updated++;
                     didSet = true;
-                  } catch (ex) {
-                    notFound.push({ target: tgt, clip: clip.name, reason: "setValue threw: " + ex.toString() });
+                  } catch (ex1) {
+                    try {
+                      comp.properties[j].setValue(val);
+                      updated++;
+                      didSet = true;
+                    } catch (ex2) {
+                      setValueError = ex1.toString() + " / 1-arg: " + ex2.toString();
+                    }
                   }
                   break;
                 }
               }
-              if (didSet) break;
             }
-            if (!didSet && propsSeen.length > 0) {
-              notFound.push({ target: tgt, clip: clip.name, reason: "property '${escapeForExtendScript(args.property_name)}' not found on this clip", availableProps: propsSeen.slice(0, 20) });
+            if (!didSet) {
+              if (matchFound) {
+                notFound.push({
+                  target: tgt,
+                  clip: clip.name,
+                  reason: "matched '" + matchedPath + "' but setValue rejected the value: " + setValueError,
+                  matchedPath: matchedPath
+                });
+              } else {
+                notFound.push({
+                  target: tgt,
+                  clip: clip.name,
+                  reason: "property '${escapeForExtendScript(args.property_name)}' not found on this clip",
+                  availableProps: propsSeen.slice(0, 20)
+                });
+              }
             }
           }
           return __result({ property: "${escapeForExtendScript(args.property_name)}", updated: updated, notFound: notFound });

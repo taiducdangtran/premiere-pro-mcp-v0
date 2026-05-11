@@ -232,6 +232,13 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
           var aIdx = ${aTrack};
           __probeState.params = { libraryName: libraryName, mogrtName: mogrtName, startTicks: startTicks, vIdx: vIdx, aIdx: aIdx };
 
+          // Bug #88 fix (v1.2.13): API silently succeeds even when library/mogrt
+          // doesn't exist — verify by counting clips and project items before/after.
+          var vClipsBefore = (vIdx < seq.videoTracks.numTracks) ? seq.videoTracks[vIdx].clips.numItems : 0;
+          var rootItemsBefore = app.project.rootItem.children.numItems;
+          __probeState.vClipsBefore = vClipsBefore;
+          __probeState.rootItemsBefore = rootItemsBefore;
+
           var trackItem = null;
           try {
             trackItem = seq.importMGTFromLibrary(libraryName, mogrtName, startTicks, vIdx, aIdx);
@@ -243,6 +250,26 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
             });
           }
 
+          var vClipsAfter = (vIdx < seq.videoTracks.numTracks) ? seq.videoTracks[vIdx].clips.numItems : 0;
+          var rootItemsAfter = app.project.rootItem.children.numItems;
+          __probeState.vClipsAfter = vClipsAfter;
+          __probeState.rootItemsAfter = rootItemsAfter;
+
+          if (vClipsAfter === vClipsBefore && rootItemsAfter === rootItemsBefore) {
+            return __error({
+              reason: "import_mogrt_from_library: API returned without error but no new clip on video track " + vIdx +
+                      " and no new project item. Library '" + libraryName + "' or MOGRT '" + mogrtName + "' likely does not exist in CC Libraries. " +
+                      "Workaround: verify the library and MOGRT names match what's in the CC Libraries panel.",
+              _probe: __probeState
+            });
+          }
+
+          // Find the inserted clip if API didn't return one
+          var insertedClip = trackItem;
+          if (!insertedClip && vClipsAfter > vClipsBefore) {
+            try { insertedClip = seq.videoTracks[vIdx].clips[vClipsAfter - 1]; } catch(eIC) {}
+          }
+
           __probeState = null;
           return __result({
             imported: true,
@@ -250,7 +277,10 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
             mogrtName: mogrtName,
             videoTrackIndex: vIdx,
             audioTrackIndex: aIdx,
-            trackItemName: trackItem ? trackItem.name : null
+            trackItemName: insertedClip ? insertedClip.name : null,
+            trackItemNodeId: (insertedClip && insertedClip.nodeId) ? insertedClip.nodeId : null,
+            vClipsAdded: vClipsAfter - vClipsBefore,
+            rootItemsAdded: rootItemsAfter - rootItemsBefore
           });
         `);
         return sendCommand(script, bridgeOptions);

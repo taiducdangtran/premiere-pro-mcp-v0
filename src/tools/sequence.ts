@@ -405,8 +405,8 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
     auto_reframe_sequence: {
       description:
         "Auto-reframe a sequence for a different aspect ratio. " +
-        "Bug #65 v3 (v1.2.12): correct signature confirmed via Adobe ExtendScript docs — `autoReframeSequence(numerator, denominator, motionPreset, newName, useNestedSequences)`. " +
-        "motionPreset is a String ('slower'|'default'|'faster'), and the 4th arg is `newName` (String, the duplicate sequence name), NOT a nest flag. Previous probes failed because they used a bool/int at position 4.",
+        "Bug #65 v3 (v1.2.12): correct signature `autoReframeSequence(numerator, denominator, motionPreset, newName, useNestedSequences)`. " +
+        "Bug #87 fix (v1.2.13): Premiere natively switches active sequence to the reframed copy. Tool now snapshots active before/after and accepts `make_active: false` (default) to restore the original, mirroring the Bug #76 pattern for `duplicate_sequence`. Returns both `sourceSequenceId` and `newSequenceId`.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -435,6 +435,10 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
             type: "boolean",
             description: "Use nested sequences (default: false). 5th arg per Adobe docs.",
           },
+          make_active: {
+            type: "boolean",
+            description: "Bug #87: Premiere natively switches active sequence to the reframed copy. Set true to keep that behaviour, or false (default) to restore the original sequence as active so subsequent nodeIds keep working.",
+          },
         },
         required: ["target_width", "target_height"],
       },
@@ -445,6 +449,7 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
         motion_preset?: string;
         new_name?: string;
         use_nested_sequences?: boolean;
+        make_active?: boolean;
       }) => {
         const seqLookup = args.sequence_id
           ? `var seq = __findSequence("${escapeForExtendScript(args.sequence_id)}"); if (!seq) return __error("Sequence not found");`
@@ -452,6 +457,7 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
         const motion = args.motion_preset || "default";
         const newName = args.new_name || "";
         const useNested = args.use_nested_sequences === true;
+        const makeActive = args.make_active === true;
 
         const script = buildToolScript(`
           __probeState = { tool: "auto_reframe_sequence" };
@@ -468,16 +474,25 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
           var num = w / g;
           var den = h / g;
           var motion = "${motion}";
-          // Backward-compat: accept old enum values
           if (motion === "slowerMotion") motion = "slower";
           else if (motion === "fastMotion") motion = "faster";
           var newName = "${escapeForExtendScript(newName)}";
           if (!newName) newName = seq.name + " - Auto Reframe";
           var useNested = ${useNested ? "true" : "false"};
-          __probeState.params = { num: num, den: den, motion: motion, newName: newName, useNested: useNested };
+          var makeActive = ${makeActive ? "true" : "false"};
 
-          // Bug #65 v4 (v1.2.12): correct signature per Adobe docs:
-          // autoReframeSequence(numerator, denominator, motionPreset, newName, useNestedSequences)
+          // Bug #87 fix: snapshot active + sequence IDs before reframe
+          var sourceId = seq.sequenceID;
+          var sourceName = seq.name;
+          var idsBefore = {};
+          try {
+            for (var b = 0; b < app.project.sequences.numSequences; b++) {
+              idsBefore[app.project.sequences[b].sequenceID] = true;
+            }
+          } catch(eIB) {}
+
+          __probeState.params = { num: num, den: den, motion: motion, newName: newName, useNested: useNested, makeActive: makeActive };
+
           try {
             seq.autoReframeSequence(num, den, motion, newName, useNested);
           } catch(eARS) {
@@ -488,11 +503,38 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
             });
           }
 
+          // Find the new sequence (the one not in idsBefore)
+          var newSeq = null;
+          try {
+            for (var a = 0; a < app.project.sequences.numSequences; a++) {
+              var sq = app.project.sequences[a];
+              if (!idsBefore[sq.sequenceID]) { newSeq = sq; break; }
+            }
+          } catch(eFN) {}
+
+          // Bug #87: restore original active sequence if make_active=false
+          var activeRestored = false;
+          if (!makeActive) {
+            try {
+              for (var r = 0; r < app.project.sequences.numSequences; r++) {
+                if (app.project.sequences[r].sequenceID === sourceId) {
+                  app.project.openSequence(sourceId);
+                  activeRestored = true;
+                  break;
+                }
+              }
+            } catch(eAR) { __probeState.restoreError = eAR.toString(); }
+          }
+
           __probeState = null;
           return __result({
             reframed: true,
-            sourceName: seq.name,
+            sourceName: sourceName,
+            sourceSequenceId: sourceId,
             newName: newName,
+            newSequenceId: newSeq ? newSeq.sequenceID : null,
+            activeSequenceId: app.project.activeSequence ? app.project.activeSequence.sequenceID : null,
+            activeRestored: activeRestored,
             targetSize: w + "x" + h,
             aspectRatio: num + ":" + den,
             motionPreset: motion,

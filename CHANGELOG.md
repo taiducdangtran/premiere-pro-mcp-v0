@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.13] - 2026-05-11 — Sweep #7 fixes: #86 dedup, #87 silent-switch, #88 false-positive
+
+Sweep #7 (against v1.2.12) confirmed 13/13 PASS for all prior fixes but surfaced 3 new bugs. All shipped with the patches the tester sketched in `bug.md`.
+
+### Fixed
+
+- **#88 `import_mogrt_from_library`** (CRITICAL) — Adobe's `seq.importMGTFromLibrary` silently succeeds even when the library or MOGRT name doesn't exist, returning `null` instead of throwing. Tool was reporting `imported: true` based on no-exception, breaking downstream pipelines. Now counts video-track clips + project root items before/after and returns a clear error when nothing was inserted. Also fixes `trackItemNodeId` discovery by looking up the new clip from the track when the API returns `null`. Response surfaces `vClipsAdded` and `rootItemsAdded`.
+
+- **#87 `auto_reframe_sequence`** (HIGH) — Premiere natively switches active sequence to the reframed copy. Applied the Bug #76 pattern: snapshot `sourceSequenceId` + sequence-IDs-before, perform reframe, find the new sequence by ID delta, accept `make_active: false` (default) to restore the source as active via `app.project.openSequence(sourceId)`. Response now includes `sourceSequenceId`, `newSequenceId`, `activeSequenceId`, `activeRestored`.
+
+- **#86 `batch_set_clip_property`** (MEDIUM) — same target was appearing twice in `notFound` with contradictory reasons because `didSet=false` after a setValue rejection let the outer loop continue and re-trigger the "not found" branch. Track `matchFound` separately; break the outer loop when a property match is found regardless of setValue outcome. Also added a 1-arg setValue fallback for properties that reject the `updateUI=true` flag. Failed-set entries now carry `matchedPath` ("ComponentName.PropertyName") to disambiguate.
+
+- **#25 BOM polish** — internal-prop filter now also drops asset-blob strings that are just a BOM character (length < 4, codepoint 0xFEFF). Applied to both `get_effect_properties` and `list_clip_effects`.
+
 ## [1.2.12] - 2026-05-11 — Adobe ExtendScript docs unlock #61, #65, #66
 
 User pointed to `https://ppro-scripting.docsforadobe.dev/` — the canonical (community-maintained) Premiere Pro ExtendScript reference. Three bugs previously marked "blocked on Adobe docs" or graceful-disabled now have correct signatures.

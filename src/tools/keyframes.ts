@@ -54,6 +54,8 @@ export function getKeyframeTools(bridgeOptions: BridgeOptions) {
             if (!/[A-Za-z0-9]/.test(clean)) return true;
             // pointer-style numbers (18+ digits)
             if (typeof val === "number" && (val > 1e15 || val < -1e15)) return true;
+            // Bug #25 polish (v1.2.13): asset-blob strings that are just a BOM char
+            if (typeof val === "string" && val.length > 0 && val.length < 4 && val.charCodeAt(0) === 0xFEFF) return true;
             return false;
           }
 
