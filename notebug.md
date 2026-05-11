@@ -1153,3 +1153,157 @@ Không cần restart CEP panel, không cần restart Premiere — chỉ cần di
 ### Hành vi mong muốn (chưa fix)
 Tool nên **tự suppress dialog** bằng `app.userInteractionLevel = UserInteractionLevel.NEVER_INTERACT` hoặc fail sớm với error rõ ràng "Tool requires UI interaction — currently unsupported in 25.4 ExtendScript".
 
+
+---
+
+# 🛠️ FIX LOG — v1.2.1 (2026-05-11, commit `f37a0ab`)
+
+Đã fix **~40 bugs** trong sweep #6–#70. Chi tiết bên dưới — tester có thể re-test theo danh sách này.
+
+## ✅ FIXED (40 bugs)
+
+### CRITICAL — data safety
+
+| # | Tool | Status | Fix |
+|---|------|--------|-----|
+| **39** | `slip_edit` / `slide_edit` / `roll_edit` | **DISABLED** | Trả error rõ ràng — QE methods trong 25.4 có unknown unit-conversion regression. Pending controlled sandbox để verify đúng signature. **Workaround:** dùng UI shortcut Y/U/N. |
+
+### Modal dialog suspend (KHÔNG phải crash, đã document trong file)
+
+| # | Tool | Fix |
+|---|------|-----|
+| **37** | `add_color_matte` | Wrap `__withDialogsSuppressed()` — Color Picker dialog không còn block |
+| **37** | `add_text_overlay` | Wrap `__withDialogsSuppressed()` — Title Designer/Save Title không còn block |
+| **40** | `replace_clip_media` | Wrap `__withDialogsSuppressed()` — Replace Media confirmation không còn block |
+| **41** | `four_point_edit` | Wrap `__withDialogsSuppressed()` + try/catch — KHÔNG crash bridge, chỉ suspend (đã verify trong 2026-05-11 hypothesis test) |
+| **56** | `set_workspace` | Wrap `__withDialogsSuppressed()` — Save Changes dialog không còn block |
+| **70** | `close_project` | Wrap `__withDialogsSuppressed()` — Save Before Closing dialog không còn block |
+
+→ Helper mới: `__withDialogsSuppressed(fn)` set `app.userInteractionLevel = NEVER_INTERACT` cho thời gian gọi rồi restore.
+
+### ProjectItemType regression (May 8 → May 10)
+
+| # | Tool | Fix |
+|---|------|-----|
+| **10** | `list_project_items` | Dùng `__projectItemType(item)` helper unified |
+| **15** | `find_items_by_media_path` | Cùng helper |
+| **16** | `find_project_item_by_name` | Cùng helper |
+
+→ Helper mới: `__projectItemType(item)` — `type 1 + isSequence()` → "sequence" / "footage", `2` → "bin", `3` → "root", `4` → "file".
+
+### JSON output sanitization (NaN / undefined / Infinity → null)
+
+| # | Tool | Fix |
+|---|------|-----|
+| **6** | `list_sequences` | NaN không còn xuất hiện; `seq.zeroPoint.ticks` (undefined trong 25.4) replaced với direct ticks-string; thêm field `start/end/inPoint/outPoint` proper null khi unset |
+| **14** | `list_clip_effects` | `undefined` matchName → `null` |
+| **17** | `get_audio_channel_mapping` | `undefined` → `null` |
+| **18** | `get_qe_clip_info` | `undefined` → `null` |
+| **19** | `inspect_dom_object` | `undefined` → `null`, function → `null` (không còn "[object]") |
+
+→ Helper mới: `__sanitizeForJson(obj)` recursive — applies trong `__jsonStringify()` mặc định cho mọi tool.
+
+### Sentinel return value cleanup
+
+| # | Tool | Fix |
+|---|------|-----|
+| **11** | `get_sequence_in_out_points` | Detect `-400000` sentinel → return `{ inSeconds: null, outSeconds: null, isSet: false }` |
+| **21** | `get_source_monitor_position` | Detect sentinel → return `{ loaded: false }` |
+
+### API removed in 25.4 — graceful degradation
+
+Pattern chung: probe `typeof api === "function"`, thử nhiều fallback paths, cuối cùng return `{ available: false, note: "...workaround..." }` thay vì throw raw ExtendScript error.
+
+| # | Tool | Fix |
+|---|------|-----|
+| **7** | `get_work_area` | Probe `seq.workInPoint/workOutPoint`, accept cả Time-object và string-of-ticks forms, return `available: false` nếu undefined |
+| **8** | `is_work_area_enabled` | Check `typeof seq.isWorkAreaBarEnabled === "function"` trước |
+| **9** | `get_encoder_presets` | Guard `encoder.getFormatList`, return note point user tới AME UI |
+| **27** | `add_audio_keyframes` | Fall back từ `levelProp.addKeyframe` (removed) sang `addKey + setValueAtKey`; nếu cả 2 không có → graceful |
+| **29** | `remove_transition` | Try `qeClip.removeTransition` → `qeClip.removeTransitionAt` → DOM `transitionIn/Out.remove` |
+| **32** | `enable_disable_clip` | Try DOM `clip.setDisabled` → `clip.disabled = bool` → QE `qeClip.setEnabled` → `qeClip.disable` |
+| **36** | `add_adjustment_layer` | Try `qeSeq.addAdjustmentLayer` → `rootItem.createNewAdjustmentLayer + overwriteClip` |
+| **47** | `go_to_next_edit` / `go_to_previous_edit` | Fall back từ removed `player.goToNextEdit/Previous` sang scan clip start/end ticks → `seq.setPlayerPosition()` |
+| **49** | `add_track` | Try `seq.insertVideoTrackAt` → `seq.addTracks()` 7-arg form |
+| **50** | `delete_track` | Try `seq.deleteVideoTrackAt/AudioTrackAt` → QE `qeSeq.deleteVideoTrack/AudioTrack` |
+| **54** | `undo` | Fall back từ removed `app.project.undo` sang `app.executeCommand(findMenuCommandId("Undo"))` |
+| **55** | `multiple_undo` | Cùng pattern Bug #54 |
+| **57** | `export_frame` | Try `seq.exportFramePNG` → `exportFrameJPEG` |
+| **57** | `export_edl` | Guard `seq.exportAsEDL` |
+| **57** | `export_aaf` | Guard `seq.exportAsAAF` |
+| **63** | `manage_proxies` | Guard `createProxy`/`attachProxy`/`setProxyEnabled`/`isProxyEnabled` |
+| **64** | `transcribe_sequence` | Guard `seq.transcribe` |
+
+### Param type và pre-validation
+
+| # | Tool | Fix |
+|---|------|-----|
+| **23** | `get_clip_at_position` | Return `{ found: false }` thay vì throw khi out-of-range |
+| **26** | `apply_lut` | Pre-validate `new File(lut_path).exists` — error message rõ ràng |
+| **33** | `set_anti_alias_quality` | Convert bool → 0/1 int (25.4 Anti-flicker Filter reject bool) |
+| **42** | `add_marker` (sequence) | Switch sang `createMarker(seconds)` Number form |
+| **43** | `add_marker` (clip-level) | Try `clip.getMarkers()` trước `clip.markers` (25.4 regression) |
+| **44** | `get_captions` | Detect missing `seq.captionTracks` → return empty list with note |
+| **46** | `import_captions` | Pre-validate file exists (đã silently success on missing paths trước) |
+| **59** | `import_image_sequence` | Pre-validate file exists |
+| **62** | `add_to_render_queue` | `preset_path` effectively required (ENCODE_MATCH_SEQUENCE removed); pre-validate preset exists |
+| **68** | `encode_file` | Pre-validate input + preset paths |
+| **69** | `encode_project_item` | Pre-validate preset path |
+
+---
+
+## ⚠️ STILL PENDING (~17 bugs — chưa fix vì cần investigation thêm)
+
+| # | Tool | Lý do hoãn |
+|---|------|------------|
+| 12 | `get_full_sequence_info` | Cần pagination/summary mode. Có thể add option `summary_only: true` / `tracks_limit: N` |
+| 22 | `get_project_panel_metadata` | Tương tự #12 — 131KB output. Cần `format: "summary"` option |
+| 20 | `get_track_info.transitions` | Trả clip ranges thay vì transitions. Cần probe QE để hiểu API shape mới |
+| 25 | `get_effect_properties` Lumetri binary | Cần filter ~25 internal binary-blob props. JSON sanitize đã hide `undefined`/`NaN` nhưng chưa filter Lumetri internal props |
+| 28 | `set_clip_pan` | Audio clip detection sai; pan API path cần probe lại |
+| 30 | `set_clip_speed_qe` | Cousin của Bug 3c-tris; signature update cần verify |
+| 31 | `reverse_clip` | "Unknown error exception" — cần try/catch tốt hơn + signature probe |
+| 34 | `set_scale_width_height` | "Scale Height" prop name cần probe (có thể là "Scale" với Uniform=false) |
+| 35 | `batch_set_clip_property` | Index lookup sai sau rename — edge case, cần repro để verify |
+| 38 | `trim_clip` | NodeId stale sau razor (UX/doc issue, không phải bug code) |
+| 45 | `add_caption` | Cần auto-create caption track |
+| 48 | `step_forward` / `step_backward` | Illegal Parameter type — cần Time vs Number probing |
+| 51 | `link_audio_video` | Clip lookup không scope đúng |
+| 52 | `set_sequence_pixel_aspect_ratio` | API expects struct vs number |
+| 53 | `create_sequence` | preset_path effectively required nhưng schema nói optional |
+| 58 | `import_folder` | Filter media extension quá hẹp với `/tmp` |
+| 60 | `import_fcp_xml` | "Not Enough Parameters" — signature thay đổi |
+| 61 | `scene_edit_detection` | "Not Enough Parameters" |
+| 65 | `auto_reframe_sequence` | Schema mismatch với required target_width/height |
+| 66 | `import_mogrt_from_library` | "Not Enough Parameters" |
+| 67 | `set_mogrt_property` | Error không rõ trên non-MOGRT clip — cần detect và message rõ ràng |
+
+→ Có thể fix trong v1.2.2 sau khi có thêm probe.
+
+---
+
+## 🧪 Re-test recommendations
+
+Tester có thể chạy lại các tool sau và verify fix:
+
+**Cao priority retest:**
+- Mọi tool API-removed (15 tools) — confirm trả `{ available: false, note: ... }` thay vì throw raw
+- Modal dialog tools (6 tools) — confirm KHÔNG còn block 30s nữa
+- Type mapping (3 tools) — confirm mp4 file return `"type": "footage"` (không phải "sequence"/"bin")
+- JSON output (5 tools) — confirm output là valid JSON (parse được bằng strict JSON parser)
+
+**Verify safety:**
+- `slip_edit`/`slide_edit`/`roll_edit` — confirm DISABLED với clear error message (KHÔNG corrupt data)
+- File pre-validation (6 tools) — confirm error message rõ ràng khi path không tồn tại
+
+**Re-test cần controlled sandbox:**
+- `slip_edit`/`slide_edit`/`roll_edit` proper fix — cần sequence sandbox (2-3 clips, không phải production project) để probe đúng unit
+- `add_marker` clip-level — cần verify với clip-level marker test
+
+## 🔧 Architecture additions (script-builder.ts)
+
+- **`__projectItemType(item)`** — unified ProjectItemType → string mapping
+- **`__safeJsonValue(v)`** — convert single NaN/Infinity/undefined → null
+- **`__sanitizeForJson(obj)`** — recursive sanitization invoked tự động bởi `__jsonStringify()`
+- **`__withDialogsSuppressed(fn)`** — wraps callback với `app.userInteractionLevel = NEVER_INTERACT`, restores after
+
