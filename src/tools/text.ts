@@ -4,7 +4,8 @@ import { sendCommand, BridgeOptions } from "../bridge/file-bridge.js";
 export function getTextTools(bridgeOptions: BridgeOptions) {
   return {
     add_text_overlay: {
-      description: "Add a text overlay (title) to the active sequence",
+      description:
+        "Add a text overlay (title graphic) to the active sequence. NOTE: Adobe removed the legacy Title Designer in Premiere 2024+ and provides NO direct DOM API to create a text graphic (confirmed by Adobe community manager Bruce Bullis). The only programmatic path is via Motion Graphics Templates (.mogrt). This tool probes for hypothetical title APIs and, if none exist, returns clear instructions to use the MOGRT workflow: `import_mogrt` (or `import_mogrt_from_library`) + `set_mogrt_property` to edit the text. Use `add_caption` if you actually want subtitles instead.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -46,29 +47,58 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
           if (!seq) return __error("No active sequence");
 
           var trackIndex = ${args.track_index !== undefined ? args.track_index : "seq.videoTracks.numTracks - 1"};
-          var project = app.project;
-          app.enableQE();
-          var qeSeq = qe.project.getActiveSequence();
-
-          var startTicks = __secondsToTicks(${startSeconds}).toString();
-          var endTicks = __secondsToTicks(${startSeconds + durationSeconds}).toString();
           var textContent = "${escapeForExtendScript(args.text)}";
+          var w = seq.frameSizeHorizontal;
+          var h = seq.frameSizeVertical;
+          var attempts = [];
 
-          // Suppress Title Designer / Save Title modal dialogs (Bug #37 family).
-          return __withDialogsSuppressed(function() {
-            try {
-              project.activeSequence.createCaptionTrack(textContent, startTicks, "Subtitle");
-              return __result({
-                added: true,
-                text: textContent,
-                trackIndex: trackIndex,
-                startSeconds: ${startSeconds},
-                durationSeconds: ${durationSeconds}
-              });
-            } catch (ex) {
-              return __error("add_text_overlay failed: " + ex.toString());
+          // Probe hypothetical DOM-level title creation paths. None are documented for
+          // Premiere 25.4 — but if Adobe quietly adds one in a future point release, we
+          // pick it up automatically. We do NOT call qe.project.newTitle: same trap as
+          // qe.project.newColorMatte (Bug #37) — would open Title Designer modal.
+          try {
+            if (typeof app.project.createSupportItem === "function") {
+              var item1 = app.project.createSupportItem("title", textContent);
+              if (item1) {
+                var startTicks = __secondsToTicks(${startSeconds}).toString();
+                seq.overwriteClip(item1, startTicks, trackIndex, -1);
+                return __result({ added: true, method: "dom:createSupportItem", text: textContent });
+              }
+            } else {
+              attempts.push("project.createSupportItem: not available");
             }
-          });
+          } catch(e1) { attempts.push("project.createSupportItem: " + e1.toString()); }
+
+          try {
+            var root = app.project.rootItem;
+            if (root && typeof root.createTitle === "function") {
+              var item2 = root.createTitle(textContent, w, h);
+              if (item2) {
+                var startTicks2 = __secondsToTicks(${startSeconds}).toString();
+                seq.overwriteClip(item2, startTicks2, trackIndex, -1);
+                return __result({ added: true, method: "dom:rootItem.createTitle", text: textContent });
+              }
+            } else {
+              attempts.push("rootItem.createTitle: not available");
+            }
+          } catch(e2) { attempts.push("rootItem.createTitle: " + e2.toString()); }
+
+          // No working DOM path. Refuse to invoke qe.project.newTitle (would spawn
+          // Legacy Title Designer dialog and block bridge — same trap as #37).
+          // Previous v1.2.1 implementation called createCaptionTrack which created a
+          // subtitle track (wrong feature entirely) — that has been removed.
+          return __error(
+            "add_text_overlay: Adobe removed the legacy Title Designer in Premiere 2024+ " +
+            "and provides no DOM API to create a text graphic. " +
+            "Workarounds: " +
+            "(1) Author a text .mogrt in After Effects, then use import_mogrt(mogrt_path, ...) " +
+            "+ set_mogrt_property(track_index, clip_index, 'Source Text', '" + textContent + "'); " +
+            "(2) import_mogrt_from_library(mogrt_name, ...) if you have a text MOGRT in your " +
+            "Adobe Library; " +
+            "(3) add_caption(...) if you wanted subtitles, not a text overlay graphic; " +
+            "(4) create the title manually in Premiere then continue automating. " +
+            "Probe results: " + attempts.join("; ")
+          );
         `);
         return sendCommand(script, bridgeOptions);
       },

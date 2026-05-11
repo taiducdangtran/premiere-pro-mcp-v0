@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.3] - 2026-05-11 — `add_text_overlay` honest disable
+
+### Fixed — `add_text_overlay` (out-of-scope retest finding)
+
+While fixing v1.2.2, discovered that `add_text_overlay` was calling `seq.createCaptionTrack(text, ticks, "Subtitle")` — which creates a closed-caption track (for subtitles), **not** a text overlay graphic. Wrong API, wrong feature.
+
+After researching Premiere 25.4 APIs: Adobe removed the legacy Title Designer in Premiere 2024+ and **provides no DOM-level API to create a text graphic** (confirmed by Adobe community manager Bruce Bullis). The only programmatic path is Motion Graphics Templates (.mogrt), and Adobe does not ship default text MOGRTs at known paths.
+
+Applied the same disable pattern as `add_color_matte`:
+- Probe hypothetical `app.project.createSupportItem("title", ...)` and `rootItem.createTitle(...)` paths (so the tool auto-recovers if Adobe adds one later).
+- **Deliberately refuse** to invoke `qe.project.newTitle()` — would open the Legacy Title Designer modal and block the bridge (same trap as Color Picker in Bug #37).
+- Return a clear error with four workarounds: (1) `import_mogrt` + `set_mogrt_property("Source Text", ...)`, (2) `import_mogrt_from_library`, (3) `add_caption` if user wanted subtitles, (4) manual UI creation.
+
 ## [1.2.2] - 2026-05-11 — Retest follow-up (Bug #19 + Bug #37)
 
 Addresses the two bugs that failed the v1.2.1 retest. See `notebug.md` "RETEST RESULTS — v1.2.1".

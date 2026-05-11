@@ -1500,14 +1500,26 @@ Sau khi đọc lại implementation, 4 tools này dùng **DOM API**, KHÔNG dùn
 
 **Khuyến nghị tester:** retest 4 tools này sau khi v1.2.2 deploy. Dự kiến PASS.
 
-## ⚠️ FOLLOW-UP — add_text_overlay (#37 family) lưu ý
+## ✅ FIXED in v1.2.3 — `add_text_overlay` (functional bug, not dialog)
 
-Đọc kĩ implementation `add_text_overlay` ([src/tools/text.ts:6-75](src/tools/text.ts#L6-L75)) phát hiện nó đang gọi `project.activeSequence.createCaptionTrack()` — đây là API tạo Caption Track (subtitles), KHÔNG phải Title text overlay. Đây là **bug khác** (functional, không phải dialog) cần fix trong v1.2.3:
+**Phát hiện khi fix v1.2.2:** `add_text_overlay` gọi `seq.createCaptionTrack(text, ticks, "Subtitle")` — đây là API tạo **subtitle track**, KHÔNG phải text overlay graphic. Sai API hoàn toàn.
 
-- Nên dùng MOGRT-based title hoặc QE title designer
-- Hiện tại tool có thể tạo caption track thay vì text overlay — kết quả không đúng kỳ vọng người dùng
+**Research Adobe API:** Adobe đã **bỏ Legacy Title Designer** từ Premiere 2024+ và **KHÔNG cung cấp DOM API nào** để tạo text graphic clip (xác nhận bởi Bruce Bullis, Adobe community manager). Cách duy nhất programmatic là qua MOGRT, và Adobe không ship default text MOGRT ở path cố định.
 
-Đã document trong notebug.md để theo dõi. Không fix trong v1.2.2 vì ngoài scope retest.
+**Fix v1.2.3:** Disable tool theo cùng pattern `add_color_matte`:
+1. Probe `app.project.createSupportItem("title", ...)` và `rootItem.createTitle(...)` (auto-recover nếu Adobe thêm sau)
+2. **Tuyệt đối không** gọi `qe.project.newTitle()` — spawn Legacy Title Designer modal, hang bridge giống #37
+3. Return error rõ ràng với 4 workarounds:
+   - `import_mogrt(mogrt_path)` + `set_mogrt_property('Source Text', text)` — AE-authored MOGRT
+   - `import_mogrt_from_library(mogrt_name)` — từ Adobe Library
+   - `add_caption(...)` nếu user thật sự muốn subtitle
+   - Tạo title bằng UI rồi tiếp tục automate
+
+**File:** [src/tools/text.ts:6-104](src/tools/text.ts#L6-L104)
+
+**Behavior change v1.2.1 → v1.2.3:**
+- v1.2.1: tạo nhầm caption track, user nghĩ là text overlay nhưng không phải
+- v1.2.3: return error rõ ràng, hướng dẫn workflow đúng
 
 ## 📊 RETEST v1.2.2 EXPECTED SUMMARY
 
