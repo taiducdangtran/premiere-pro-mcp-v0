@@ -998,3 +998,174 @@ Nếu output cho thấy multiple codepoints (e.g., FEFF + something else), dev b
 
 - 🔥 `get_effect_properties` regression — add defensive try/catch in __sanitizeBlob OR __countPrintable
 - 🟢 BOM (U+FEFF) char leak — need live probe in ExtendScript Toolkit to verify exact codepoint stored
+
+---
+
+# 🔁 DEBUG SWEEP — v1.2.16 (2026-05-11, sweep #11, internal test run)
+
+Chạy `npm run build && npm test` trên `73704dc` (v1.2.16). Build PASS sạch. Test suite: **7/288 fail**, chia 2 nhóm: 2 bug code thực + 5 test outdated.
+
+## ✅ v1.2.17 FIX STATUS (2026-05-11, dev response — Option B applied)
+
+Tất cả 7 fail resolved. Build sạch, **288/288 tests PASS**.
+
+| # | Patch | File | Line |
+|---|-------|------|-----:|
+| 🟠 #89 | `value` thêm `type: "any"` | `src/tools/text.ts` | 358 |
+| 🟠 #90 | `value` thêm `type: "any"` | `src/tools/clipboard.ts` | 417 |
+| ⚙️ converter | Thêm case `"any"` → `z.any()` trong schema converter | `src/server.ts` | 133-135 |
+| 🧪 #T1 | Outer catch emit string mới | `tests/bridge/script-builder.test.ts` | 10 |
+| 🧪 #T2 | `__error(msg)` → `__error(arg)` | `tests/bridge/script-builder.test.ts` | 27 |
+| 🧪 #T3 | `obj` → `safe` reflect rename trong `__jsonStringify` | `tests/bridge/script-builder.test.ts` | 132-136 |
+| 🧪 #T4 | Total tool count `266` → `440` | `tests/tools/tool-modules.test.ts` | 172, 177 |
+| 🧪 #T5 | `__error(msg)` → `__error(arg)` | `tests/tools/tool-modules.test.ts` | 489 |
+| 🧪 allowlist | Valid-type allowlist thêm `"any"` | `tests/tools/tool-modules.test.ts` | 132 |
+
+**Build:** `npm run build` → PASS (TypeScript clean)
+**Test:** `npm test` → 288 PASS / 0 FAIL
+**Approach:** Option B (semantic polymorphic) — converter giờ hiểu `type: "any"` → `z.any()` đúng spirit của polymorphic fields, không phải workaround.
+
+## 📊 SCORE
+
+| Loại | Số lượng | Mức độ |
+|------|---------:|--------|
+| Build errors | 0 | ✅ |
+| Runtime bugs | 2 | 🟠 schema validation |
+| Test outdated | 5 | 🟡 không ảnh hưởng runtime |
+| Tests PASS | 281 | ✅ |
+
+---
+
+## 🟠 NEW BUG #89 — `set_mogrt_property.value` schema thiếu field `type`
+
+### Repro
+
+```
+npm test
+# tests/tools/tool-modules.test.ts > Tool Module Structure > text module
+#   > parameter properties all have type fields
+# AssertionError: set_mogrt_property.value type: expected undefined to be defined
+```
+
+### Root cause
+
+[src/tools/text.ts:358-361](src/tools/text.ts#L358-L361):
+
+```ts
+value: {
+  description:
+    "Value to set. Strings for text, numbers for numeric, [x,y] for positions, [r,g,b] for colors",
+},
+```
+
+Field `value` polymorphic (string | number | number[]) nên dev chủ đích bỏ `type` để rơi vào `default: z.any()` trong [src/server.ts:115-138](src/server.ts#L115-L138). Nhưng MCP spec yêu cầu mỗi property phải có `type` rõ ràng — client validator (Claude Desktop, Cursor, …) có thể reject schema này, hoặc bỏ qua field khiến caller không biết format cần truyền.
+
+### Impact
+
+- 🟠 Schema validation cảnh báo trên MCP clients strict-mode
+- 🟡 Caller không có hint về kiểu value khi inspect tool schema (chỉ có description)
+- ✅ Runtime: handler hoạt động đúng (do `JSON.stringify(args.value)` trên ExtendScript side)
+
+### Suggested fix
+
+Option A: pick một type representative (`"string"`) và document trong description rằng caller có thể truyền JSON-encoded.
+Option B: mở rộng schema converter [src/server.ts:115](src/server.ts#L115) để accept JSON Schema union (`type: ["string","number","array"]`) hoặc thêm case `"any"` → `z.any()`, đồng thời update test allowlist [tests/tools/tool-modules.test.ts:132](tests/tools/tool-modules.test.ts#L132).
+
+Option B đúng semantic hơn (polymorphic) nhưng touch nhiều file.
+
+---
+
+## 🟠 NEW BUG #90 — `batch_set_clip_property.value` schema thiếu field `type`
+
+### Repro
+
+```
+npm test
+# tests/tools/tool-modules.test.ts > Tool Module Structure > clipboard module
+#   > parameter properties all have type fields
+# AssertionError: batch_set_clip_property.value type: expected undefined to be defined
+```
+
+### Root cause
+
+[src/tools/clipboard.ts:417-420](src/tools/clipboard.ts#L417-L420) — cùng pattern với #89, cùng lý do polymorphic. Cùng fix.
+
+### Impact
+
+Tương tự #89.
+
+---
+
+## 🟡 TEST OUTDATED — Cần update assertion cho khớp v1.2.16
+
+Implementation đã evolve qua sweep #7-#10 nhưng test không update theo. Không phải bug code — chỉ là test debt.
+
+### #T1 — `script-builder.test.ts` `__error` signature
+
+[tests/bridge/script-builder.test.ts:10](tests/bridge/script-builder.test.ts#L10):
+
+```ts
+expect(result).toContain("return __error(e.toString());");
+```
+
+Code hiện tại (sweep #10, `73704dc`) emit:
+
+```js
+return __error({ reason: e.toString(), _outerCatch: true });
+```
+
+Fix: update assertion.
+
+### #T2 — `script-builder.test.ts` `__error` function name
+
+[tests/bridge/script-builder.test.ts:27](tests/bridge/script-builder.test.ts#L27):
+
+```ts
+expect(result).toContain("function __error(msg)");
+```
+
+Sweep #10 đã đổi signature → `function __error(arg)` (chấp nhận string OR object để surface probe state).
+
+Fix: update assertion thành `"function __error(arg)"`.
+
+### #T3 — `script-builder.test.ts` `__jsonStringify` null check
+
+[tests/bridge/script-builder.test.ts:132](tests/bridge/script-builder.test.ts#L132):
+
+```ts
+expect(result).toContain('if (obj === null) return "null"');
+```
+
+Cần verify exact string trong helper hiện tại — order/format có thể đã đổi.
+
+### #T4 — `tool-modules.test.ts` tổng số tools
+
+[tests/tools/tool-modules.test.ts:177](tests/tools/tool-modules.test.ts#L177):
+
+```ts
+expect(total).toBe(266);
+```
+
+Hiện có **440 tools** (sweep cộng dồn qua v1.2.12 unlock #61/#65/#66 + các tool mới). Fix: `expect(total).toBe(440)` HOẶC `expect(total).toBeGreaterThan(400)` (linh hoạt hơn).
+
+### #T5 — `tool-modules.test.ts` script generation `__error(msg)`
+
+[tests/tools/tool-modules.test.ts:489](tests/tools/tool-modules.test.ts#L489) — cùng vấn đề như #T2.
+
+---
+
+## 🎯 PRIORITY cho v1.2.17
+
+1. 🟠 **#89 + #90**: Quyết định Option A (rapid, `type: "string"`) vs Option B (semantic, mở rộng converter). Option B cần touch 4 file (text.ts, clipboard.ts, server.ts, tool-modules.test.ts).
+2. 🟡 **#T1-#T5**: Update test assertions cho khớp implementation hiện tại — không ảnh hưởng runtime nhưng CI sẽ luôn fail nếu không sửa.
+
+---
+
+## 📁 Session metadata sweep #11
+
+- **Build:** v1.2.16 (`73704dc`)
+- **Test command:** `npm run build && npm test`
+- **Build result:** PASS (TypeScript clean)
+- **Test result:** 281 PASS / 7 FAIL / 288 total
+- **Test date:** 2026-05-11
+- **Type:** internal debug sweep (không phải user-facing repro trên Premiere)

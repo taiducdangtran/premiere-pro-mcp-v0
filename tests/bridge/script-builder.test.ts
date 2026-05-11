@@ -7,7 +7,7 @@ describe("buildScript", () => {
     expect(result).toContain("(function() {");
     expect(result).toContain("return __result({ ok: true });");
     expect(result).toContain("} catch(e) {");
-    expect(result).toContain("return __error(e.toString());");
+    expect(result).toContain("return __error({ reason: e.toString(), _outerCatch: true });");
     expect(result).toContain("})();");
   });
 
@@ -24,7 +24,7 @@ describe("buildScript", () => {
     expect(result).toContain("function __getAllClips(seq)");
     expect(result).toContain("function __jsonStringify(obj)");
     expect(result).toContain("function __result(data)");
-    expect(result).toContain("function __error(msg)");
+    expect(result).toContain("function __error(arg)");
   });
 
   it("preserves multi-line code blocks", () => {
@@ -129,10 +129,10 @@ describe("generated script structure", () => {
 
   it("__jsonStringify handles all types", () => {
     const result = buildScript("");
-    expect(result).toContain('if (obj === null) return "null"');
-    expect(result).toContain('if (typeof obj === "string")');
-    expect(result).toContain('if (typeof obj === "number"');
-    expect(result).toContain("if (obj instanceof Array)");
-    expect(result).toContain('if (typeof obj === "object")');
+    expect(result).toContain('if (safe === null) return "null"');
+    expect(result).toContain('if (typeof safe === "string")');
+    expect(result).toContain('if (typeof safe === "number"');
+    expect(result).toContain("if (safe instanceof Array)");
+    expect(result).toContain('if (typeof safe === "object")');
   });
 });

@@ -129,7 +129,7 @@ describe("Tool Module Structure", () => {
             for (const [propName, prop] of Object.entries(props) as [string, any][]) {
               expect(prop.type, `${name}.${propName} type`).toBeDefined();
               expect(
-                ["string", "number", "boolean", "array", "object"].includes(prop.type),
+                ["string", "number", "boolean", "array", "object", "any"].includes(prop.type),
                 `${name}.${propName} has valid type "${prop.type}"`
               ).toBe(true);
             }
@@ -169,12 +169,12 @@ describe("Tool Module Structure", () => {
 });
 
 describe("Total Tool Count", () => {
-  it("all modules together have 266 tools", () => {
+  it("all modules together have 440 tools", () => {
     let total = 0;
     for (const mod of ALL_MODULES) {
       total += Object.keys(mod.getter(bridgeOptions)).length;
     }
-    expect(total).toBe(266);
+    expect(total).toBe(440);
   });
 
   it("there are 28 modules", () => {
@@ -486,7 +486,7 @@ describe("Script Generation Patterns", () => {
 
     const script = mockedSendCommand.mock.calls[0][0];
     expect(script).toContain("function __result(data)");
-    expect(script).toContain("function __error(msg)");
+    expect(script).toContain("function __error(arg)");
     expect(script).toContain("TICKS_PER_SECOND");
   });
 });

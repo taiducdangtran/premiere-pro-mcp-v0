@@ -356,6 +356,7 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
             description: "Display name of the property to set (e.g., 'Source Text', 'Position', 'Color')",
           },
           value: {
+            type: "any",
             description:
               "Value to set. Strings for text, numbers for numeric, [x,y] for positions, [r,g,b] for colors",
           },

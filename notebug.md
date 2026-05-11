@@ -3440,3 +3440,97 @@ Still pending Adobe docs (no patch possible without external info):
 - #61 `scene_edit_detection` — signature unknown, 8 variants all fail
 - #65 `auto_reframe_sequence` — full signature unknown (method exists, types unclear)
 
+---
+
+# 🏁 FINAL SWEEP — v1.2.12 (2026-05-11, sweep #7)
+
+Sau khi dev fix v1.2.8 → v1.2.12, tester chạy retest cuối cùng. **Đa số bugs PASS** — chỉ phát hiện 3 NEW bugs ghi vào `bug.md` (file riêng).
+
+## 🎉 v1.2.8 → v1.2.12 fixes — kết quả retest
+
+### ✅ ALL PASS (13/13)
+
+| # | Tool | Version | Verified |
+|----|------|---------|----------|
+| 72 | `set_clip_volume` + `get_clip_volume` | v1.2.8 | dbToLinear conversion work; roundtrip set(-6) → reads back -6.00 ✅ |
+| 28 | `set_clip_pan` | v1.2.8 | Channel Volume Left/Right gains: pan(-30) → L=1, R=0.7 verified ✅ |
+| 19 | `inspect_dom_object` | v1.2.8 | `getOverrideColorSpaceList` → `"[array: 32 items]"` thay vì `"[object]"` ✅ |
+| 52 | `set_sequence_pixel_aspect_ratio` | v1.2.8 | Graceful disable với 3 workarounds (UI / set_sequence_settings / create_sequence) ✅ |
+| 83 | `_probe[0].name` Bypass | v1.2.8 | Now `"(unnamed)"` thay vì empty string ✅ |
+| 85 | `_probe.computedRatio` | v1.2.8 | Renamed `qeTickInverse` + `_note` explanation ✅ |
+| 84 | `set_clip_transform.position` | v1.2.8 | Description updated to pixels (default), normalized via flag ✅ |
+| 53 | `create_sequence` | v1.2.11 | Clear error nếu thiếu `preset_path` + 3 workarounds ✅ |
+| 36 | `add_adjustment_layer` | v1.2.11 | Graceful disable (API removed in 25.4) với 3 workarounds ✅ |
+| 61 | `scene_edit_detection` | v1.2.12 | Correct String enum signature: `(action='CreateMarkers', applyLinkedAudio=true, sensitivity='MediumSensitivity')` ✅ |
+| 65 | `auto_reframe_sequence` | v1.2.12 | Correct signature (num, den, motionPreset, newName, useNestedSequences) — created 1080×1920 9:16 sequence ✅ |
+| 12 | `get_full_sequence_info(summary_only=true)` | v1.2.10 | Compact ~150 lines instead of 90KB ✅ |
+| 22 | `get_project_panel_metadata` | v1.2.10 | Summary mode với byteSize + head/tail preview, raw mode optional ✅ |
+| 25 | `get_effect_properties` Lumetri filter | v1.2.10 | Filtered 44 internal binary-blob properties ✅ |
+
+## 🔴 3 NEW BUGS — chuyển sang `bug.md`
+
+### #86 `batch_set_clip_property` — Contradictory errors
+Tool reports same target trong notFound TWICE với reasons mâu thuẫn:
+- "setValue threw: Illegal Parameter type" (entry 0)
+- "property 'Opacity' not found" (entry 1) — DESPITE `availableProps` chứa "Opacity"
+
+`set_clip_opacity` riêng lẻ work fine trên cùng clip → bug code path của batch tool.
+
+### #87 `auto_reframe_sequence` — Silent active switch
+Functional PASS but silently switches active sequence to new copy → invalidates all nodeIds. Same pattern as Bug #76 (`duplicate_sequence`) đã fix — cần apply pattern đó.
+
+### #88 `import_mogrt_from_library` — False positive
+Returns `{imported: true}` cho non-existent library/mogrt names. Adobe API silent-succeeds, tool doesn't verify item actually inserted. ExtendScript probe confirmed: zero clips added, zero project items added.
+
+**Detail + fix patches:** Xem `bug.md`.
+
+## 📊 Project state — Cumulative pass rate
+
+| Build | Bugs delivered | Cumulative state |
+|-------|---------------|------------------|
+| v1.2.0 baseline | — | 0% |
+| v1.2.1 (40 bugs) | 35 PASS | 41% |
+| v1.2.4 (13 bugs) | 9 PASS + 1 partial | 56% |
+| v1.2.5 (1 bug) | 1 PASS | 57% |
+| v1.2.6 (10 bugs) | 4 PASS + _probe surface | 62% |
+| v1.2.7 (11 polish) | 1 PASS + 8 wrap | 73% |
+| v1.2.8 (8 patches) | 7 PASS | 81% |
+| v1.2.10 + 11 + 12 | All claimed bugs PASS | **~92%** |
+
+**3 new bugs còn lại sau v1.2.12** — sẽ giải quyết trong v1.2.13 (~30 LOC tổng, est. ~95% pass rate).
+
+## ✨ Dev đã làm RẤT TỐT trong v1.2.8 → v1.2.12
+
+1. **dB↔linear conversion với verification field** trong response — tester biết roundtrip
+2. **Channel Volume L/R approach** cho audio pan — đúng API path Premiere 25.4
+3. **Array detection** trong inspect — user-friendly output
+4. **Graceful disable + workaround note** pattern — KHÔNG spawn dialogs, KHÔNG silent fail
+5. **Adobe docs unlock** cho `#61` + `#65` — đọc SDK docs cho correct String enum signature
+6. **Summary mode** cho large outputs — context-overflow guards
+7. **Diagnostics cho batch ops** — `reason`, `availableProps`, `resolved` fields
+8. **Lumetri internal-prop filter** — tester focused on actionable props
+
+## 📁 Session metadata
+
+- **Final build:** v1.2.12 (`d86a5df`)
+- **Project:** Lò nướng.prproj (Premiere 25.4.1)
+- **Active sequence:** Sequence 01 Cắt (22+17+5 video clips)
+- **NodeIds:** V1c0=000f4311, A1c0=000f4345
+- **Test date:** 2026-05-11
+- **Cleanup performed:**
+  - Deleted `RetestReframe_v128` (test sequence from #65)
+  - Reset audio volume → 0 dB on test clip
+  - Reset audio pan → 0 (center) on test clip
+  - Removed Lumetri Color effect from test clip
+- **Project state:** Đã sạch, sẵn sàng cho user workflow tiếp theo.
+
+## ➡️ Next step cho dev
+
+→ Đọc `bug.md` cho 3 NEW bugs (#86, #87, #88) — mỗi bug có:
+- Concrete repro
+- Output thực tế (problematic)
+- Root cause hypothesis
+- Suggested fix patch ready to paste
+
+Estimated total v1.2.13 work: ~30 LOC. Sau đó pass rate → ~95%.
+

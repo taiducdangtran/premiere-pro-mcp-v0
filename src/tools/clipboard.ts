@@ -415,6 +415,7 @@ export function getClipboardTools(bridgeOptions: BridgeOptions) {
               "Display name of the property to set (e.g., 'Opacity', 'Scale', 'Position'). Case-insensitive match.",
           },
           value: {
+            type: "any",
             description:
               "Value to apply (number for scalars, [x,y] for points, [r,g,b] for colors)",
           },

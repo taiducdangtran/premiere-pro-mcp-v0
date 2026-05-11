@@ -133,6 +133,9 @@ function jsonSchemaToZodShape(params: Record<string, unknown>): Record<string, z
       case "object":
         zodType = z.record(z.any());
         break;
+      case "any":
+        zodType = z.any();
+        break;
       default:
         zodType = z.any();
     }
