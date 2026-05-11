@@ -204,20 +204,22 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
         const libraryName = args.library_name ?? "";
 
         const script = buildToolScript(`
+          __probeState = { tool: "import_mogrt_from_library", attempts: [] };
+
           var seq = app.project.activeSequence;
-          if (!seq) return __error("No active sequence");
+          if (!seq) return __error({ reason: "No active sequence", _probe: __probeState });
+
+          __probeState.apiType = (typeof seq.importMGTFromLibrary);
           if (typeof seq.importMGTFromLibrary !== "function") {
-            return __error("import_mogrt_from_library: API not exposed in this Premiere build");
+            return __error({ reason: "import_mogrt_from_library: API not exposed in this Premiere build", _probe: __probeState });
           }
 
           var mogrtName = "${escapeForExtendScript(args.mogrt_name)}";
           var libraryName = "${escapeForExtendScript(libraryName)}";
           var startTicks = __secondsToTicks(${startSeconds}).toString();
           var tIdx = ${trackIndex};
+          __probeState.input = { mogrtName: mogrtName, libraryName: libraryName, startTicks: startTicks, trackIndex: tIdx };
 
-          // Probe documented signature variants for 25.4.
-          // Likely shape (new): importMGTFromLibrary(libraryName, mogrtName, startTicks, vTrack, aTrack)
-          // Legacy shape: importMGTFromLibrary(mogrtName, startTicks, vTrack, aTrack)
           var sigs = [];
           if (libraryName) {
             sigs.push({ args: [libraryName, mogrtName, startTicks, tIdx, tIdx], label: "(library, name, ticks, v, a)" });
@@ -228,8 +230,8 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
 
           var ok = false;
           var via = null;
-          var errors = [];
           for (var s = 0; s < sigs.length && !ok; s++) {
+            var att = { signature: sigs[s].label, thrown: false };
             try {
               var a = sigs[s].args;
               var ret = null;
@@ -237,16 +239,17 @@ export function getTextTools(bridgeOptions: BridgeOptions) {
               else if (a.length === 4) ret = seq.importMGTFromLibrary(a[0], a[1], a[2], a[3]);
               else if (a.length === 3) ret = seq.importMGTFromLibrary(a[0], a[1], a[2]);
               if (ret !== false) { ok = true; via = sigs[s].label; }
-              else errors.push(sigs[s].label + ": returned false");
-            } catch(eS) { errors.push(sigs[s].label + ": " + eS.toString()); }
+              else { att.returnedFalse = true; }
+            } catch(eS) { att.thrown = true; att.error = eS.toString(); }
+            __probeState.attempts.push(att);
           }
           if (!ok) {
-            return __error(
-              "import_mogrt_from_library: no signature worked. " +
-              (libraryName ? "" : "Hint: in Premiere 25.4 you likely need to pass library_name. ") +
-              "Errors: " + errors.join(" | ")
-            );
+            return __error({
+              reason: "import_mogrt_from_library: no signature worked" + (libraryName ? "" : " (hint: library_name may be required in 25.4)"),
+              _probe: __probeState
+            });
           }
+          __probeState = null;
           return __result({
             imported: true,
             mogrtName: mogrtName,

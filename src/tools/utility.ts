@@ -440,43 +440,58 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
       },
       handler: async (args: { ratio: number }) => {
         const script = buildToolScript(`
+          __probeState = { tool: "set_sequence_pixel_aspect_ratio", attempts: [], ratio: ${args.ratio} };
+
           var seq = app.project.activeSequence;
-          if (!seq) return __error("No active sequence");
+          if (!seq) return __error({ reason: "No active sequence", _probe: __probeState });
 
           var settings = seq.getSettings();
-          if (!settings) return __error("Could not get sequence settings");
+          if (!settings) return __error({ reason: "Could not get sequence settings", _probe: __probeState });
 
-          // Bug #52: probe the original value's type so we can match it.
           var origVal = null;
           var origType = null;
           try { origVal = settings.videoPixelAspectRatio; origType = typeof origVal; } catch(eO) {}
+          __probeState.originalValue = origVal;
+          __probeState.originalType = origType;
 
+          // Bug #52 v2: also probe struct form {num, den} per tester suggestion + setPixelAspectRatio method
+          var ratio = ${args.ratio};
           var candidates = [
-            { v: ${args.ratio}, label: "number" },
-            { v: String(${args.ratio}), label: "string" },
-            { v: parseFloat(${args.ratio}), label: "float" }
+            { v: ratio, label: "number" },
+            { v: String(ratio), label: "string" },
+            { v: parseFloat(ratio), label: "float" },
+            { v: { num: Math.round(ratio * 10000), den: 10000 }, label: "struct {num,den}" }
           ];
 
           var ok = false;
           var via = null;
-          var errors = [];
           for (var i = 0; i < candidates.length && !ok; i++) {
+            var a = { signature: "settings.videoPixelAspectRatio = " + candidates[i].label, thrown: false };
             try {
               settings.videoPixelAspectRatio = candidates[i].v;
               seq.setSettings(settings);
               ok = true; via = candidates[i].label;
-            } catch(eC) { errors.push(candidates[i].label + ": " + eC.toString()); }
+            } catch(eC) { a.thrown = true; a.error = eC.toString(); }
+            __probeState.attempts.push(a);
+          }
+
+          // Path 5: seq.setPixelAspectRatio direct method
+          if (!ok && typeof seq.setPixelAspectRatio === "function") {
+            var aM = { signature: "seq.setPixelAspectRatio(ratio)", thrown: false };
+            try { seq.setPixelAspectRatio(ratio); ok = true; via = "setPixelAspectRatio direct"; }
+            catch(eM) { aM.thrown = true; aM.error = eM.toString(); }
+            __probeState.attempts.push(aM);
           }
 
           if (!ok) {
-            return __error(
-              "set_sequence_pixel_aspect_ratio: no value format accepted. " +
-              "Original type: " + origType + " (value=" + origVal + "). " +
-              "Errors: " + errors.join(" | ")
-            );
+            return __error({
+              reason: "set_sequence_pixel_aspect_ratio: no value format accepted",
+              _probe: __probeState
+            });
           }
+          __probeState = null;
           return __result({
-            ratio: ${args.ratio},
+            ratio: ratio,
             sequence: seq.name,
             via: via,
             originalType: origType,

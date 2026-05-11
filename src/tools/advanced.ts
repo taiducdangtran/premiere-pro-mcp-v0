@@ -196,26 +196,26 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
       handler: async (args: { node_id: string; speed_percent: number; reverse?: boolean }) => {
         const rev = args.reverse === true;
         const script = buildToolScript(`
+          __probeState = { tool: "set_clip_speed_qe", attempts: [] };
+
           app.enableQE();
           var qeSeq = qe.project.getActiveSequence();
-          if (!qeSeq) return __error("No active sequence (QE)");
+          if (!qeSeq) return __error({ reason: "No active sequence (QE)", _probe: __probeState });
 
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
-          if (!result) return __error("Clip not found");
+          if (!result) return __error({ reason: "Clip not found", _probe: __probeState });
 
           var qeClip = __getQEClip(result);
-          if (!qeClip) return __error("QE clip not found");
+          if (!qeClip) return __error({ reason: "QE clip not found", _probe: __probeState });
 
-          // Bug #30: qeClip.setSpeed(speed) is the 1-arg form which throws
-          // "Not Enough Parameters" in Premiere 25.4. The full signature is:
-          //   setSpeed(speed, frameRate, maintainAudioPitch, reverse, rippleEdit)
-          // We probe variants in order: full 5-arg, 4-arg (no ripple), 3-arg, 2-arg, 1-arg.
+          __probeState.qeSetSpeedType = (typeof qeClip.setSpeed);
+
           var spd = ${args.speed_percent};
           var rev = ${rev ? "true" : "false"};
-          var paths = [];
           var ok = false;
           var sigUsed = null;
 
+          // Probe variants. Each wrapped — error CAN'T escape this loop.
           var sigs = [
             { args: [spd, "1", false, rev, false], label: "setSpeed(speed,'1',false,rev,false)" },
             { args: [spd, "1", false, rev], label: "setSpeed(speed,'1',false,rev)" },
@@ -224,6 +224,7 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
             { args: [spd], label: "setSpeed(speed)" }
           ];
           for (var s = 0; s < sigs.length && !ok; s++) {
+            var attempt = { signature: sigs[s].label, thrown: false };
             try {
               var a = sigs[s].args;
               if (a.length === 5) qeClip.setSpeed(a[0], a[1], a[2], a[3], a[4]);
@@ -232,11 +233,19 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
               else if (a.length === 2) qeClip.setSpeed(a[0], a[1]);
               else qeClip.setSpeed(a[0]);
               ok = true; sigUsed = sigs[s].label;
-            } catch(eS) { paths.push(sigs[s].label + ": " + eS.toString()); }
+            } catch(eS) {
+              attempt.thrown = true;
+              attempt.error = eS.toString();
+            }
+            __probeState.attempts.push(attempt);
           }
           if (!ok) {
-            return __error("set_clip_speed_qe: no signature variant worked. Attempts: " + paths.join(" | "));
+            return __error({
+              reason: "set_clip_speed_qe: no signature variant worked",
+              _probe: __probeState
+            });
           }
+          __probeState = null;
           return __result({
             speedSet: true,
             clipName: result.clip.name,
@@ -271,56 +280,64 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
       handler: async (args: { node_id: string; reverse?: boolean }) => {
         const rev = args.reverse !== false;
         const script = buildToolScript(`
+          __probeState = { tool: "reverse_clip", attempts: [] };
+
           app.enableQE();
           var qeSeq = qe.project.getActiveSequence();
-          if (!qeSeq) return __error("No active sequence (QE)");
+          if (!qeSeq) return __error({ reason: "No active sequence (QE)", _probe: __probeState });
 
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
-          if (!result) return __error("Clip not found");
+          if (!result) return __error({ reason: "Clip not found", _probe: __probeState });
 
           var qeClip = __getQEClip(result);
-          if (!qeClip) return __error("QE clip not found");
+          if (!qeClip) return __error({ reason: "QE clip not found", _probe: __probeState });
+
+          __probeState.qeSetReverseType = (typeof qeClip.setReverse);
+          __probeState.qeSetSpeedType = (typeof qeClip.setSpeed);
+          __probeState.qeSpeed = (typeof qeClip.speed !== "undefined") ? qeClip.speed : null;
 
           var rev = ${rev ? "true" : "false"};
-          var errors = [];
           var ok = false;
           var via = null;
 
-          // Path 1: legacy setReverse(bool)
-          try {
-            if (typeof qeClip.setReverse === "function") {
-              qeClip.setReverse(rev);
-              ok = true; via = "qeClip.setReverse(rev)";
-            }
-          } catch(eR) { errors.push("setReverse: " + eR.toString()); }
+          function tryPath(label, fn) {
+            var a = { signature: label, thrown: false };
+            try { fn(); ok = true; via = label; }
+            catch(eP) { a.thrown = true; a.error = eP.toString(); }
+            __probeState.attempts.push(a);
+          }
 
-          // Path 2: setSpeed 5-arg form with reverse flag (Bug #30 family)
+          // Path 1: legacy setReverse(bool)
+          if (typeof qeClip.setReverse === "function") {
+            tryPath("qeClip.setReverse(rev)", function() { qeClip.setReverse(rev); });
+          } else {
+            __probeState.attempts.push({ signature: "qeClip.setReverse", skipped: "not a function" });
+          }
+
+          // Path 2: setSpeed 5-arg with reverse flag — preserve current speed.
           if (!ok) {
-            // Read current speed first so we don't change it while just toggling reverse.
             var curSpeed = 100;
             try {
               if (typeof qeClip.speed !== "undefined" && !isNaN(qeClip.speed)) curSpeed = qeClip.speed;
               else if (typeof result.clip.getSpeed === "function") curSpeed = result.clip.getSpeed() * 100;
             } catch(eRS) {}
-
-            try {
-              qeClip.setSpeed(curSpeed, "1", false, rev, false);
-              ok = true; via = "qeClip.setSpeed(curSpeed,'1',false,rev,false)";
-            } catch(eS5) { errors.push("setSpeed(5-arg): " + eS5.toString()); }
+            __probeState.currentSpeed = curSpeed;
+            tryPath("qeClip.setSpeed(curSpeed,'1',false,rev,false)",
+                    function() { qeClip.setSpeed(curSpeed, "1", false, rev, false); });
           }
 
-          // Path 3: DOM clip.setSpeed (1-arg ratio form)
+          // Path 3: DOM clip.setSpeed(ratio, rev)
+          if (!ok && typeof result.clip.setSpeed === "function") {
+            tryPath("clip.setSpeed(1.0, rev)", function() { result.clip.setSpeed(1.0, rev); });
+          }
+
           if (!ok) {
-            try {
-              if (typeof result.clip.setSpeed === "function") {
-                // DOM API: setSpeed(ratio, reverse?) — try both shapes.
-                try { result.clip.setSpeed(1.0, rev); ok = true; via = "clip.setSpeed(1.0, rev)"; }
-                catch(eDS1) { errors.push("dom.setSpeed(ratio,rev): " + eDS1.toString()); }
-              }
-            } catch(eDS) { errors.push("dom.setSpeed: " + eDS.toString()); }
+            return __error({
+              reason: "reverse_clip: no working path",
+              _probe: __probeState
+            });
           }
-
-          if (!ok) return __error("reverse_clip: no working path. Errors: " + errors.join(" | "));
+          __probeState = null;
           return __result({ reversed: rev, clipName: result.clip.name, via: via });
         `);
         return sendCommand(script, bridgeOptions);
@@ -483,6 +500,9 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
             if (qeClip && qeClip.speed !== undefined) { qeSpeed = qeClip.speed; }
           } catch(eQE) {}
 
+          // Bug #85: computed ratio = source_duration / timeline_duration. NOTE: this
+          // does NOT directly equal the speed multiplier — it ignores trim points and
+          // gives a rough sanity check only. Keep but clearly mark as informational.
           try {
             var sourceDurTicks = parseFloat(clip.projectItem.getOutPoint().ticks) - parseFloat(clip.projectItem.getInPoint().ticks);
             var timelineDurTicks = parseFloat(clip.duration.ticks);
@@ -507,7 +527,12 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
             speed: speedPercent !== null ? speedPercent / 100 : null,
             reversed: reversed,
             _source: sourceLabel,
-            _probe: { domSpeed: domSpeed, qeSpeed: qeSpeed, computedRatio: computed }
+            _probe: {
+              domSpeed: domSpeed,
+              qeSpeed: qeSpeed,
+              computedRatio_sourceDurOverTimelineDur: computed,
+              note: "computedRatio is source_dur / timeline_dur and does NOT directly equal speed multiplier — it ignores trim points; informational only"
+            }
           });
         `);
         return sendCommand(script, bridgeOptions);
@@ -766,11 +791,21 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
         const createMarkers = args.create_markers === true;
         const sensitivity = args.sensitivity ?? 50;
         const script = buildToolScript(`
+          __probeState = { tool: "scene_edit_detection", attempts: [] };
+
           var seq = app.project.activeSequence;
-          if (!seq) return __error("No active sequence");
+          if (!seq) return __error({ reason: "No active sequence", _probe: __probeState });
+
+          __probeState.apiType = (typeof seq.performSceneEditDetectionOnSelection);
           if (typeof seq.performSceneEditDetectionOnSelection !== "function") {
-            return __error("scene_edit_detection: API not exposed in this Premiere build");
+            return __error({ reason: "scene_edit_detection: API not exposed in this Premiere build", _probe: __probeState });
           }
+
+          // Check selection
+          try {
+            var sel = seq.getSelection();
+            __probeState.selectionCount = sel ? sel.length : 0;
+          } catch(eSel) { __probeState.selectionError = eSel.toString(); }
 
           var applyCuts = ${applyCuts ? "true" : "false"};
           var createMarkers = ${createMarkers ? "true" : "false"};
@@ -784,8 +819,8 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
           ];
           var ok = false;
           var via = null;
-          var errors = [];
           for (var s = 0; s < sigs.length && !ok; s++) {
+            var att = { signature: sigs[s].label, thrown: false };
             try {
               var a = sigs[s].args;
               if (a.length === 0) seq.performSceneEditDetectionOnSelection();
@@ -793,9 +828,11 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
               else if (a.length === 2) seq.performSceneEditDetectionOnSelection(a[0], a[1]);
               else if (a.length === 3) seq.performSceneEditDetectionOnSelection(a[0], a[1], a[2]);
               ok = true; via = sigs[s].label;
-            } catch(eS) { errors.push(sigs[s].label + ": " + eS.toString()); }
+            } catch(eS) { att.thrown = true; att.error = eS.toString(); }
+            __probeState.attempts.push(att);
           }
-          if (!ok) return __error("scene_edit_detection: no signature worked. Errors: " + errors.join(" | "));
+          if (!ok) return __error({ reason: "scene_edit_detection: no signature worked", _probe: __probeState });
+          __probeState = null;
           return __result({ sceneDetection: true, signatureUsed: via });
         `);
         return sendCommand(script, bridgeOptions);

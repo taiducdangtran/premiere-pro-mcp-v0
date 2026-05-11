@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.7] - 2026-05-11 — Sweep #4 retest fixes: foundation + #72 inversion + v1.2.6 rewrap
+
+Addresses sweep #4 retest (`notebug.md`) which showed 12/24 PASS overall but exposed two systemic issues:
+
+### Fixed — FOUNDATION
+
+- **`__error()` now accepts an object payload** (`{reason, _probe, ...}`) — previously string-only, so `__error({reason, _probe})` produced `"[object Object]"`. Object form merges all fields into the error response so callers see probe context.
+- **`__probeState` global slot** — a tool can set `__probeState = {tool, attempts, ...}` at the start; if an exception escapes the inner try/catch, the outer wrapper's catch auto-merges this state into the error response. Solves the v1.2.6 "raw error, no _probe" leak.
+- **Outer wrapper marks `_outerCatch: true`** when the safety-net catch fires, so callers know the leak path took over.
+
+### Fixed — INVERTED ROOT CAUSE (Bug #72 v2 — HIGHEST priority)
+
+- **#72 `set_clip_volume`** — sweep #4 _probe revealed `get_clip_volume` was actually correct: `Volume.Level = 0` after `setValue(-9, true)`. The SET was the silent-fail because `setValue(value, true)` with `true` updateUI flag adds a keyframe at t=0 (outside clip range) on time-varying properties. Now detects `isTimeVarying`, prefers `setValueAtKey(clipStart, target, true)` for time-varying, falls back through `setValue(target)` → `setValue(target, false)` → legacy `setValue(target, true)`. **Verifies persistence by reading back** at `clipStart + 0.001s`. Returns `verifiedValue` + write-attempt log.
+
+### Fixed — v1.2.6 REWRAP (8 tools)
+
+Previous v1.2.6 try/catch chains leaked raw exceptions despite intent. Rewrapped with structured `__probeState` accumulator so tester sees `_probe` data on failure:
+
+- **#30 `set_clip_speed_qe`** — 5-variant signature probe with per-attempt `{signature, thrown, error}` entries.
+- **#31 `reverse_clip`** — 3-path chain (setReverse → setSpeed 5-arg → DOM setSpeed) with attempt log.
+- **#48 `step_forward` / `step_backward`** — probes `setPlayerPosition(String)` vs `setPlayerPosition(Number)`.
+- **#52 `set_sequence_pixel_aspect_ratio`** — now also probes struct `{num, den}` form + `seq.setPixelAspectRatio` method.
+- **#28 `set_clip_pan`** — handles both string `"Audio"` and integer enum `mediaType` (sweep #4 hint). Per-component property probe.
+- **#61 `scene_edit_detection`** — captures `selectionCount` + per-signature attempt log.
+- **#65 `auto_reframe_sequence`** — same probe format with target W/H/num/den context.
+- **#66 `import_mogrt_from_library`** — probes with/without `library_name` first arg.
+
+### Fixed — Carry-over polish
+
+- **#19 `inspect_dom_object`** — added 3rd-stage function detection (`String(val).indexOf("function") === 0`) and 4th stage (`val.call/apply` existence check) for host methods that escape `instanceof Function`.
+- **#83 `_probe[0].name` empty for Bypass** — `prop.displayName || "(unnamed)"` fallback.
+- **#85 `computedRatio: 870` unclear** — renamed to `computedRatio_sourceDurOverTimelineDur` with explicit `note` field clarifying it's informational only.
+- **#84 `set_clip_transform.position` unit inconsistency** — added `position_unit` param ("pixels" default, matches `set_clip_position` and Premiere UI; "normalized" available as opt-in). Anchor point follows same unit. Response surfaces `positionUnit` + `sequenceFrameSize`.
+
 ## [1.2.6] - 2026-05-11 — Deferred bugs from v1.2.4 (10 bugs, signature probing)
 
 Addresses the 10 deferred bugs from v1.2.4 retest. Each tool now probes multiple signature variants and surfaces probe results in the error when nothing works — so tester can directly tell dev what API surface is actually exposed in their Premiere build.

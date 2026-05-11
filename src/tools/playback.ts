@@ -87,36 +87,56 @@ export function getPlaybackTools(bridgeOptions: BridgeOptions) {
       handler: async (args: { frames?: number }) => {
         const frames = args.frames ?? 1;
         const script = buildToolScript(`
-          var seq = app.project.activeSequence;
-          if (!seq) return __error("No active sequence");
+          __probeState = { tool: "step_forward", attempts: [], frames: ${frames} };
 
-          // Bug #48: derive frame duration in ticks from sequence frame rate.
-          // seq.getSettings().videoFrameRate is a Time object (ticks property).
+          var seq = app.project.activeSequence;
+          if (!seq) return __error({ reason: "No active sequence", _probe: __probeState });
+
           var frameTicks = null;
           try {
             var settings = seq.getSettings();
             if (settings && settings.videoFrameRate && settings.videoFrameRate.ticks) {
               frameTicks = parseFloat(settings.videoFrameRate.ticks);
+              __probeState.frameTicksSource = "getSettings().videoFrameRate.ticks";
             }
-          } catch(eS) {}
+          } catch(eS) { __probeState.frameTicksError = eS.toString(); }
           if (!frameTicks || frameTicks <= 0) {
-            // Fallback: 1/30 sec
             frameTicks = TICKS_PER_SECOND / 30;
+            __probeState.frameTicksSource = "fallback 1/30";
           }
+          __probeState.frameTicks = frameTicks;
 
           var curTicks = null;
-          try { curTicks = parseFloat(seq.getPlayerPosition().ticks); } catch(eGP) {}
-          if (curTicks === null) return __error("step_forward: cannot read current playhead position");
+          try { curTicks = parseFloat(seq.getPlayerPosition().ticks); }
+          catch(eGP) { __probeState.attempts.push({ op: "getPlayerPosition", error: eGP.toString() }); }
+          if (curTicks === null) return __error({ reason: "cannot read playhead", _probe: __probeState });
+          __probeState.fromTicks = curTicks;
 
           var newTicks = curTicks + (frameTicks * ${frames});
-          try { seq.setPlayerPosition(String(newTicks)); }
-          catch(eSP) { return __error("step_forward setPlayerPosition failed: " + eSP.toString()); }
+          __probeState.toTicks = newTicks;
 
+          // Probe both string and number forms — Premiere version varies.
+          var setOk = false;
+          var setVia = null;
+          var setSigs = [
+            { v: String(newTicks), label: "setPlayerPosition(String(ticks))" },
+            { v: newTicks, label: "setPlayerPosition(Number(ticks))" }
+          ];
+          for (var i = 0; i < setSigs.length && !setOk; i++) {
+            var a = { signature: setSigs[i].label, thrown: false };
+            try { seq.setPlayerPosition(setSigs[i].v); setOk = true; setVia = setSigs[i].label; }
+            catch(eSP) { a.thrown = true; a.error = eSP.toString(); }
+            __probeState.attempts.push(a);
+          }
+          if (!setOk) return __error({ reason: "setPlayerPosition failed all variants", _probe: __probeState });
+
+          __probeState = null;
           return __result({
             stepped: ${frames},
             frameTicks: frameTicks,
             fromTicks: curTicks,
-            toTicks: newTicks
+            toTicks: newTicks,
+            via: setVia
           });
         `);
         return sendCommand(script, bridgeOptions);
@@ -136,32 +156,56 @@ export function getPlaybackTools(bridgeOptions: BridgeOptions) {
       handler: async (args: { frames?: number }) => {
         const frames = args.frames ?? 1;
         const script = buildToolScript(`
+          __probeState = { tool: "step_backward", attempts: [], frames: ${frames} };
+
           var seq = app.project.activeSequence;
-          if (!seq) return __error("No active sequence");
+          if (!seq) return __error({ reason: "No active sequence", _probe: __probeState });
 
           var frameTicks = null;
           try {
             var settings = seq.getSettings();
             if (settings && settings.videoFrameRate && settings.videoFrameRate.ticks) {
               frameTicks = parseFloat(settings.videoFrameRate.ticks);
+              __probeState.frameTicksSource = "getSettings().videoFrameRate.ticks";
             }
-          } catch(eS) {}
-          if (!frameTicks || frameTicks <= 0) frameTicks = TICKS_PER_SECOND / 30;
+          } catch(eS) { __probeState.frameTicksError = eS.toString(); }
+          if (!frameTicks || frameTicks <= 0) {
+            frameTicks = TICKS_PER_SECOND / 30;
+            __probeState.frameTicksSource = "fallback 1/30";
+          }
+          __probeState.frameTicks = frameTicks;
 
           var curTicks = null;
-          try { curTicks = parseFloat(seq.getPlayerPosition().ticks); } catch(eGP) {}
-          if (curTicks === null) return __error("step_backward: cannot read current playhead position");
+          try { curTicks = parseFloat(seq.getPlayerPosition().ticks); }
+          catch(eGP) { __probeState.attempts.push({ op: "getPlayerPosition", error: eGP.toString() }); }
+          if (curTicks === null) return __error({ reason: "cannot read playhead", _probe: __probeState });
+          __probeState.fromTicks = curTicks;
 
           var newTicks = curTicks - (frameTicks * ${frames});
           if (newTicks < 0) newTicks = 0;
-          try { seq.setPlayerPosition(String(newTicks)); }
-          catch(eSP) { return __error("step_backward setPlayerPosition failed: " + eSP.toString()); }
+          __probeState.toTicks = newTicks;
 
+          var setOk = false;
+          var setVia = null;
+          var setSigs = [
+            { v: String(newTicks), label: "setPlayerPosition(String(ticks))" },
+            { v: newTicks, label: "setPlayerPosition(Number(ticks))" }
+          ];
+          for (var i = 0; i < setSigs.length && !setOk; i++) {
+            var a = { signature: setSigs[i].label, thrown: false };
+            try { seq.setPlayerPosition(setSigs[i].v); setOk = true; setVia = setSigs[i].label; }
+            catch(eSP) { a.thrown = true; a.error = eSP.toString(); }
+            __probeState.attempts.push(a);
+          }
+          if (!setOk) return __error({ reason: "setPlayerPosition failed all variants", _probe: __probeState });
+
+          __probeState = null;
           return __result({
             stepped: -${frames},
             frameTicks: frameTicks,
             fromTicks: curTicks,
-            toTicks: newTicks
+            toTicks: newTicks,
+            via: setVia
           });
         `);
         return sendCommand(script, bridgeOptions);

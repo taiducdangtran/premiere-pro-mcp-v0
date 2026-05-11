@@ -143,12 +143,25 @@ Examples:
                 try {
                   var val = obj[key];
                   var vt = typeof val;
-                  // ExtendScript host methods sometimes report typeof === "object" — use
-                  // instanceof Function as a second probe so we don't recurse into them
-                  // and leak "[object]" strings (Bug #19 retest).
+                  // Bug #19 v3: ExtendScript host methods report typeof === "object"
+                  // AND fail instanceof Function check. Add 3rd-stage probe via
+                  // String conversion - host methods stringify to function-like strings.
                   var isFn = (vt === "function");
                   if (!isFn && val !== null && vt === "object") {
-                    try { isFn = (val instanceof Function); } catch(e) {}
+                    try { isFn = (val instanceof Function); } catch(eIF) {}
+                    if (!isFn) {
+                      // String conversion probe — last resort detection.
+                      try {
+                        var s = String(val);
+                        if (s && s.indexOf("function") === 0) isFn = true;
+                      } catch(eStr) {}
+                    }
+                    // 4th probe: check if it has .call/.apply (function-like)
+                    if (!isFn) {
+                      try {
+                        if (typeof val.call === "function" || typeof val.apply === "function") isFn = true;
+                      } catch(eC) {}
+                    }
                   }
                   if (isFn) {
                     result[key] = "[function]";

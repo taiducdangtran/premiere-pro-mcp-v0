@@ -432,20 +432,23 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
         const nest = args.nest_clips === true;
 
         const script = buildToolScript(`
+          __probeState = { tool: "auto_reframe_sequence", attempts: [] };
+
           ${seqLookup}
+          __probeState.apiType = (typeof seq.autoReframeSequence);
           if (typeof seq.autoReframeSequence !== "function") {
-            return __error("auto_reframe_sequence: API not exposed in this Premiere build");
+            return __error({ reason: "auto_reframe_sequence: API not exposed in this Premiere build", _probe: __probeState });
           }
 
           var w = ${args.target_width};
           var h = ${args.target_height};
-          // Compute GCD for numerator/denominator representation.
           function gcd(a, b) { return b ? gcd(b, a % b) : a; }
           var g = gcd(w, h);
           var num = w / g;
           var den = h / g;
           var motion = "${motion}";
           var nest = ${nest ? "true" : "false"};
+          __probeState.target = { w: w, h: h, num: num, den: den, motion: motion, nest: nest };
 
           var sigs = [
             { args: [num, den, motion, nest], label: "(num, den, motion, nest)" },
@@ -458,23 +461,21 @@ export function getSequenceTools(bridgeOptions: BridgeOptions) {
           ];
           var ok = false;
           var via = null;
-          var errors = [];
           for (var s = 0; s < sigs.length && !ok; s++) {
+            var att = { signature: sigs[s].label, thrown: false };
             try {
               var a = sigs[s].args;
               if (a.length === 4) seq.autoReframeSequence(a[0], a[1], a[2], a[3]);
               else if (a.length === 3) seq.autoReframeSequence(a[0], a[1], a[2]);
               else if (a.length === 2) seq.autoReframeSequence(a[0], a[1]);
               ok = true; via = sigs[s].label;
-            } catch(eS) { errors.push(sigs[s].label + ": " + eS.toString()); }
+            } catch(eS) { att.thrown = true; att.error = eS.toString(); }
+            __probeState.attempts.push(att);
           }
           if (!ok) {
-            return __error(
-              "auto_reframe_sequence: no signature worked. " +
-              "Target: " + w + "x" + h + " (aspect " + num + ":" + den + "). " +
-              "Errors: " + errors.join(" | ")
-            );
+            return __error({ reason: "auto_reframe_sequence: no signature worked", _probe: __probeState });
           }
+          __probeState = null;
           return __result({
             reframed: true,
             name: seq.name,

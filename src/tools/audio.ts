@@ -208,7 +208,7 @@ export function getAudioTools(bridgeOptions: BridgeOptions) {
                     pv = p.getValue();
                   }
                 } catch(eGet) {}
-                allProps.push({ index: j, name: p.displayName, value: pv, isTimeVarying: isTV });
+                allProps.push({ index: j, name: p.displayName || "(unnamed)", value: pv, isTimeVarying: isTV });
                 if (p.displayName.toLowerCase() === "level") { levelVal = pv; levelProp = p; }
               }
               if (levelProp) {

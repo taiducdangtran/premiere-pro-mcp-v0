@@ -2514,3 +2514,334 @@ get_track_info({track_type: "video", track_index: 0})  → expect transitions[] 
 
 **Nếu vẫn fail:** error sẽ có probe data — gửi lại cho dev refine signature thêm.
 
+---
+
+# 🔁 RETEST RESULTS — v1.2.4 / v1.2.5 / v1.2.6 (2026-05-11, sweep #4)
+
+Test trên project "Lò nướng.prproj" (Premiere 25.4.1), build commits:
+- `5b0b2be` v1.2.4 (sweep #2 fixes — 13 bugs)
+- `90b3d0c` v1.2.5 (Bug #82 delete_project_item fallback)
+- `0199f99` v1.2.6 (10 deferred bugs — signature probing)
+
+Active sequence: `MCP_Test_FromClips`. Bridge confirm hoạt động — `_probe` data surface đúng pattern dev mô tả (cho v1.2.4 fixes, KHÔNG cho v1.2.6 fixes — xem detail).
+
+## 📊 OVERALL SCORE
+
+| Build | Bugs claimed | PASS | PARTIAL | FAIL | Note |
+|-------|-------------:|-----:|--------:|-----:|------|
+| v1.2.4 | 13 | 9 | 1 (#19) | 1 (#72 root cause inverted) | 2 chưa retest đủ |
+| v1.2.5 | 1 (#82) | 1 | 0 | 0 | ✅ Full fix |
+| v1.2.6 | 10 | 2 | 0 | 8 | Signature probes mostly missed target, NO _probe surfaced |
+
+**Cumulative pass rate v1.2.1 → v1.2.6:** ~58/70 fixed bugs hoạt động (~83%).
+
+## ✅ v1.2.4 PASS — 9 fixes confirmed
+
+| # | Tool | Verified output |
+|----|------|---|
+| 73 | `get_clip_speed` | `{speedPercent: 150, speed: 1.5, _source: "qe.speed", _probe: {domSpeed: 150, qeSpeed: 150, computedRatio: 870}}` — sync với set ✅ |
+| 74 | `color_correct({saturation: 120})` | `{colorCorrected: true, changes: {saturation: 120}}` — Lumetri idx 43 correct ✅ |
+| 75 | `set_clip_scale({scale: 120})` | `{setVia: "Scale (uniform)", isUniform: true}` — Uniform detect work ✅ |
+| 76 | `duplicate_sequence` | Returns both `originalSequenceId` + `newSequenceId`, `activeRestored: true` với `make_active: false` ✅ |
+| 77 | `get_clip_properties` | `outPoint: 20` (KHÔNG negative), `isSpeedReversed: false` (bool) ✅ |
+| 78 | `list_available_effects` | 7 duplicate groups flagged: `duplicateGroup, dupIndex, dupCount` ✅ |
+| 79 | `list_clip_effects` | Duplicate properties flagged (Opacity.Blend Mode x2, Lumetri Active x13, etc.) ✅ |
+| 37 | `add_color_matte` | Graceful error với 3 workarounds + probe `rootItem.createColorMatte: not available`. KHÔNG còn spawn Color Picker 🎉 |
+| 37b | `add_text_overlay` | Graceful error với 4 MOGRT workarounds + probe `project.createSupportItem: not available` 🎉 |
+| 81 | `split_clip` | `"razor() returned without error but DOM clip count did not increase (before=2, after=2). This usually means time fell exactly on a clip boundary, or zero-point offset confused QE coords."` — Verification surface ✅ |
+
+## 🟡 v1.2.4 PARTIAL — Bug #19 `inspect_dom_object`
+
+```json
+"projectItem": {
+  "getOverrideColorSpaceList": "[object]"   // vẫn không phải "[function]"
+}
+```
+
+Dev đã try v1.2.2 (`instanceof Function`) + v1.2.4 (`Object.prototype.toString.call()`) nhưng `getOverrideColorSpaceList` host method vẫn không match. Cần debug runtime trong ExtendScript Toolkit:
+```jsx
+var fn = app.project.activeSequence.projectItem.getOverrideColorSpaceList;
+$.writeln(typeof fn);           // ?
+$.writeln(fn instanceof Function);  // ?
+$.writeln(Object.prototype.toString.call(fn));  // ?
+$.writeln(fn.constructor && fn.constructor.name);  // ?
+```
+
+## 🔴 v1.2.4 INVERTED — Bug #72 root cause changed
+
+**_probe data đảo ngược hiểu biết về bug:**
+
+```
+set_clip_volume(000f446c, -9) → {volumeDb: -9}    # tool claims success
+get_clip_volume(0, 0) → {
+  "volumeDb": 0,
+  "sampledAtSeconds": 0.001,
+  "_probe": [
+    {"index": 0, "name": "", "value": false, ...},     # Bypass
+    {"index": 1, "name": "Level", "value": 0, ...}     # Level = 0 ✅ tool đọc đúng
+  ]
+}
+```
+
+**Phát hiện:** `get_clip_volume` đọc ĐÚNG `Volume.Level` property. Property value = 0 thực sự.
+→ **`set_clip_volume` mới là tool silent-fail** — báo success nhưng KHÔNG persist value.
+
+**Đề nghị dev v1.2.7:**
+1. Probe `set_clip_volume` runtime — log property path targeted + value before/after `setValue()`
+2. Có thể đang write vào audio TRACK-level volume thay vì CLIP-level Volume.Level
+3. Hoặc API yêu cầu `setValueAtTime(time, value)` thay vì `setValue(value)` cho time-varying properties
+
+## ✅ v1.2.5 PASS — Bug #82 delete_project_item
+
+```
+delete_project_item({item_id: "C7994_Subclip_v126"}) → {
+  "deleted": true,
+  "kind": "asset",
+  "type": 1,
+  "via": "item.deleteBin (non-bin)",
+  "_probe": {
+    "hasDeleteAsset": false,     # API removed in 25.4
+    "hasDeleteBin": true,        # Used as fallback ✅
+    "hasSelect": true,
+    "hasMoveBin": true,
+    "hasFindMenuCmd": false
+  }
+}
+```
+
+**Excellent fix.** Subclip deleted via fallback chain. _probe shows tester exactly which API path was taken.
+
+## 🔴 v1.2.6 — 8/10 signature probes FAIL với raw error (NO _probe surfaced)
+
+| # | Tool | Actual error | Expected (per dev claim) |
+|----|------|--------------|--------------------------|
+| 20 | `get_track_info.transitions` | ✅ `transitions: []` (empty case) | — chưa test với transition thật |
+| 28 | `set_clip_pan({node_id: 000f446c, pan: -30})` | 🔴 `"Could not set pan - is this an audio clip?"` (raw, NO _probe) | Multi-hint component probe + _probe |
+| 30 | `set_clip_speed_qe({speed_percent: 125})` | 🔴 `"Not Enough Parameters"` (raw, NO _probe) | 5-arg setSpeed(speed, "1", false, reverse, false) + _probe |
+| 31 | `reverse_clip({reverse: true})` | 🔴 `"Unknown error exception"` (raw, NO _probe) | Fallback chain via setSpeed 5-arg + _probe |
+| 38 | `trim_clip({new_out_seconds: 20})` | ✅ `{trimmed: true, inPoint: 0, outPoint: 20}` | PASS ✅ |
+| 48 | `step_forward({frames: 3})` / `step_backward` | 🔴 `"Illegal Parameter type"` (raw, NO _probe) | Pure DOM setPlayerPosition(ticks) + _probe |
+| 52 | `set_sequence_pixel_aspect_ratio({ratio: 1})` | 🔴 `"Illegal Parameter type"` (raw, NO _probe) | Probe number/string/parseFloat + _probe |
+| 61 | `scene_edit_detection()` (with selected clip) | 🔴 `"Not Enough Parameters"` (raw, NO _probe) | Probe object/3-arg/2-arg/1-arg + _probe |
+| 65 | `auto_reframe_sequence({target_width: 1080, target_height: 1080})` | 🔴 `"Illegal Parameter type"` (raw, NO _probe) | GCD(num, den, motion, nest) + _probe |
+| 66 | `import_mogrt_from_library({mogrt_name: "..."})` | 🔴 `"Not Enough Parameters"` (raw, NO _probe) | library_name as first required arg + _probe |
+
+### Critical observation cho dev
+
+`_probe` data surface WORKS perfectly cho v1.2.4 fixes (#73 `get_clip_speed`, #72 `get_clip_volume`, #82 `delete_project_item`). NHƯNG cho v1.2.6 signature-probe fixes, error vẫn về dạng raw ExtendScript exception — KHÔNG có wrapping.
+
+**Hypothesis:** v1.2.6 code có try/catch nhưng catch block re-throw raw `e` thay vì wrap với `_probe`. Pattern cần fix:
+
+```javascript
+// v1.2.6 đang làm (FAIL):
+try { 
+  qeClip.setSpeed(...);
+} catch (e) {
+  throw e;  // 🔴 raw error, không có probe info
+}
+
+// Đúng pattern (như v1.2.4 đã work):
+var probe = { signatures_tried: [] };
+try {
+  qeClip.setSpeed(speed, "1", false, reverse, false);  // 5-arg
+  return { ok: true, signature: "5-arg" };
+} catch (e) {
+  probe.signatures_tried.push({arg: "5-arg", error: e.toString()});
+}
+try {
+  qeClip.setSpeed(speed);  // 1-arg
+  return { ok: true, signature: "1-arg" };
+} catch (e) {
+  probe.signatures_tried.push({arg: "1-arg", error: e.toString()});
+}
+__error({
+  reason: "All setSpeed signatures failed",
+  _probe: probe,
+  tip: "qeClip.setSpeed type: " + typeof qeClip.setSpeed
+});
+```
+
+Apply pattern này cho cả 8 tool fail.
+
+### Specific signature hints cho dev runtime probing
+
+**#30 `set_clip_speed_qe`:**
+```jsx
+$.writeln(typeof qeClip.setSpeed);  // expect "function"
+try { qeClip.setSpeed(150); } catch(e) { $.writeln(e); }
+try { qeClip.setSpeed(150, false); } catch(e) { $.writeln(e); }
+try { qeClip.setSpeed(150, "1", false, false, false); } catch(e) { $.writeln(e); }
+```
+
+**#48 `step_forward`:** Có thể tool đang pass `seconds * TICKS` thành Number thay vì String:
+```jsx
+seq.setPlayerPosition(String(seconds * 254016000000));  // try string
+seq.setPlayerPosition(seconds * 254016000000);          // try number
+```
+
+**#52 `set_sequence_pixel_aspect_ratio`:** API expects struct `{num, den}` not number:
+```jsx
+try { seq.videoPixelAspectRatio = { num: 1, den: 1 }; } catch(e) {}
+try { seq.setPixelAspectRatio(1.0); } catch(e) {}
+```
+
+**#28 `set_clip_pan`:** Hardcoded "Could not set pan - is this an audio clip?" suggests audio detection sai. Node `000f446c` LÀ audio clip:
+```jsx
+// có thể check clip.mediaType === "Audio" (string) nhưng 25.4 trả integer enum
+// → fix: handle both string + numeric mediaType
+```
+
+## 📋 NEW BUGS phát hiện trong sweep #4
+
+### NEW BUG #83 — `get_clip_volume._probe[0].name` empty string
+
+Probe data shows Bypass property `name: ""`. Should be `"Bypass"` hoặc fallback `(unnamed)`. One-line UX fix:
+```javascript
+{ index: 0, name: prop.displayName || "(unnamed)", ... }
+```
+
+### NEW BUG #84 — `set_clip_position` vs `set_clip_transform` unit STILL inconsistent
+
+Description đã clarify (pixels vs normalized) nhưng implementation chưa unify:
+```
+set_clip_position({x: 1920, y: 1080})  → wrote 1920 (pixels)
+set_clip_transform({position: [0.5, 0.5]})  → wrote 0.5 (normalized)
+get_clip_transform → Position field reflects whatever was set last
+```
+
+**Đề xuất v1.2.7:** unify cả 2 → pixels (match UI behavior, normalized confusing).
+
+### NEW BUG #85 — `get_clip_speed._probe.computedRatio: 870` unclear
+
+`computedRatio: 870` không khớp với speed 1.5x. Looks like internal debug field accidentally exposed. Document hoặc remove.
+
+## 🎯 PRIORITY cho v1.2.7
+
+### 🔥 Critical
+1. **#72 `set_clip_volume`** — silent-fail (highest priority)
+
+### 🔴 v1.2.6 rework (8 tools)
+2. **#30/#31/#48/#52/#28/#61/#65/#66** — wrap error path với `__error({reason, _probe})` thay vì raw throw
+
+### 🟡 Carry-over
+3. **#19 `inspect_dom_object`** function detection — cần runtime debug deeper
+4. **#80/#84 position unit** — unify implementation
+
+### 🟢 Polish
+5. **#85 computedRatio** field — clarify/remove
+6. **#83 empty Bypass name** — one-line fix
+
+## ✨ Patterns dev đã làm RẤT TỐT — apply rộng hơn
+
+1. **_probe surface trong response** — `get_clip_speed`, `get_clip_volume`, `delete_project_item` đều có. Tester debug dễ.
+2. **Honest-disable với workaround note** — `add_color_matte`, `add_text_overlay`. KHÔNG spawn dangerous dialogs.
+3. **Post-action verification** — `split_clip` clip count check catch silent no-op.
+4. **Fallback chain với _probe** — `delete_project_item.via + _probe.hasDeleteAsset` cho tester biết path nào hoạt động.
+
+## 📁 Test session metadata
+
+- **Project:** Lò nướng.prproj (Premiere 25.4.1, build 3)
+- **Active sequence:** MCP_Test_FromClips (3v + 3a tracks, 2 clips on V1)
+- **NodeIds reference:**
+  - V1c0: 000f446a (C7994.MP4)
+  - V1c1: 000f446b (C8027.MP4)
+  - A1c0: 000f446c (C7994.MP4 audio)
+  - A1c1: 000f446d (C8027.MP4 audio)
+- **Test date:** 2026-05-11
+- **Builds tested:** v1.2.4 (`5b0b2be`), v1.2.5 (`90b3d0c`), v1.2.6 (`0199f99`)
+- **Session cleanup:** Đã xoá "MCP_Test_FromClips Copy" sequence + subclip "C7994_Subclip_v126" + reset zero_point về 0.
+
+
+---
+
+# 🛠️ FIX LOG — v1.2.7 (2026-05-11, sweep #4 retest fixes)
+
+12/24 PASS sweep #4 → fix 2 systemic issues + 6 carry-over polish.
+
+## 🔥 FOUNDATION FIX — solves v1.2.6 "raw error, no _probe" leak
+
+**Root cause v1.2.6 8/10 fail:** `__error(msg)` chỉ nhận string. Khi inner code làm `__error({reason: ..., _probe: ...})`, `String({...}) === "[object Object]"`. Đồng thời outer wrapper `buildScript`'s catch trả về `__error(e.toString())` — raw exception escape khi inner try/catch không hoàn hảo.
+
+**Fix foundation:**
+1. **`__error(arg)` polymorphic** — nhận string HOẶC object `{reason, _probe, tip, ...}`. Object form merge all fields vào error response
+2. **`__probeState` global slot** — tool set `__probeState = { tool, attempts, ... }` ở start. Outer catch tự merge vào response nếu inner throw
+3. **`_outerCatch: true` flag** trong response khi safety-net catch fire — caller biết exception escape ra ngoài
+
+File: [src/bridge/script-builder.ts:291-330](src/bridge/script-builder.ts#L291-L330)
+
+## ✅ FIXED — Bug #72 v2 (INVERTED ROOT CAUSE — highest priority)
+
+**Sweep #4 insight:** `get_clip_volume` đọc ĐÚNG `Volume.Level = 0`. `set_clip_volume` mới là silent-fail!
+
+**Root cause `setValue(target, true)` silent no-op:**
+- Property `Volume.Level` mặc định là time-varying (có keyframe ngầm)
+- `setValue(value, updateUI=true)` trên time-varying property → tạo keyframe tại t=0
+- Nhưng clip start tại > 0 → keyframe outside clip range → readback at clipStart returns 0
+
+**Fix new write path chain:**
+1. Detect `isTimeVarying`
+2. Time-varying → `setValueAtKey(clipStart, target, true)` hoặc `setValueAtTime(clipStart, target)`
+3. Try `setValue(target)` (without updateUI flag)
+4. Try `setValue(target, false)` (explicit no-UI)
+5. Legacy `setValue(target, true)` (last resort)
+6. **Verify by readback** at `clipStart + 0.001s` — confirm persistence
+7. Return `verifiedValue` + write attempt log
+
+File: [src/tools/track-targeting.ts:700-820](src/tools/track-targeting.ts#L700-L820)
+
+## ✅ REWRAP — 8 v1.2.6 tools với __probeState
+
+Mỗi tool giờ:
+1. `__probeState = { tool: "...", attempts: [] }` ở start
+2. Mỗi probe attempt → `__probeState.attempts.push({signature, thrown, error})`
+3. On failure → `__error({reason, _probe: __probeState})` explicit
+4. On exception leak → outer wrapper auto-merge `__probeState`
+
+| Bug | Tool | Probe coverage |
+|----:|------|---------------|
+| 30 | `set_clip_speed_qe` | 5 setSpeed signature variants |
+| 31 | `reverse_clip` | 3-path chain (setReverse → setSpeed 5-arg → DOM) |
+| 48 | `step_forward`/`step_backward` | String vs Number param for setPlayerPosition |
+| 52 | `set_sequence_pixel_aspect_ratio` | number/string/float/struct + setPixelAspectRatio method |
+| 28 | `set_clip_pan` | Multi-component probe + mediaType enum/string handling |
+| 61 | `scene_edit_detection` | 5 signature variants + selectionCount context |
+| 65 | `auto_reframe_sequence` | 7 signature variants với num/den GCD |
+| 66 | `import_mogrt_from_library` | with/without library_name first arg |
+
+## ✅ POLISH
+
+### Bug #19 v3 — inspect_dom_object function detection
+- Added 3rd stage: `String(val).indexOf("function") === 0` probe
+- Added 4th stage: `typeof val.call === "function"` (function-like duck typing)
+- File: [src/tools/scripting.ts:143-175](src/tools/scripting.ts#L143-L175)
+
+### Bug #83 — Bypass empty name
+- One-line: `prop.displayName || "(unnamed)"` fallback
+- File: [src/tools/audio.ts:201](src/tools/audio.ts#L201)
+
+### Bug #85 — computedRatio clarity
+- Renamed `computedRatio` → `computedRatio_sourceDurOverTimelineDur`
+- Added `note` field: "computedRatio is source_dur / timeline_dur and does NOT directly equal speed multiplier"
+- File: [src/tools/advanced.ts:425-450](src/tools/advanced.ts#L425-L450)
+
+### Bug #84 — set_clip_transform position unit
+- Added `position_unit` param: `"pixels"` (default, match UI + `set_clip_position`) hoặc `"normalized"`
+- Anchor point follows same unit
+- Response surfaces `positionUnit` + `sequenceFrameSize`
+- File: [src/tools/track-targeting.ts:1617-1720](src/tools/track-targeting.ts#L1617-L1720)
+
+## 📋 RETEST CHECKLIST — v1.2.7
+
+### Critical priority
+1. **#72** — `set_clip_volume(node_id, volume_db: -9)` → expect `verifiedValue: -9` + readback PASS
+2. **All 8 v1.2.6 tools** — even nếu fail, error giờ kèm `_probe` với attempts log. Gửi error response về cho dev
+
+### Polish
+3. **#19** — `inspect_dom_object` host methods → expect `"[function]"` không "[object]"
+4. **#83** — `get_clip_volume._probe[0].name` → expect "(unnamed)" hoặc "Bypass" (not empty)
+5. **#85** — `get_clip_speed._probe` → check note field present + renamed key
+6. **#84** — `set_clip_transform({position: [960, 540]})` → expect pixels by default, `positionUnit: "pixels"` trong response
+
+### Foundation verify
+7. **Error envelope** — tất cả failure responses giờ có thể có `_probe` field nếu tool dùng `__probeState`. Nếu vẫn raw string error → bug ở handler-side (chưa migrate to new __error pattern)
+

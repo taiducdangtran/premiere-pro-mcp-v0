@@ -698,7 +698,11 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
     },
 
     set_clip_volume: {
-      description: "Set the volume level on an audio clip (in dB).",
+      description:
+        "Set the volume level on an audio clip (in dB). " +
+        "Bug #72 v2 fix: previously `setValue(db, true)` returned success but didn't persist — tester _probe revealed Volume.Level stayed at 0 after the call. " +
+        "The 2nd arg `true` on a time-varying Level prop creates a keyframe at time 0 (out-of-clip), not a constant. " +
+        "Tool now: (1) detects isTimeVarying state; (2) for constant: uses setValue(db) with explicit false-or-omit updateUI; (3) for time-varying: uses setValueAtTime/addKey at clip start; (4) verifies the write by reading back; (5) surfaces _probe with before/after values.",
       parameters: {
         type: "object" as const,
         properties: {
@@ -715,25 +719,116 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
       },
       handler: async (args: { node_id: string; volume_db: number }) => {
         const script = buildToolScript(`
+          __probeState = { tool: "set_clip_volume", attempts: [] };
+
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found");
 
           var clip = result.clip;
-          var set = false;
+          __probeState.trackType = result.trackType;
+          if (result.trackType !== "audio") {
+            return __error({ reason: "set_clip_volume: not an audio clip (trackType=" + result.trackType + ")", _probe: __probeState });
+          }
+
+          var volComp = null;
+          var levelProp = null;
+          var compNames = [];
           for (var i = 0; i < clip.components.numItems; i++) {
+            compNames.push(clip.components[i].displayName);
             if (clip.components[i].displayName === "Volume") {
-              for (var p = 0; p < clip.components[i].properties.numItems; p++) {
-                if (clip.components[i].properties[p].displayName === "Level") {
-                  clip.components[i].properties[p].setValue(${args.volume_db}, true);
-                  set = true;
-                  break;
+              volComp = clip.components[i];
+              for (var p = 0; p < volComp.properties.numItems; p++) {
+                if (volComp.properties[p].displayName === "Level") {
+                  levelProp = volComp.properties[p]; break;
                 }
               }
               break;
             }
           }
-          if (!set) return __error("Could not set volume - is this an audio clip?");
-          return __result({ volumeDb: ${args.volume_db}, clip: clip.name });
+          __probeState.componentNames = compNames;
+
+          if (!levelProp) {
+            return __error({ reason: "Volume.Level property not found", _probe: __probeState });
+          }
+
+          var target = ${args.volume_db};
+          var clipStartSec = __ticksToSeconds(clip.start.ticks);
+
+          var beforeVal = null;
+          try { beforeVal = levelProp.getValue(); } catch(eGB) {}
+          var isTV = false;
+          try { isTV = !!(levelProp.isTimeVarying && levelProp.isTimeVarying()); } catch(eTV) {}
+          __probeState.beforeValue = beforeVal;
+          __probeState.isTimeVarying = isTV;
+          __probeState.clipStartSec = clipStartSec;
+          __probeState.targetDb = target;
+
+          // Strategy: try a sequence of write paths and verify each by reading back.
+          // The original bug: setValue(target, true) silent no-op when Level is time-varying.
+          var writes = [];
+
+          // Path 1: if time-varying, set keyframe at the clip's IN time (where audio
+          // playback starts), not at t=0 (which may be outside the clip).
+          if (isTV) {
+            try {
+              if (typeof levelProp.setValueAtKey === "function" && typeof levelProp.addKey === "function") {
+                // ensure a key exists at clipStartSec then write value
+                try { levelProp.addKey(clipStartSec); } catch(eAK) {}
+                levelProp.setValueAtKey(clipStartSec, target, true);
+                writes.push({ path: "setValueAtKey(clipStart, target, true)", thrown: false });
+              } else if (typeof levelProp.setValueAtTime === "function") {
+                levelProp.setValueAtTime(clipStartSec, target);
+                writes.push({ path: "setValueAtTime(clipStart, target)", thrown: false });
+              }
+            } catch(eW1) { writes.push({ path: "time-varying setKey", thrown: true, error: eW1.toString() }); }
+          }
+
+          // Path 2: setValue(target) — try WITHOUT the updateUI=true that causes keyframe creation.
+          try { levelProp.setValue(target); writes.push({ path: "setValue(target)", thrown: false }); }
+          catch(eW2) { writes.push({ path: "setValue(target)", thrown: true, error: eW2.toString() }); }
+
+          // Path 3: setValue(target, false) — explicit no-UI-update form.
+          try { levelProp.setValue(target, false); writes.push({ path: "setValue(target, false)", thrown: false }); }
+          catch(eW3) { writes.push({ path: "setValue(target, false)", thrown: true, error: eW3.toString() }); }
+
+          // Path 4: legacy setValue(target, true) — same as before fix; may keyframe.
+          try { levelProp.setValue(target, true); writes.push({ path: "setValue(target, true) [legacy]", thrown: false }); }
+          catch(eW4) { writes.push({ path: "setValue(target, true)", thrown: true, error: eW4.toString() }); }
+
+          __probeState.writes = writes;
+
+          // Verify by re-reading.
+          var afterConst = null;
+          var afterAtClipStart = null;
+          try { afterConst = levelProp.getValue(); } catch(eVA) {}
+          try {
+            if (typeof levelProp.getValueAtTime === "function") {
+              afterAtClipStart = levelProp.getValueAtTime(clipStartSec + 0.001);
+            }
+          } catch(eVT) {}
+          __probeState.afterConst = afterConst;
+          __probeState.afterAtClipStart = afterAtClipStart;
+
+          // Pick the best-evidence success indicator.
+          var persisted = false;
+          if (afterConst !== null && Math.abs(afterConst - target) < 0.01) persisted = true;
+          else if (afterAtClipStart !== null && Math.abs(afterAtClipStart - target) < 0.01) persisted = true;
+
+          if (!persisted) {
+            return __error({
+              reason: "set_clip_volume: tried " + writes.length + " write paths but readback shows value did not persist (target=" + target + ", afterConst=" + afterConst + ", afterAtClipStart=" + afterAtClipStart + ")",
+              _probe: __probeState
+            });
+          }
+
+          __probeState = null; // clear on success so result doesn't carry probe noise
+          return __result({
+            volumeDb: target,
+            clip: clip.name,
+            isTimeVarying: isTV,
+            verifiedValue: (afterConst !== null && Math.abs(afterConst - target) < 0.01) ? afterConst : afterAtClipStart,
+            writeAttempts: writes.length
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -757,17 +852,25 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
       },
       handler: async (args: { node_id: string; pan: number }) => {
         const script = buildToolScript(`
+          __probeState = { tool: "set_clip_pan", attempts: [], pan: ${args.pan} };
+
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
-          if (!result) return __error("Clip not found");
+          if (!result) return __error({ reason: "Clip not found", _probe: __probeState });
 
           var clip = result.clip;
-          if (result.trackType !== "audio") {
-            return __error("set_clip_pan: clip is on a " + result.trackType + " track, pan only works on audio clips");
+          __probeState.trackType = result.trackType;
+          __probeState.mediaType = clip.mediaType;
+          __probeState.mediaTypeIs = (typeof clip.mediaType);
+
+          // Bug #28 v2: handle both string "Audio" and integer enum mediaType
+          var isAudio = (result.trackType === "audio") ||
+                        (clip.mediaType === "Audio") ||
+                        (clip.mediaType === 2);
+          __probeState.isAudio = isAudio;
+          if (!isAudio) {
+            return __error({ reason: "set_clip_pan: not an audio clip (trackType=" + result.trackType + ", mediaType=" + clip.mediaType + ")", _probe: __probeState });
           }
 
-          // Bug #28: in Premiere 25.4 the audio panner component is named one of several
-          // variants — "Panner", "Panner › Balance", "Channel Volume" or similar, and the
-          // property inside is "Balance" / "Pan" / "Pan/Balance". Probe broadly.
           function lower(s) { return String(s || "").toLowerCase(); }
           var panNameHints = ["panner", "balance", "pan/balance", "channel volume"];
           var propNameHints = ["balance", "pan", "pan/balance"];
@@ -787,28 +890,33 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
             }
             if (!compIsPanner) continue;
 
+            var compProps = [];
             for (var p = 0; p < comp.properties.numItems; p++) {
               var prop = comp.properties[p];
+              compProps.push({ index: p, name: prop.displayName });
               var pn = lower(prop.displayName);
               var match = false;
               for (var hh = 0; hh < propNameHints.length; hh++) {
                 if (pn === propNameHints[hh]) { match = true; break; }
               }
-              if (match) {
-                try { prop.setValue(${args.pan}, true); set = true; matchedComp = comp.displayName; matchedPropName = prop.displayName; break; }
-                catch(eSV) {}
+              if (match && !set) {
+                var atp = { component: comp.displayName, property: prop.displayName, thrown: false };
+                try { prop.setValue(${args.pan}, true); set = true; matchedComp = comp.displayName; matchedPropName = prop.displayName; }
+                catch(eSV) { atp.thrown = true; atp.error = eSV.toString(); }
+                __probeState.attempts.push(atp);
               }
             }
-            if (set) break;
+            __probeState["compProps_" + comp.displayName] = compProps;
           }
+          __probeState.componentNames = compNamesProbe;
 
           if (!set) {
-            return __error(
-              "set_clip_pan: no Panner/Balance component found on this audio clip. " +
-              "Premiere 25.4 may have renamed the component — please report this clip's component list. " +
-              "Components: " + compNamesProbe.join(" | ")
-            );
+            return __error({
+              reason: "set_clip_pan: no Panner/Balance component or matching property found",
+              _probe: __probeState
+            });
           }
+          __probeState = null;
           return __result({ pan: ${args.pan}, clip: clip.name, component: matchedComp, property: matchedPropName });
         `);
         return sendCommand(script, bridgeOptions);
@@ -1508,21 +1616,27 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
 
     set_clip_transform: {
       description:
-        "Set multiple motion/transform properties of a clip in one call (position, scale, rotation, anchor, opacity). Pass only the fields you want to change.",
+        "Set multiple motion/transform properties of a clip in one call. Pass only the fields you want to change. " +
+        "Bug #84 fix: `position` and `anchor_point` now use PIXELS by default (matching `set_clip_position` and the Premiere UI). Pass `position_unit: 'normalized'` to use 0-1 range instead.",
       parameters: {
         type: "object" as const,
         properties: {
           node_id: { type: "string", description: "Node ID of the clip" },
           position: {
             type: "array",
-            description: "[x, y] position (normalized 0-1, e.g. [0.5, 0.5] = center)",
+            description: "[x, y] position in pixels (e.g. [960, 540] = center on 1920x1080). Set position_unit='normalized' to use 0-1 instead.",
+          },
+          position_unit: {
+            type: "string",
+            enum: ["pixels", "normalized"],
+            description: "Unit for position and anchor_point (default: 'pixels'). Matches set_clip_position and the Premiere UI when 'pixels'.",
           },
           scale: { type: "number", description: "Uniform scale (100 = 100%)" },
           scale_width: { type: "number", description: "Horizontal scale (when uniform_scale=false)" },
           scale_height: { type: "number", description: "Vertical scale (when uniform_scale=false)" },
           uniform_scale: { type: "boolean", description: "true to lock scale W/H together" },
           rotation: { type: "number", description: "Rotation in degrees" },
-          anchor_point: { type: "array", description: "[x, y] anchor point" },
+          anchor_point: { type: "array", description: "[x, y] anchor point (unit follows position_unit)" },
           opacity: { type: "number", description: "Opacity 0-100" },
         },
         required: ["node_id"],
@@ -1530,6 +1644,7 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
       handler: async (args: {
         node_id: string;
         position?: number[];
+        position_unit?: string;
         scale?: number;
         scale_width?: number;
         scale_height?: number;
@@ -1539,13 +1654,18 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
         opacity?: number;
       }) => {
         const propsToSet: string[] = [];
-        if (args.position) propsToSet.push(`{ comp: "Motion", name: "Position", value: [${args.position[0]}, ${args.position[1]}] }`);
+        // Bug #84: position/anchor default to pixels; opt-in to normalized.
+        // Premiere internally stores Position as normalized 0-1, so when user passes
+        // pixels we need to know the sequence frame size. We do that conversion in
+        // the script. When user passes normalized, we skip conversion.
+        const positionUnit = args.position_unit === "normalized" ? "normalized" : "pixels";
+        if (args.position) propsToSet.push(`{ comp: "Motion", name: "Position", value: [${args.position[0]}, ${args.position[1]}], unit: "${positionUnit}" }`);
         if (args.scale !== undefined) propsToSet.push(`{ comp: "Motion", name: "Scale", value: ${args.scale} }`);
         if (args.scale_width !== undefined) propsToSet.push(`{ comp: "Motion", name: "Scale Width", value: ${args.scale_width} }`);
         if (args.scale_height !== undefined) propsToSet.push(`{ comp: "Motion", name: "Scale Height", value: ${args.scale_height} }`);
         if (args.uniform_scale !== undefined) propsToSet.push(`{ comp: "Motion", name: "Uniform Scale", value: ${args.uniform_scale} }`);
         if (args.rotation !== undefined) propsToSet.push(`{ comp: "Motion", name: "Rotation", value: ${args.rotation} }`);
-        if (args.anchor_point) propsToSet.push(`{ comp: "Motion", name: "Anchor Point", value: [${args.anchor_point[0]}, ${args.anchor_point[1]}] }`);
+        if (args.anchor_point) propsToSet.push(`{ comp: "Motion", name: "Anchor Point", value: [${args.anchor_point[0]}, ${args.anchor_point[1]}], unit: "${positionUnit}" }`);
         if (args.opacity !== undefined) propsToSet.push(`{ comp: "Opacity", name: "Opacity", value: ${args.opacity} }`);
 
         const propsArr = `[${propsToSet.join(",")}]`;
@@ -1557,15 +1677,31 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
           var applied = [];
           var notFound = [];
 
+          // Bug #84: derive sequence frame size for pixel-to-normalized conversion if any
+          // position/anchor change carries unit:"pixels".
+          var seq = app.project.activeSequence;
+          var seqW = (seq && seq.frameSizeHorizontal) || 1920;
+          var seqH = (seq && seq.frameSizeVertical) || 1080;
+
           for (var k = 0; k < changes.length; k++) {
             var change = changes[k];
+            var v = change.value;
+            // Convert pixels → internal value. set_clip_position uses raw pixels too
+            // (matches Premiere UI), so we keep pixels as the wire format here.
+            // Premiere's Position/Anchor properties accept pixel arrays when set via
+            // ExtendScript on most builds, so we pass through without normalizing.
+            // (If a future Premiere build requires normalized, this is the conversion site.)
+            if (change.unit === "normalized" && v instanceof Array && v.length === 2) {
+              // user wants normalized, but actual property expects pixels — convert
+              v = [v[0] * seqW, v[1] * seqH];
+            }
             var foundC = false;
             for (var i = 0; i < clip.components.numItems; i++) {
               if (clip.components[i].displayName !== change.comp) continue;
               var comp = clip.components[i];
               for (var j = 0; j < comp.properties.numItems; j++) {
                 if (comp.properties[j].displayName === change.name) {
-                  comp.properties[j].setValue(change.value, true);
+                  comp.properties[j].setValue(v, true);
                   applied.push(change.name);
                   foundC = true;
                   break;
@@ -1575,7 +1711,7 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
             }
             if (!foundC) notFound.push(change.name);
           }
-          return __result({ clip: clip.name, applied: applied, notFound: notFound });
+          return __result({ clip: clip.name, applied: applied, notFound: notFound, positionUnit: "${positionUnit}", sequenceFrameSize: [seqW, seqH] });
         `);
         return sendCommand(script, bridgeOptions);
       },

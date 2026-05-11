@@ -292,8 +292,33 @@ function __result(data) {
   return __jsonStringify({ success: true, data: data });
 }
 
-function __error(msg) {
-  return __jsonStringify({ success: false, error: String(msg) });
+// Shared probe-state slot a tool can populate while running. If an exception escapes
+// the inner try/catch and the outer wrapper catches it, this state gets surfaced in
+// the error response so the tester sees what API surface was actually exposed.
+// Tools should: __probeState = { tool: "name", probe: {...}, attempts: [] } at start.
+var __probeState = null;
+
+// __error accepts either a plain string OR an object { reason, _probe, tip, ... }.
+// The object form lets tools surface probe data inside the error response. If
+// __probeState is set (by an in-progress probe loop), it is merged in automatically
+// so even an uncaught exception still carries debug context.
+function __error(arg) {
+  var payload = { success: false };
+  if (arg && typeof arg === "object") {
+    payload.error = String(arg.reason || arg.error || arg.message || "unknown error");
+    for (var k in arg) {
+      if (arg.hasOwnProperty(k) && k !== "reason" && k !== "error" && k !== "message") {
+        payload[k] = arg[k];
+      }
+    }
+  } else {
+    payload.error = String(arg);
+  }
+  // Auto-merge in-progress probe state if the caller didn't pass _probe explicitly.
+  if (__probeState && !payload._probe) {
+    payload._probe = __probeState;
+  }
+  return __jsonStringify(payload);
 }
 
 // === End MCP Bridge Helpers ===
@@ -308,7 +333,9 @@ export function buildScript(code: string): string {
   try {
     ${code}
   } catch(e) {
-    return __error(e.toString());
+    // Outer safety net — inner code should normally return __error(...) explicitly.
+    // If an uncaught exception lands here, merge __probeState if a tool set it.
+    return __error({ reason: e.toString(), _outerCatch: true });
   }
 })();`;
 }
