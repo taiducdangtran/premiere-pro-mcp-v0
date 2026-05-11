@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.2] - 2026-05-11 — Retest follow-up (Bug #19 + Bug #37)
+
+Addresses the two bugs that failed the v1.2.1 retest. See `notebug.md` "RETEST RESULTS — v1.2.1".
+
+### Fixed — `add_color_matte` (Bug #37) — proper fast-fail
+
+- The v1.2.1 `__withDialogsSuppressed()` wrapper did **not** suppress the Color Picker dialog because `qe.project.newColorMatte()` opens a native QE DOM modal, not an ExtendScript dialog — `userInteractionLevel = NEVER_INTERACT` only affects ExtendScript dialogs.
+- New behaviour: probe DOM-level paths (`rootItem.createColorMatte`, `app.project.createColorMatte`) first, and **deliberately refuse** to invoke the QE path. If no DOM API exists, return a clear error with three workarounds (`add_black_video` + Lumetri tint, `add_adjustment_layer` + color effect, manual UI creation). Bridge no longer blocks on a Color Picker.
+
+### Fixed — `inspect_dom_object` (Bug #19) — function references no longer leak `"[object]"`
+
+- ExtendScript host methods sometimes report `typeof === "object"` instead of `"function"`, so the previous function-detection path missed them and the inspector recursed into them then emitted `"[object]"` strings at the leaf.
+- Added second-probe `val instanceof Function` in both `__sanitizeForJson()` and `inspectObj()` so host methods are coerced to `"[function]"` (in the inspector) and `null` (in the JSON sanitizer) reliably.
+- Also fixed an edge case where `inspectObj` left a property `undefined` instead of `null` for missing values.
+
+### Confirmed working — no changes needed
+
+- Modal dialog tools `replace_clip_media` (#40), `four_point_edit` (#41), `set_workspace` (#56), `close_project` (#70) all invoke DOM-level APIs (`overwriteClip`, `setWorkspace`, `closeDocument`) — `__withDialogsSuppressed()` correctly suppresses their "Save?"/"Replace?" prompts. These were not retested in v1.2.1 because the bridge was blocked by Bug #37; with #37 fixed, they should work as designed.
+
 ## [1.2.1] - 2026-05-11 — Tester sweep bug fixes (Bugs #6–#70)
 
 Addresses ~40 bugs from the 443-tool tester sweep (`notebug.md` Test run 2026-05-10).

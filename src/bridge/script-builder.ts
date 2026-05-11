@@ -206,8 +206,11 @@ function __safeJsonValue(v) {
 }
 
 // Recursively replace NaN/undefined/Infinity in nested data with null.
+// Functions are coerced to null. NOTE: in some ExtendScript hosts typeof on a host
+// method returns "object" not "function", so we use instanceof Function as a second probe.
 function __sanitizeForJson(obj) {
   if (obj === undefined || obj === null) return null;
+  if (typeof obj === "function") return null;
   if (typeof obj === "number") {
     if (obj !== obj) return null;
     if (obj === Infinity || obj === -Infinity) return null;
@@ -220,6 +223,8 @@ function __sanitizeForJson(obj) {
     return arr;
   }
   if (typeof obj === "object") {
+    // Detect ExtendScript host methods that report typeof === "object" (Bug #19 retest).
+    try { if (obj instanceof Function) return null; } catch(e) {}
     var out = {};
     for (var k in obj) {
       if (obj.hasOwnProperty(k)) {
@@ -230,7 +235,7 @@ function __sanitizeForJson(obj) {
     }
     return out;
   }
-  // function or other — coerce to null (don't leak "[object]")
+  // any other type — coerce to null (don't leak "[object]")
   return null;
 }
 

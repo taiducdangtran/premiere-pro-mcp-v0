@@ -143,7 +143,14 @@ Examples:
                 try {
                   var val = obj[key];
                   var vt = typeof val;
-                  if (vt === "function") {
+                  // ExtendScript host methods sometimes report typeof === "object" — use
+                  // instanceof Function as a second probe so we don't recurse into them
+                  // and leak "[object]" strings (Bug #19 retest).
+                  var isFn = (vt === "function");
+                  if (!isFn && val !== null && vt === "object") {
+                    try { isFn = (val instanceof Function); } catch(e) {}
+                  }
+                  if (isFn) {
                     result[key] = "[function]";
                   } else if (vt === "object" && val !== null) {
                     if (depth < maxD) {
@@ -151,6 +158,8 @@ Examples:
                     } else {
                       result[key] = "[object]";
                     }
+                  } else if (val === undefined) {
+                    result[key] = null;
                   } else {
                     result[key] = val;
                   }
