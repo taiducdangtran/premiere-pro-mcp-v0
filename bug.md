@@ -1421,4 +1421,34 @@ Tất cả 5 bugs + 2 audit + 2 doc updates đã apply. Build sạch, **295/295 
 ### Hoãn cho v1.2.21+
 
 - **#101 Opt B** — probe `qe.project.undo` / `qe.executeCommand("Edit/Undo")` / `qe.ui.undo` paths. Cần tester paste probe script từ sweep15-debug.md.
-- **Group C** (#93/#98/#102/#103): #98 đã trong v1.2.20; còn #93 import_sequences, #102 lift_selection, #103 scratch disk get/set.
+- ~~**Group C** (#93/#98/#102/#103)~~ → moved to v1.2.21 below.
+
+---
+
+## ✅ v1.2.21 FIX STATUS — Group C (2026-05-12, dev response)
+
+3 bugs nhóm C đã apply theo pattern probe-chain + diagnostic surfacing. Build sạch, **295/295 tests PASS**.
+
+| # | Patch | File:Line | Notes |
+|---|-------|-----------|-------|
+| 🔴 #93 | `import_sequences`: probe 4 signatures (2-arg, 3-arg path+bin+ids, 3-arg path+ids+bin, 1-arg). Pre-flight `existsSync(project_path)` + snapshot `rootItem.children.numItems`. Response includes `signature`, `fnLength`, `rootItemsAdded`. Detects silent no-op khi API success nhưng count không đổi | `src/tools/project.ts:416-491` | — |
+| 🔴 #102 | `lift_selection`: 4-path probe — `qeSeq.lift()` → `qeSeq.liftSelection()` → `seq.lift()` → `seq.performSequenceEdit("lift")`. Total-clip count before/after để verify. Error response includes `probe` với typeof từng path | `src/tools/utility.ts:634-705` | — |
+| 🔴 #103 | `get_project_scratch_disks` + `set_project_scratch_disk`: thử numeric enum (0-3) trước, fallback string enum (`ScratchDiskType.PrCapturedVideoDiskType` etc.). Mỗi disk failure được capture vào `failed` map; if ALL fail → __error với details. Response carry `signature` per disk | `src/tools/utility.ts:1146-1230` | — |
+
+**Build:** `npm run build` → PASS
+**Test:** `npm test` → **295 PASS / 0 FAIL**
+**Version:** v1.2.21
+
+### Notes cho tester sweep #17
+
+1. **#93** — nếu vẫn fail trên live, response sẽ có `attempts[]` + `fnLength` (number of args Adobe expects). Tester paste `fnLength` để dev biết arity đúng.
+2. **#102** — error response carry `probe: { qeSeqLift: "function|undefined", ... }` → tester thấy ngay path nào tồn tại trong build 25.4.
+3. **#103** — nếu cả numeric và string disk enum bị reject → response `failed.capturedVideo: ["numeric: ...", "string: ..."]` để dev xem error message thật. Khi 1 disk OK + others fail, tool vẫn return success với mixed `set` + `failed`.
+
+### Status sau v1.2.21
+
+- ✅ Group A (v1.2.19): #91/#92/#94/#99 — false-positive fixes
+- ✅ Group B (v1.2.20): #95/#96/#98/#100/#101 + 2 audits + 2 doc updates
+- ✅ Group C (v1.2.21): #93/#102/#103 — probe-based diagnostic surfacing
+- ⏸ Hoãn: #101 Opt B (cần tester probe live)
+- ⏸ Tổng: 13/13 bugs sweep #13 đã apply ở v1.2.19-v1.2.21. Tester sweep #17+ verify thật trên Premiere 25.4 → dev clean up signatures về single working form.

@@ -414,20 +414,83 @@ export function getProjectTools(bridgeOptions: BridgeOptions) {
         required: ["project_path"],
       },
       handler: async (args: { project_path: string; sequence_ids?: string[] }) => {
-        if (args.sequence_ids && args.sequence_ids.length > 0) {
-          const ids = args.sequence_ids.map(id => `"${escapeForExtendScript(id)}"`).join(", ");
-          const script = buildToolScript(`
-            app.project.importSequences("${escapeForExtendScript(args.project_path)}", [${ids}]);
-            return __result({ imported: true, sequenceIds: [${ids}] });
-          `);
-          return sendCommand(script, bridgeOptions);
-        } else {
-          const script = buildToolScript(`
-            app.project.importSequences("${escapeForExtendScript(args.project_path)}");
-            return __result({ imported: true, allSequences: true });
-          `);
-          return sendCommand(script, bridgeOptions);
+        if (typeof args.project_path === "string" && args.project_path.length > 0 && !existsSync(args.project_path)) {
+          return {
+            success: false,
+            error: `import_sequences: project_path does not exist: ${args.project_path}`,
+          };
         }
+        const path = escapeForExtendScript(args.project_path);
+        const ids = JSON.stringify(args.sequence_ids ?? []);
+        const script = buildToolScript(`
+          // Bug #93 fix (v1.2.20): "Not Enough Parameters" from Adobe DOM in 25.4.
+          // Probe several known importSequences signatures and pick the first one
+          // that doesn't throw. Snapshot rootItem count before/after to verify the
+          // call actually added items (some signatures may no-op silently).
+          var path = "${path}";
+          var ids = ${ids};
+          var fn = app.project.importSequences;
+          if (typeof fn !== "function") {
+            return __error("import_sequences: app.project.importSequences is not a function in this Premiere build.");
+          }
+          var fnLength = fn.length;
+          var rootBefore = app.project.rootItem.children.numItems;
+          var attempts = [];
+
+          function trySig(label, fn) {
+            try { fn(); attempts.push(label + ": OK"); return label; }
+            catch(e) { attempts.push(label + ": " + e.toString()); return null; }
+          }
+
+          var sig = null;
+          // 2-arg(path, ids) — current implementation
+          if (!sig) sig = trySig("2-arg(path, ids)", function() {
+            app.project.importSequences(path, ids);
+          });
+          // 3-arg(path, targetBin, ids) — Adobe 2020+ pattern with bin first
+          if (!sig) sig = trySig("3-arg(path, rootItem, ids)", function() {
+            app.project.importSequences(path, app.project.rootItem, ids);
+          });
+          // 3-arg(path, ids, targetBin) — Adobe alt ordering
+          if (!sig) sig = trySig("3-arg(path, ids, rootItem)", function() {
+            app.project.importSequences(path, ids, app.project.rootItem);
+          });
+          // 1-arg(path) — old "import all" form
+          if (!sig && ids.length === 0) sig = trySig("1-arg(path)", function() {
+            app.project.importSequences(path);
+          });
+
+          var rootAfter = app.project.rootItem.children.numItems;
+          if (!sig) {
+            return __error({
+              reason: "import_sequences: every known importSequences signature was rejected by Premiere 25.4.",
+              fnLength: fnLength,
+              attempts: attempts,
+              rootItemsBefore: rootBefore,
+              rootItemsAfter: rootAfter
+            });
+          }
+          if (rootAfter === rootBefore) {
+            return __error({
+              reason: "import_sequences: API call accepted (signature " + sig + ") but no project items were added. " +
+                      "Likely sequence_ids did not match any sequence in the source project, or the source file is invalid.",
+              signature: sig,
+              fnLength: fnLength,
+              rootItemsBefore: rootBefore,
+              rootItemsAfter: rootAfter
+            });
+          }
+          return __result({
+            imported: true,
+            signature: sig,
+            fnLength: fnLength,
+            sequenceIds: ids,
+            rootItemsBefore: rootBefore,
+            rootItemsAfter: rootAfter,
+            rootItemsAdded: rootAfter - rootBefore
+          });
+        `);
+        return sendCommand(script, bridgeOptions);
       },
     },
 

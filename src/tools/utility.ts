@@ -636,17 +636,74 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
       parameters: {},
       handler: async () => {
         const script = buildToolScript(`
+          // Bug #102 fix (v1.2.21): qeSeq.lift removed in 25.4 ("not a function").
+          // Probe known lift entry points: QE-level, DOM-level, and per-track QE.
+          // Snapshot total clip count before/after to verify the lift took effect.
           app.enableQE();
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
+          var qeSeq = qe.project.getActiveSequence();
+          if (!qeSeq) return __error("No active sequence (QE)");
 
-          try {
-            var qeSeq = qe.project.getActiveSequence();
-            qeSeq.lift();
-            return __result({ lifted: true });
-          } catch(e) {
-            return __error("Lift failed: " + e.message);
+          function countClips() {
+            var n = 0;
+            for (var t = 0; t < seq.videoTracks.numTracks; t++) n += seq.videoTracks[t].clips.numItems;
+            for (var t2 = 0; t2 < seq.audioTracks.numTracks; t2++) n += seq.audioTracks[t2].clips.numItems;
+            return n;
           }
+
+          var clipsBefore = countClips();
+          var attempts = [];
+          function trySig(label, fn) {
+            try { fn(); attempts.push(label + ": OK"); return label; }
+            catch(e) { attempts.push(label + ": " + e.toString()); return null; }
+          }
+
+          var sig = null;
+          // Path 1: qeSeq.lift() — legacy QE
+          if (!sig) sig = trySig("qeSeq.lift()", function() {
+            if (typeof qeSeq.lift !== "function") throw new Error("qeSeq.lift not a function");
+            qeSeq.lift();
+          });
+          // Path 2: qeSeq.liftSelection() — alternative name
+          if (!sig) sig = trySig("qeSeq.liftSelection()", function() {
+            if (typeof qeSeq.liftSelection !== "function") throw new Error("qeSeq.liftSelection not a function");
+            qeSeq.liftSelection();
+          });
+          // Path 3: seq.lift() — DOM-level, sometimes moved out of QE
+          if (!sig) sig = trySig("seq.lift()", function() {
+            if (typeof seq.lift !== "function") throw new Error("seq.lift not a function");
+            seq.lift();
+          });
+          // Path 4: seq.performSequenceEdit("lift") — newer API hypothesis
+          if (!sig) sig = trySig('seq.performSequenceEdit("lift")', function() {
+            if (typeof seq.performSequenceEdit !== "function") throw new Error("seq.performSequenceEdit not a function");
+            seq.performSequenceEdit("lift");
+          });
+
+          var clipsAfter = countClips();
+          if (!sig) {
+            return __error({
+              reason: "lift_selection: no working lift API found in Premiere 25.4.",
+              workaround: "Set sequence in/out points then use Edit > Lift in the UI (shortcut Cmd/Ctrl+;).",
+              attempts: attempts,
+              clipsBefore: clipsBefore,
+              clipsAfter: clipsAfter,
+              probe: {
+                qeSeqLift: typeof qeSeq.lift,
+                qeSeqLiftSelection: typeof qeSeq.liftSelection,
+                seqLift: typeof seq.lift,
+                seqPerformSequenceEdit: typeof seq.performSequenceEdit
+              }
+            });
+          }
+          return __result({
+            lifted: true,
+            signature: sig,
+            clipsBefore: clipsBefore,
+            clipsAfter: clipsAfter,
+            clipsRemoved: clipsBefore - clipsAfter
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -1145,20 +1202,54 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
       },
       handler: async (args: { captured_video?: string; captured_audio?: string; video_previews?: string; audio_previews?: string }) => {
         const script = buildToolScript(`
+          // Bug #103 fix (v1.2.21): previously every setScratchDiskPath error was
+          // silently swallowed, so the response was empty {} regardless of outcome.
+          // Try numeric-enum (legacy) then string-enum (Adobe 2020+) and surface
+          // every failure so the tester can see why the API is rejecting.
           var project = app.project;
           if (!project) return __error("No project open");
+          if (typeof project.setScratchDiskPath !== "function") {
+            return __error({
+              reason: "set_project_scratch_disk: project.setScratchDiskPath is not a function in this Premiere build.",
+              probe: { typeOfFn: typeof project.setScratchDiskPath }
+            });
+          }
+
+          // Adobe 2020+ replaced integer disk-type codes with string constants.
+          // Try numeric first (legacy), fall back to the string equivalent.
+          var DISK_NUM = { capturedVideo: 0, capturedAudio: 1, videoPreviews: 2, audioPreviews: 3 };
+          var DISK_STR = {
+            capturedVideo: "ScratchDiskType.PrCapturedVideoDiskType",
+            capturedAudio: "ScratchDiskType.PrCapturedAudioDiskType",
+            videoPreviews: "ScratchDiskType.PrVideoPreviewDiskType",
+            audioPreviews: "ScratchDiskType.PrAudioPreviewDiskType"
+          };
+
+          function setOne(key, path) {
+            var errs = [];
+            try { project.setScratchDiskPath(path, DISK_NUM[key]); return { ok: true, signature: "numeric(" + DISK_NUM[key] + ")" }; }
+            catch(eNum) { errs.push("numeric: " + eNum.toString()); }
+            try { project.setScratchDiskPath(path, DISK_STR[key]); return { ok: true, signature: "string(" + DISK_STR[key] + ")" }; }
+            catch(eStr) { errs.push("string: " + eStr.toString()); }
+            return { ok: false, errors: errs };
+          }
 
           var set = {};
-          ${args.captured_video ? `
-          try { project.setScratchDiskPath("${escapeForExtendScript(args.captured_video)}", 0); set.capturedVideo = "${escapeForExtendScript(args.captured_video)}"; } catch(e) {}` : ""}
-          ${args.captured_audio ? `
-          try { project.setScratchDiskPath("${escapeForExtendScript(args.captured_audio)}", 1); set.capturedAudio = "${escapeForExtendScript(args.captured_audio)}"; } catch(e) {}` : ""}
-          ${args.video_previews ? `
-          try { project.setScratchDiskPath("${escapeForExtendScript(args.video_previews)}", 2); set.videoPreviews = "${escapeForExtendScript(args.video_previews)}"; } catch(e) {}` : ""}
-          ${args.audio_previews ? `
-          try { project.setScratchDiskPath("${escapeForExtendScript(args.audio_previews)}", 3); set.audioPreviews = "${escapeForExtendScript(args.audio_previews)}"; } catch(e) {}` : ""}
+          var failed = {};
+          ${args.captured_video ? `(function(){ var r = setOne("capturedVideo", "${escapeForExtendScript(args.captured_video)}"); if (r.ok) set.capturedVideo = { path: "${escapeForExtendScript(args.captured_video)}", signature: r.signature }; else failed.capturedVideo = r.errors; })();` : ""}
+          ${args.captured_audio ? `(function(){ var r = setOne("capturedAudio", "${escapeForExtendScript(args.captured_audio)}"); if (r.ok) set.capturedAudio = { path: "${escapeForExtendScript(args.captured_audio)}", signature: r.signature }; else failed.capturedAudio = r.errors; })();` : ""}
+          ${args.video_previews ? `(function(){ var r = setOne("videoPreviews", "${escapeForExtendScript(args.video_previews)}"); if (r.ok) set.videoPreviews = { path: "${escapeForExtendScript(args.video_previews)}", signature: r.signature }; else failed.videoPreviews = r.errors; })();` : ""}
+          ${args.audio_previews ? `(function(){ var r = setOne("audioPreviews", "${escapeForExtendScript(args.audio_previews)}"); if (r.ok) set.audioPreviews = { path: "${escapeForExtendScript(args.audio_previews)}", signature: r.signature }; else failed.audioPreviews = r.errors; })();` : ""}
 
-          return __result(set);
+          var nSet = 0; for (var k in set) if (set.hasOwnProperty(k)) nSet++;
+          var nFailed = 0; for (var k2 in failed) if (failed.hasOwnProperty(k2)) nFailed++;
+          if (nSet === 0 && nFailed > 0) {
+            return __error({
+              reason: "set_project_scratch_disk: every setScratchDiskPath call was rejected (both numeric and string disk-type forms).",
+              failed: failed
+            });
+          }
+          return __result({ set: set, failed: nFailed > 0 ? failed : undefined });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -1169,16 +1260,52 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
       parameters: {},
       handler: async () => {
         const script = buildToolScript(`
+          // Bug #103 fix (v1.2.21): silent catch was returning empty {}. Try
+          // numeric-enum then string-enum, surface per-disk errors when both fail.
           var project = app.project;
           if (!project) return __error("No project open");
+          if (typeof project.getScratchDiskPath !== "function") {
+            return __error({
+              reason: "get_project_scratch_disks: project.getScratchDiskPath is not a function in this Premiere build.",
+              probe: { typeOfFn: typeof project.getScratchDiskPath }
+            });
+          }
+
+          var DISK_NUM = { capturedVideo: 0, capturedAudio: 1, videoPreviews: 2, audioPreviews: 3 };
+          var DISK_STR = {
+            capturedVideo: "ScratchDiskType.PrCapturedVideoDiskType",
+            capturedAudio: "ScratchDiskType.PrCapturedAudioDiskType",
+            videoPreviews: "ScratchDiskType.PrVideoPreviewDiskType",
+            audioPreviews: "ScratchDiskType.PrAudioPreviewDiskType"
+          };
+
+          function getOne(key) {
+            var errs = [];
+            try { var p = project.getScratchDiskPath(DISK_NUM[key]); return { ok: true, path: p, signature: "numeric(" + DISK_NUM[key] + ")" }; }
+            catch(eNum) { errs.push("numeric: " + eNum.toString()); }
+            try { var p2 = project.getScratchDiskPath(DISK_STR[key]); return { ok: true, path: p2, signature: "string(" + DISK_STR[key] + ")" }; }
+            catch(eStr) { errs.push("string: " + eStr.toString()); }
+            return { ok: false, errors: errs };
+          }
 
           var disks = {};
-          try { disks.capturedVideo = project.getScratchDiskPath(0); } catch(e) {}
-          try { disks.capturedAudio = project.getScratchDiskPath(1); } catch(e) {}
-          try { disks.videoPreviews = project.getScratchDiskPath(2); } catch(e) {}
-          try { disks.audioPreviews = project.getScratchDiskPath(3); } catch(e) {}
+          var failed = {};
+          var keys = ["capturedVideo", "capturedAudio", "videoPreviews", "audioPreviews"];
+          for (var i = 0; i < keys.length; i++) {
+            var r = getOne(keys[i]);
+            if (r.ok) disks[keys[i]] = { path: r.path, signature: r.signature };
+            else failed[keys[i]] = r.errors;
+          }
 
-          return __result(disks);
+          var nGot = 0; for (var k in disks) if (disks.hasOwnProperty(k)) nGot++;
+          var nFailed = 0; for (var k2 in failed) if (failed.hasOwnProperty(k2)) nFailed++;
+          if (nGot === 0 && nFailed > 0) {
+            return __error({
+              reason: "get_project_scratch_disks: every getScratchDiskPath call was rejected (both numeric and string disk-type forms).",
+              failed: failed
+            });
+          }
+          return __result({ disks: disks, failed: nFailed > 0 ? failed : undefined });
         `);
         return sendCommand(script, bridgeOptions);
       },
