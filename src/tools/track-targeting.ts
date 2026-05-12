@@ -1317,10 +1317,14 @@ export function getTrackTargetingTools(bridgeOptions: BridgeOptions) {
               }
             } catch(e3) {}
           }
-          return __result({
+          // Bug #101 fix (v1.2.20): switch to __error so caller sees success:false
+          // instead of silently cascading past an undo that never happened.
+          return __error({
+            reason: "multiple_undo API removed in Premiere 25.4 — both app.project.undo and app.executeCommand fallbacks unavailable.",
             undone: 0,
             available: false,
-            note: "multiple_undo API removed in 25.4 — both app.project.undo and app.executeCommand fallbacks unavailable. Workaround: hold Cmd/Ctrl+Z in UI."
+            triedPaths: ["app.project.undo", "app.executeCommand(findMenuCommandId('Undo'))"],
+            workaround: "Hold Cmd/Ctrl+Z in the Premiere UI manually."
           });
         `);
         return sendCommand(script, bridgeOptions);

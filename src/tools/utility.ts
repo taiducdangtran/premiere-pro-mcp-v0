@@ -304,6 +304,7 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
         required: ["output_path"],
       },
       handler: async (args: { time_seconds?: number; output_path: string; duration_seconds?: number }) => {
+        const outputPath = escapeForExtendScript(args.output_path);
         const script = buildToolScript(`
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
@@ -312,16 +313,33 @@ export function getUtilityTools(bridgeOptions: BridgeOptions) {
             ? `var timeTicks = __secondsToTicks(${args.time_seconds}).toString();`
             : `var timeTicks = seq.getPlayerPosition().ticks;`}
 
-          // Export frame
-          seq.exportFramePNG(timeTicks, "${escapeForExtendScript(args.output_path)}");
+          // Bug #100 fix (v1.2.20): seq.exportFramePNG removed in 25.4.
+          // Mirror the defensive pattern from export_frame: PNG → JPEG → error.
+          var outputPath = "${outputPath}";
+          var method = null;
+          if (typeof seq.exportFramePNG === "function") {
+            try { seq.exportFramePNG(timeTicks, outputPath); method = "exportFramePNG"; }
+            catch(e1) {}
+          }
+          if (!method && typeof seq.exportFrameJPEG === "function") {
+            try { seq.exportFrameJPEG(timeTicks, outputPath); method = "exportFrameJPEG"; }
+            catch(e2) {}
+          }
+          if (!method) {
+            return __error({
+              reason: "freeze_frame: seq.exportFramePNG and exportFrameJPEG both unavailable in this Premiere build (removed in 25.4).",
+              workaround: "Use capture_frame tool (returns base64) or File > Export > Frame in the UI."
+            });
+          }
 
           // Import back
-          app.project.importFiles(["${escapeForExtendScript(args.output_path)}"], false, app.project.rootItem, false);
+          app.project.importFiles([outputPath], false, app.project.rootItem, false);
 
           return __result({
             exported: true,
-            path: "${escapeForExtendScript(args.output_path)}",
+            path: outputPath,
             atSeconds: __ticksToSeconds(timeTicks),
+            method: method,
             note: "Frame exported and imported. Add to timeline with add_to_timeline."
           });
         `);

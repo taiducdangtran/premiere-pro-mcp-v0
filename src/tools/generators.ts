@@ -9,18 +9,50 @@ export function getGeneratorTools(bridgeOptions: BridgeOptions) {
       parameters: {},
       handler: async () => {
         const script = buildToolScript(`
+          // Bug #96 sibling audit (v1.2.20): same QE family as newUniversalCountingLeader.
+          // 2-arg may hit "Not Enough Parameters" in 25.4; probe wider signatures.
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
           app.enableQE();
-          try {
-            qe.project.newBlackVideo(
-              seq.frameSizeHorizontal,
-              seq.frameSizeVertical
-            );
-            return __result({ created: true, note: "Black video created in project panel. Use add_to_timeline to place it." });
-          } catch (ex) {
-            return __error("Failed to create black video: " + ex.toString());
+          var w = seq.frameSizeHorizontal;
+          var h = seq.frameSizeVertical;
+          var par = (seq.getSettings && seq.getSettings().videoPixelAspectRatio) || 1.0;
+          var timebase = String(seq.timebase || "254016000000");
+          var fields = 0;
+          var sampleRate = 48000;
+          var channelType = 1;
+          var fnLength = (typeof qe.project.newBlackVideo === "function") ? qe.project.newBlackVideo.length : null;
+          var attempts = [];
+
+          function trySig(label, fn) {
+            try { fn(); attempts.push(label + ": OK"); return label; }
+            catch(e) { attempts.push(label + ": " + e.toString()); return null; }
           }
+
+          var sig = null;
+          if (!sig) sig = trySig("2-arg(w,h)", function() {
+            qe.project.newBlackVideo(w, h);
+          });
+          if (!sig) sig = trySig("4-arg(w,h,par,timebase)", function() {
+            qe.project.newBlackVideo(w, h, par, timebase);
+          });
+          if (!sig) sig = trySig("7-arg(w,h,par,timebase,fields,rate,chan)", function() {
+            qe.project.newBlackVideo(w, h, par, timebase, fields, sampleRate, channelType);
+          });
+
+          if (!sig) {
+            return __error({
+              reason: "add_black_video: every known newBlackVideo signature was rejected by Premiere 25.4 QE.",
+              fnLength: fnLength,
+              attempts: attempts
+            });
+          }
+          return __result({
+            created: true,
+            signature: sig,
+            fnLength: fnLength,
+            note: "Black video created in project panel. Use add_to_timeline to place it."
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },
@@ -106,18 +138,50 @@ export function getGeneratorTools(bridgeOptions: BridgeOptions) {
       parameters: {},
       handler: async () => {
         const script = buildToolScript(`
+          // Bug #96 fix (v1.2.20): QE rejects 2-arg with "Not Enough Parameters" in 25.4.
+          // Probe 7-arg → 4-arg → 2-arg; surface attempts so tester can pin the live signature.
           var seq = app.project.activeSequence;
           if (!seq) return __error("No active sequence");
           app.enableQE();
-          try {
-            qe.project.newUniversalCountingLeader(
-              seq.frameSizeHorizontal,
-              seq.frameSizeVertical
-            );
-            return __result({ created: true, note: "Universal counting leader created in project panel. Use add_to_timeline to place it." });
-          } catch (ex) {
-            return __error("Failed to create counting leader: " + ex.toString());
+          var w = seq.frameSizeHorizontal;
+          var h = seq.frameSizeVertical;
+          var par = (seq.getSettings && seq.getSettings().videoPixelAspectRatio) || 1.0;
+          var timebase = String(seq.timebase || "254016000000");
+          var fields = 0;
+          var sampleRate = 48000;
+          var channelType = 1;
+          var fnLength = (typeof qe.project.newUniversalCountingLeader === "function") ? qe.project.newUniversalCountingLeader.length : null;
+          var attempts = [];
+
+          function trySig(label, fn) {
+            try { fn(); attempts.push(label + ": OK"); return label; }
+            catch(e) { attempts.push(label + ": " + e.toString()); return null; }
           }
+
+          var sig = null;
+          if (!sig) sig = trySig("7-arg(w,h,par,timebase,fields,rate,chan)", function() {
+            qe.project.newUniversalCountingLeader(w, h, par, timebase, fields, sampleRate, channelType);
+          });
+          if (!sig) sig = trySig("4-arg(w,h,par,timebase)", function() {
+            qe.project.newUniversalCountingLeader(w, h, par, timebase);
+          });
+          if (!sig) sig = trySig("2-arg(w,h)", function() {
+            qe.project.newUniversalCountingLeader(w, h);
+          });
+
+          if (!sig) {
+            return __error({
+              reason: "add_universal_counting_leader: every known newUniversalCountingLeader signature was rejected by Premiere 25.4 QE.",
+              fnLength: fnLength,
+              attempts: attempts
+            });
+          }
+          return __result({
+            created: true,
+            signature: sig,
+            fnLength: fnLength,
+            note: "Universal counting leader created in project panel. Use add_to_timeline to place it."
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

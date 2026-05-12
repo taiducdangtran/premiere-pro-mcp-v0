@@ -119,21 +119,60 @@ export function getAdvancedTools(bridgeOptions: BridgeOptions) {
       },
       handler: async (args: { node_id: string; target_track_index: number }) => {
         const script = buildToolScript(`
+          // Bug #98 fix (v1.2.20): qeClip.moveToTrack 1-arg rejected with
+          // "Not Enough Parameters" in 25.4. Reference docs claim 1-arg, but live
+          // QE seems to need 2-arg (target, isAudio) or the 5-arg legacy form
+          // (vT, a1, a2, a3, a4) for linked V+A clips. Probe in order.
           app.enableQE();
           var qeSeq = qe.project.getActiveSequence();
           if (!qeSeq) return __error("No active sequence (QE)");
-          
+
           var result = __findClip("${escapeForExtendScript(args.node_id)}");
           if (!result) return __error("Clip not found");
-          
-          var qeTrack = result.trackType === "video"
-            ? qeSeq.getVideoTrackAt(result.trackIndex)
-            : qeSeq.getAudioTrackAt(result.trackIndex);
+
           var qeClip = __getQEClip(result);
           if (!qeClip) return __error("QE clip not found");
-          
-          qeClip.moveToTrack(${args.target_track_index});
-          return __result({ moved: true, clipName: result.clip.name, newTrackIndex: ${args.target_track_index} });
+
+          var target = ${args.target_track_index};
+          var isAudio = (result.trackType === "audio");
+          var fnLength = (typeof qeClip.moveToTrack === "function") ? qeClip.moveToTrack.length : null;
+          var attempts = [];
+
+          function trySig(label, fn) {
+            try { fn(); attempts.push(label + ": OK"); return label; }
+            catch(e) { attempts.push(label + ": " + e.toString()); return null; }
+          }
+
+          var sig = null;
+          if (!sig) sig = trySig("1-arg(target)", function() {
+            qeClip.moveToTrack(target);
+          });
+          if (!sig) sig = trySig("2-arg(target,isAudio)", function() {
+            qeClip.moveToTrack(target, isAudio ? 1 : 0);
+          });
+          if (!sig) sig = trySig("5-arg-legacy(vT,a1,a2,a3,a4)", function() {
+            if (isAudio) {
+              qeClip.moveToTrack(-1, target, -1, -1, -1);
+            } else {
+              qeClip.moveToTrack(target, -1, -1, -1, -1);
+            }
+          });
+
+          if (!sig) {
+            return __error({
+              reason: "move_clip_to_track: every known qeClip.moveToTrack signature was rejected by Premiere 25.4.",
+              fnLength: fnLength,
+              attempts: attempts
+            });
+          }
+          return __result({
+            moved: true,
+            clipName: result.clip.name,
+            newTrackIndex: target,
+            trackType: result.trackType,
+            signature: sig,
+            fnLength: fnLength
+          });
         `);
         return sendCommand(script, bridgeOptions);
       },

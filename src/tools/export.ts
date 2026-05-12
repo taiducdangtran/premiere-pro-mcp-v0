@@ -405,9 +405,25 @@ export function getExportTools(bridgeOptions: BridgeOptions) {
           }
           
           var outputPath = "${escapedPath}";
-          seq.exportFramePNG(seq.getPlayerPosition().ticks, outputPath);
-          
-          return __result({ exported: true, outputPath: outputPath });
+          // Bug #100 bonus (v1.2.20): seq.exportFramePNG removed in 25.4 — same
+          // defensive pattern as export_frame / freeze_frame.
+          var method = null;
+          if (typeof seq.exportFramePNG === "function") {
+            try { seq.exportFramePNG(seq.getPlayerPosition().ticks, outputPath); method = "exportFramePNG"; }
+            catch(e1) {}
+          }
+          if (!method && typeof seq.exportFrameJPEG === "function") {
+            try { seq.exportFrameJPEG(seq.getPlayerPosition().ticks, outputPath); method = "exportFrameJPEG"; }
+            catch(e2) {}
+          }
+          if (!method) {
+            return __error({
+              reason: "capture_frame: seq.exportFramePNG and exportFrameJPEG both unavailable in this Premiere build (removed in 25.4).",
+              workaround: "Use File > Export > Frame in the UI."
+            });
+          }
+
+          return __result({ exported: true, outputPath: outputPath, method: method });
         `);
 
         const result = await sendCommand(script, bridgeOptions);

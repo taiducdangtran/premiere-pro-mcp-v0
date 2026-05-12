@@ -122,10 +122,16 @@ export function getProjectTools(bridgeOptions: BridgeOptions) {
               }
             } catch(e2) {}
           }
-          return __result({
+          // Bug #101 fix (v1.2.20): the 'available: false' result was wrapped in
+          // success:true, which lets callers (LLMs especially) cascade past it
+          // as if undo had worked. Switch to __error so the MCP response is
+          // success:false — caller must handle it.
+          return __error({
+            reason: "undo API removed in Premiere 25.4 — app.project.undo, app.executeCommand, and app.findMenuCommandId all undefined.",
             undone: 0,
             available: false,
-            note: "undo API removed in 25.4 — app.project.undo and app.executeCommand both undefined. Workaround: press Cmd/Ctrl+Z in the Premiere UI."
+            triedPaths: ["app.project.undo", "app.executeCommand(findMenuCommandId('Undo'))"],
+            workaround: "Press Cmd/Ctrl+Z in the Premiere UI manually."
           });
         `);
         return sendCommand(script, bridgeOptions);
@@ -453,10 +459,49 @@ export function getProjectTools(bridgeOptions: BridgeOptions) {
         const h = args.height ?? 1080;
         const name = args.name ?? "Bars and Tone";
         const script = buildToolScript(`
+          // Bug #95 fix (v1.2.20): "Illegal Parameter type" in 25.4 — Adobe changed
+          // newBarsAndTone signature across versions. Probe arity then attempt the
+          // documented signature chains; surface every rejection so the tester can
+          // pin down which arity 25.4 accepts.
           var seq = app.project.activeSequence;
-          var timebase = ${args.timebase ? `"${escapeForExtendScript(args.timebase)}"` : `seq ? seq.timebase : "254016000000"`};
-          app.project.newBarsAndTone(${w}, ${h}, timebase, "${escapeForExtendScript(name)}");
-          return __result({ created: true, name: "${escapeForExtendScript(name)}", width: ${w}, height: ${h} });
+          var name = "${escapeForExtendScript(name)}";
+          var w = ${w};
+          var h = ${h};
+          var timebase = ${args.timebase ? `"${escapeForExtendScript(args.timebase)}"` : `(seq && seq.timebase) ? seq.timebase : "254016000000"`};
+          var par = 1.0;
+          var fields = 0;        // 0 = progressive
+          var sampleRate = 48000;
+          var channelType = 1;   // 1 = stereo
+          var fnLength = (typeof app.project.newBarsAndTone === "function") ? app.project.newBarsAndTone.length : null;
+          var attempts = [];
+
+          function trySig(label, fn) {
+            try { fn(); attempts.push(label + ": OK"); return label; }
+            catch(e) { attempts.push(label + ": " + e.toString()); return null; }
+          }
+
+          var sig = null;
+          // 4-arg (pre-2018): (width, height, timebase, name)
+          if (!sig) sig = trySig("4-arg(w,h,timebase,name)", function() {
+            app.project.newBarsAndTone(w, h, timebase, name);
+          });
+          // 8-arg (2020+): (width, height, par, timebase, fields, sampleRate, channelType, name)
+          if (!sig) sig = trySig("8-arg(w,h,par,timebase,fields,rate,chan,name)", function() {
+            app.project.newBarsAndTone(w, h, par, timebase, fields, sampleRate, channelType, name);
+          });
+          // 7-arg (2018+): (width, height, par, fields, timebase, sampleRate, name)
+          if (!sig) sig = trySig("7-arg(w,h,par,fields,timebase,rate,name)", function() {
+            app.project.newBarsAndTone(w, h, par, fields, timebase, sampleRate, name);
+          });
+
+          if (!sig) {
+            return __error({
+              reason: "create_bars_and_tone: every known newBarsAndTone signature was rejected by Premiere 25.4.",
+              fnLength: fnLength,
+              attempts: attempts
+            });
+          }
+          return __result({ created: true, name: name, width: w, height: h, signature: sig, fnLength: fnLength });
         `);
         return sendCommand(script, bridgeOptions);
       },

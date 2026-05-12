@@ -1327,3 +1327,98 @@ Hiện có **440 tools** (sweep cộng dồn qua v1.2.12 unlock #61/#65/#66 + c�
 - **Test result:** 281 PASS / 7 FAIL / 288 total
 - **Test date:** 2026-05-11
 - **Type:** internal debug sweep (không phải user-facing repro trên Premiere)
+
+---
+
+## ✅ v1.2.19 FIX STATUS — Group A sweep #13 (2026-05-12, dev response)
+
+Commit `6a1bb9d` đã apply 4 bugs nhóm A (false-positive / silent-failure pattern). Build sạch, 295/295 tests PASS. Chờ tester sweep #14 verify trên Premiere thật.
+
+| # | Patch | File | LOC |
+|---|-------|------|----:|
+| 🔴 #91 | `export_sequence`: pre-flight `existsSync(dirname)` + preset-path check; key `exported` → `queued` + `_note` (AME async) | `src/tools/export.ts:29-68` | ~25 |
+| 🔴 #92 | `export_omf`: pre-flight dir check + post-call `File(outputPath).exists` verify (synchronous API ≠ AME) → `__error` với `_probe` nếu không landed | `src/tools/export.ts:466-507` | ~20 |
+| 🔴 #94 | `import_sequences_from_project`: pre-flight `existsSync(project_path)` + snapshot `rootItem.children.numItems` before/after → `__error` với `_probe` nếu count không đổi | `src/tools/project.ts:678-732` | ~25 |
+| 🔴 #99 | `batch_enable_disable`: tách `attempted` counter; `applyDisabled` thử `setDisabled(b)` → fallback `clip.disabled = b`; nếu `attempted>0 && count===0` → `__error` với `firstErrors[]` thay vì silent `affected: 0` | `src/tools/track-targeting.ts:1004-1066` | ~35 |
+
+**Hoãn cho v1.2.20:** group B (#95/#96/#100/#101) cần Adobe doc + probe, group C (#93/#98/#102/#103) probe-based.
+
+---
+
+## 🎯 v1.2.20 PLAN — Group B (sweep #15 debug input)
+
+Theo `sweep15-debug.md`, dev đã có root cause + probe + fix proposal cho 5 bugs group B + 2 audit + 2 doc update. Tổng ~9 changes.
+
+### Approach summary
+
+| Bug | Strategy | Risk |
+|-----|----------|:---:|
+| **🔥 #101** undo/multiple_undo | **Opt A:** đổi `__result(undone:0)` → `__error(...)` để stop false-positive cascade. Surface `triedPaths` + `workaround`. Opt B (probe `qe.project.undo` / `qe.executeCommand` / `qe.ui.undo`) defer cho v1.2.21 nếu tester probe có path mới | 🟢 Low |
+| **🟠 #100** freeze_frame | Copy defensive pattern từ `export_frame` (export.ts:104-127): `exportFramePNG` try/catch → `exportFrameJPEG` fallback → `__error` rõ ràng | 🟢 Low |
+| **🟠 BONUS** capture_frame | Cùng raw call `seq.exportFramePNG`, audit và sửa cùng commit | 🟢 Low |
+| **🟠 #95** create_bars_and_tone | Multi-sig attempt chain: 4-arg → 8-arg → 7-arg. Surface `attempts[]` trên failure để tester báo signature đúng | 🟡 Med |
+| **🟠 #96** add_universal_counting_leader | 7-arg primary (`w,h,par,timebase,fields,rate,chan`) → 4-arg fallback. Surface attempts | 🟡 Med |
+| **🟠 BONUS** add_black_video | Cùng pattern 2-arg như #96 → có thể cũng broken. Apply 7-arg → 4-arg chain | 🟡 Med |
+| **🟠 #98** move_clip_to_track | 1-arg → 2-arg (target, isAudio) → 5-arg legacy probe chain. Surface attempts | 🟡 Med |
+| **🟢 doc** extendscript-reference.ts:33 | Mark `app.project.undo()` REMOVED in 25.4 | 🟢 Trivial |
+| **🟢 doc** extendscript-reference.ts:219 | Mark `qeClip.moveToTrack` arity uncertain (1/2/5-arg) | 🟢 Trivial |
+
+### Why Option A cho #101 thay vì Option B
+
+Cả 3 path Adobe (`app.project.undo`, `app.executeCommand`, `findMenuCommandId`) confirmed undefined (notebug.md Bug #54/#55). Probe Option B (qe paths) chưa verify được offline. Opt A unblock caller-side false-positive immediately, không hối tiếc. Khi tester probe có path mới → bump Opt B sau.
+
+### Probe-chain pattern (#95/#96/#98)
+
+Pattern thống nhất:
+```js
+var attempts = [];
+function trySignature(name, fn) {
+  try { var r = fn(); attempts.push(name + ": OK"); return { ok: true, sig: name, result: r }; }
+  catch(e) { attempts.push(name + ": " + e.toString()); return null; }
+}
+var r = trySignature("primary", function(){ ... });
+if (!r) r = trySignature("fallback1", function(){ ... });
+if (!r) r = trySignature("fallback2", function(){ ... });
+if (!r) return __error({ reason: "all signatures rejected", attempts: attempts });
+return __result({ ..., signature: r.sig });
+```
+
+Tester sẽ thấy `signature: "7-arg"` (or whichever worked) trong response success → biết Adobe 25.4 signature thật → dev clean up sau.
+
+---
+
+## ✅ v1.2.20 FIX STATUS — Group B sweep #15 (2026-05-12, dev response)
+
+Tất cả 5 bugs + 2 audit + 2 doc updates đã apply. Build sạch, **295/295 tests PASS**. Sẵn sàng cho sweep #16 verify trên Premiere thật.
+
+| # | Patch | File:Line | Notes |
+|---|-------|-----------|-------|
+| 🔥 #101 | `undo`: switch `__result({undone:0, available:false})` → `__error` với `triedPaths` + `workaround`. Stop false-positive cascade (Opt A) | `src/tools/project.ts:125-134` | Opt B (qe.project.undo probes) defer cho v1.2.21 sau khi tester probe live |
+| 🔥 #101 | `multiple_undo`: cùng pattern | `src/tools/track-targeting.ts:1320-1328` | — |
+| 🟠 #100 | `freeze_frame`: defensive `exportFramePNG` → `exportFrameJPEG` → `__error` với workaround | `src/tools/utility.ts:306-345` | Mirror export_frame pattern |
+| 🟠 BONUS | `capture_frame`: cùng defensive pattern (sweep #13 chưa test, sweep15 catch bonus) | `src/tools/export.ts:407-427` | — |
+| 🟠 #95 | `create_bars_and_tone`: multi-sig chain (4-arg → 8-arg → 7-arg) với `attempts[]` + `fnLength` probe; success carry `signature` field | `src/tools/project.ts:457-505` | Tester sẽ thấy "signature: 4-arg" (or whichever worked) → dev clean up sau |
+| 🟠 #96 | `add_universal_counting_leader`: 7-arg → 4-arg → 2-arg chain với probe metadata | `src/tools/generators.ts:103-156` | — |
+| 🟠 BONUS | `add_black_video`: audit + apply 2-arg → 4-arg → 7-arg chain (same QE family) | `src/tools/generators.ts:6-56` | Sweep #13 chưa report nhưng cùng API pattern → fix preemptive |
+| 🟠 #98 | `move_clip_to_track`: 1-arg → 2-arg `(target, isAudio)` → 5-arg legacy `(vT, a1, a2, a3, a4)` chain | `src/tools/advanced.ts:120-179` | trackType awareness để 5-arg fallback pick đúng video/audio slot |
+| 🟢 doc | `extendscript-reference.ts:33`: mark `app.project.undo()` REMOVED in 25.4 | `src/resources/extendscript-reference.ts:33` | Stop LLM-generated extendscript referencing dead API |
+| 🟢 doc | `extendscript-reference.ts:219`: mark `qeClip.moveToTrack` arity uncertain | `src/resources/extendscript-reference.ts:219` | — |
+
+**Build:** `npm run build` → PASS
+**Test:** `npm test` → **295 PASS / 0 FAIL**
+**Version:** v1.2.20
+
+### Notes cho tester sweep #16
+
+1. **#101 expected behavior change:** `undo`/`multiple_undo` giờ trả `success: false`. Caller code dùng `try` block hoặc check `result.success` sẽ catch ngay thay vì cascade. Mọi pipeline có undo flow CẦN update để biết undo bất khả dụng.
+
+2. **#95/#96/#98 probe responses:** mỗi tool giờ trả `signature` field trong response success (e.g., `"signature": "7-arg"`, `"fnLength": 7`). Tester báo lại signature cho dev clean up sang v1.2.21.
+
+3. **#100 + capture_frame:** PNG → JPEG → error chain. Nếu JPEG cũng fail trên 25.4, response sẽ `__error` rõ ràng với workaround. Probe arity của `seq.exportFrame*` qua follow-up nếu cả 2 fail.
+
+4. **add_black_video preemptive fix:** không có repro sweep #13 nhưng cùng QE family như #96. Nếu vẫn fail trên live, response sẽ surface attempts.
+
+### Hoãn cho v1.2.21+
+
+- **#101 Opt B** — probe `qe.project.undo` / `qe.executeCommand("Edit/Undo")` / `qe.ui.undo` paths. Cần tester paste probe script từ sweep15-debug.md.
+- **Group C** (#93/#98/#102/#103): #98 đã trong v1.2.20; còn #93 import_sequences, #102 lift_selection, #103 scratch disk get/set.
